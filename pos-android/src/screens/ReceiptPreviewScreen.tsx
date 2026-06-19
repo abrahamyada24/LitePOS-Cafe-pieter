@@ -190,7 +190,7 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
                 }
             } catch { /* Already connected */ }
 
-            if (settings.showLogoOnReceipt === true || settings.showLogoOnReceipt === 'true') {
+            if (settings.showLogoOnReceipt === true || String(settings.showLogoOnReceipt) === 'true') {
                 try {
                     let logoToPrint = RECEIPT_LOGO_BASE64;
                     if (settings.storeLogo) {

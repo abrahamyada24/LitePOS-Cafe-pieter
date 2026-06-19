@@ -251,7 +251,7 @@ export default function SettingsScreen({ navigation }: any) {
             } catch (e) { /* Already connected */ }
 
             // Print logo
-            if (showLogoOnReceipt === true || showLogoOnReceipt === 'true') {
+            if (showLogoOnReceipt === true || String(showLogoOnReceipt) === 'true') {
                 try {
                     let logoToPrint = RECEIPT_LOGO_BASE64;
                     if (storeLogo) {

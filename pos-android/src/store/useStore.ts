@@ -31,6 +31,7 @@ interface StoreState {
         printerType: 'BLE' | 'USB' | null;
         theme: 'light' | 'dark';
         allowNegativeStock: boolean;
+        showLogoOnReceipt: boolean;
         receiptFooter: string;
         loyalty_active: boolean;
         loyalty_multiplier: number;
@@ -77,6 +78,7 @@ export const useStore = create<StoreState>((set, get) => ({
         printerType: null,
         theme: 'light',
         allowNegativeStock: false,
+        showLogoOnReceipt: true,
         receiptFooter: '',
         loyalty_active: false,
         loyalty_multiplier: 1,
