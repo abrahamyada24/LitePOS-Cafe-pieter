@@ -7,10 +7,34 @@ import { useReactToPrint } from 'react-to-print';
 export default function ReceiptPreviewModal({ isOpen, onClose, transaction, store, formatNumber }) {
     const componentRef = useRef(null);
 
-    const handlePrint = useReactToPrint({
+    const handleReactPrint = useReactToPrint({
         content: () => componentRef.current,
         documentTitle: `Receipt_${transaction?.invoiceNumber || 'POS'}`
     });
+
+    const handlePrint = () => {
+        if (typeof window !== 'undefined' && window.electronAPI) {
+            // Ambil semua style Tailwind yang sedang aktif
+            const styles = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
+                .map(el => el.outerHTML)
+                .join('');
+            
+            const html = `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    ${styles}
+                </head>
+                <body class="bg-white p-4" style="font-family: monospace; width: 380px; margin: 0 auto; color: black;">
+                    ${componentRef.current.innerHTML}
+                </body>
+                </html>
+            `;
+            window.electronAPI.printReceipt(html);
+        } else {
+            handleReactPrint();
+        }
+    };
 
     if (!isOpen || !transaction) return null;
 
