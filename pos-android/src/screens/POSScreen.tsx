@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { View, Text, TouchableOpacity, FlatList, Image, Alert, useWindowDimensions, Modal, TextInput, ScrollView, Animated, Vibration, PermissionsAndroid, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, FlatList, Image, Alert, useWindowDimensions, Modal, TextInput, ScrollView, Animated, Vibration, PermissionsAndroid, Platform, RefreshControl } from 'react-native';
 import tw, { useAppColorScheme } from 'twrnc';
 import { useStore } from '../store/useStore';
+import { syncService } from '../services/syncService';
 import { getDBConnection } from '../database/db';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
@@ -43,6 +44,7 @@ export default function POSScreen({ navigation }: any) {
     const expandedHeight = Math.round(screenHeight * 0.42);
     const collapsedHeight = 72;
     const cartPanelAnim = React.useRef(new Animated.Value(0)).current; // 0 = collapsed, 1 = expanded
+    const [refreshing, setRefreshing] = useState(false);
 
     const cart = useStore((state) => state.cart);
     const settings = useStore((state) => state.settings);
@@ -127,6 +129,18 @@ export default function POSScreen({ navigation }: any) {
         const unsubscribe = navigation.addListener('focus', loadData);
         return unsubscribe;
     }, [navigation, loadData]);
+
+    const onRefresh = useCallback(async () => {
+        setRefreshing(true);
+        try {
+            await syncService.syncMasterData();
+            await loadData();
+        } catch (e) {
+            console.error('Failed to sync on refresh', e);
+        } finally {
+            setRefreshing(false);
+        }
+    }, [loadData]);
 
     // Tap product → add directly to cart as a new line (no modal)
     const handleProductPress = async (item: any) => {
@@ -422,6 +436,7 @@ export default function POSScreen({ navigation }: any) {
 
             <FlatList
                 data={filteredProducts}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#3b82f6']} />}
                 numColumns={!settings.showImages ? 1 : (isTablet ? 3 : 2)}
                 key={(!settings.showImages ? 'list' : 'grid') + (isTablet ? '-tablet' : '-mobile')}
                 keyExtractor={(item) => String(item.id)}
