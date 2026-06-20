@@ -19,7 +19,8 @@ export default function KatalogPage() {
 
     const fetchCatalog = async () => {
         try {
-            const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+            // Gunakan path relatif agar mengikuti proxy/rewrites Vercel, atau localhost jika belum diatur
+            const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
             const res = await fetch(`${API_URL}/api/catalog`);
             const json = await res.json();
             if (json.success) {
@@ -71,7 +72,7 @@ export default function KatalogPage() {
         return matchSearch && matchCat;
     });
 
-    const getAPIUrl = () => process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+    const getAPIUrl = () => process.env.NEXT_PUBLIC_API_URL || '';
 
     if (loading) {
         return (
