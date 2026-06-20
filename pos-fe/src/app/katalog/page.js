@@ -1,7 +1,7 @@
+/* eslint-disable @next/next/no-img-element */
 "use client"
 import React, { useState, useEffect } from 'react';
-import { Search, Grid, List, AlignJustify, MessageCircle, AlertCircle, ShoppingBag, X } from 'lucide-react';
-import Image from 'next/image';
+import { Search, Grid, List, AlignJustify, MessageCircle, ShoppingBag, X } from 'lucide-react';
 
 export default function KatalogPage() {
     const [products, setProducts] = useState([]);
