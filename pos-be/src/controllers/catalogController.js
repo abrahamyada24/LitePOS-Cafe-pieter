@@ -26,7 +26,7 @@ exports.getPublicCatalog = async (req, res) => {
         });
 
         // Ambil pengaturan toko untuk mendapatkan nomor WhatsApp
-        const settings = await prisma.setting.findFirst();
+        const settings = await prisma.storeSetting.findFirst();
 
         res.status(200).json({
             success: true,
