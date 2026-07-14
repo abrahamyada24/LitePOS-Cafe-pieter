@@ -106,6 +106,24 @@ exports.pushLocalData = async (req, res) => {
     let savedPackages = 0;
     let savedDineTables = 0;
     let savedAddons = 0;
+    const syncWarnings = [];
+
+    const addSyncWarning = (entity, id, error) => {
+        const message = error?.message || String(error);
+        console.error(`[SYNC] Gagal proses ${entity} id=${id ?? '-'}:`, message);
+        syncWarnings.push({ entity, id: id ?? null, message });
+    };
+
+    const nonEmptyString = (value) => {
+        if (value === null || value === undefined) return null;
+        const normalized = String(value).trim();
+        return normalized || null;
+    };
+
+    const finiteNumber = (value) => {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    };
 
     // 0. Proses Settings dari Android → update StoreSetting & LoyaltyConfig di server
     if (settings && Array.isArray(settings) && settings.length > 0) {
@@ -118,10 +136,15 @@ exports.pushLocalData = async (req, res) => {
         // String fields: only update if Android value is non-empty (prevent overwriting website data with empty)
         // Boolean fields: always sync (false is a valid value)
         const storeSettingData = {};
-        if (settingsMap.storeName && settingsMap.storeName.trim()) storeSettingData.storeName = settingsMap.storeName;
-        if (settingsMap.storeAddress && settingsMap.storeAddress.trim()) storeSettingData.address = settingsMap.storeAddress;
-        if (settingsMap.storePhone && settingsMap.storePhone.trim()) storeSettingData.phone = settingsMap.storePhone;
-        if (settingsMap.receiptFooter && settingsMap.receiptFooter.trim()) storeSettingData.receiptFooter = settingsMap.receiptFooter;
+        const storeName = nonEmptyString(settingsMap.storeName);
+        const storeAddress = nonEmptyString(settingsMap.storeAddress);
+        const storePhone = nonEmptyString(settingsMap.storePhone);
+        const receiptFooter = nonEmptyString(settingsMap.receiptFooter);
+        const theme = nonEmptyString(settingsMap.theme);
+        if (storeName) storeSettingData.storeName = storeName;
+        if (storeAddress) storeSettingData.address = storeAddress;
+        if (storePhone) storeSettingData.phone = storePhone;
+        if (receiptFooter) storeSettingData.receiptFooter = receiptFooter;
         if (settingsMap.enablePreOrder !== undefined) storeSettingData.enablePreOrder = settingsMap.enablePreOrder === 'true';
         if (settingsMap.enableShift !== undefined) storeSettingData.enableShift = settingsMap.enableShift === 'true';
         if (settingsMap.enableDineTable !== undefined) storeSettingData.enableDineTable = settingsMap.enableDineTable === 'true';
@@ -130,7 +153,7 @@ exports.pushLocalData = async (req, res) => {
         if (storeSettingData.enableTableOrder !== true && storeSettingData.enableDineTable === false) storeSettingData.enableTableOrder = false;
         if (settingsMap.allowNegativeStock !== undefined) storeSettingData.allowNegativeStock = settingsMap.allowNegativeStock === 'true';
         if (settingsMap.showImages !== undefined) storeSettingData.showImages = settingsMap.showImages === 'true';
-        if (settingsMap.theme && settingsMap.theme.trim()) storeSettingData.theme = settingsMap.theme;
+        if (theme) storeSettingData.theme = theme;
 
         if (Object.keys(storeSettingData).length > 0) {
             const firstSetting = await prisma.storeSetting.findFirst();
@@ -144,10 +167,14 @@ exports.pushLocalData = async (req, res) => {
         // Update LoyaltyConfig
         if (settingsMap.loyalty_active !== undefined || settingsMap.loyalty_multiplier !== undefined) {
             const loyaltyData = {};
-            if (settingsMap.loyalty_multiplier !== undefined) loyaltyData.pointMultiplier = parseFloat(settingsMap.loyalty_multiplier);
-            if (settingsMap.loyalty_multiplier_amount !== undefined) loyaltyData.multiplierAmount = parseFloat(settingsMap.loyalty_multiplier_amount);
-            if (settingsMap.loyalty_point_value !== undefined) loyaltyData.pointValue = parseFloat(settingsMap.loyalty_point_value);
-            if (settingsMap.loyalty_min_points !== undefined) loyaltyData.minRedemptionPoints = parseInt(settingsMap.loyalty_min_points);
+            const pointMultiplier = finiteNumber(settingsMap.loyalty_multiplier);
+            const multiplierAmount = finiteNumber(settingsMap.loyalty_multiplier_amount);
+            const pointValue = finiteNumber(settingsMap.loyalty_point_value);
+            const minRedemptionPoints = finiteNumber(settingsMap.loyalty_min_points);
+            if (pointMultiplier !== null) loyaltyData.pointMultiplier = pointMultiplier;
+            if (multiplierAmount !== null) loyaltyData.multiplierAmount = multiplierAmount;
+            if (pointValue !== null) loyaltyData.pointValue = pointValue;
+            if (minRedemptionPoints !== null) loyaltyData.minRedemptionPoints = Math.trunc(minRedemptionPoints);
             if (settingsMap.loyalty_active !== undefined) loyaltyData.isActive = settingsMap.loyalty_active === 'true';
 
             if (Object.keys(loyaltyData).length > 0) {
@@ -165,31 +192,34 @@ exports.pushLocalData = async (req, res) => {
     const customerIdMap = [];
     if (customers && Array.isArray(customers)) {
         for (const cust of customers) {
-            let serverCust = await prisma.customer.findUnique({ where: { androidId: cust.id }});
-            if (!serverCust) {
-                serverCust = await prisma.customer.create({
-                    data: {
-                        androidId: cust.id,
-                        memberId: cust.memberId || `CUST-A${cust.id}-${Date.now()}`,
-                        name: cust.name,
-                        phone: cust.phone || null,
-                        loyaltyDiscount: Number(cust.loyaltyDiscount || 0),
-                        points: parseInt(cust.points || 0)
-                    }
-                });
-                savedCustomers++;
-            } else {
-                // Update existing customer points if local has more or just sync
-                await prisma.customer.update({
-                    where: { id: serverCust.id },
-                    data: {
-                        points: parseInt(cust.points || 0),
-                        loyaltyDiscount: Number(cust.loyaltyDiscount || 0),
-                        phone: cust.phone || serverCust.phone
-                    }
-                });
+            try {
+                let serverCust = await prisma.customer.findUnique({ where: { androidId: cust.id }});
+                if (!serverCust) {
+                    serverCust = await prisma.customer.create({
+                        data: {
+                            androidId: cust.id,
+                            memberId: cust.memberId || `CUST-A${cust.id}-${Date.now()}`,
+                            name: cust.name,
+                            phone: cust.phone || null,
+                            loyaltyDiscount: Number(cust.loyaltyDiscount || 0),
+                            points: parseInt(cust.points || 0)
+                        }
+                    });
+                    savedCustomers++;
+                } else {
+                    await prisma.customer.update({
+                        where: { id: serverCust.id },
+                        data: {
+                            points: parseInt(cust.points || 0),
+                            loyaltyDiscount: Number(cust.loyaltyDiscount || 0),
+                            phone: cust.phone || serverCust.phone
+                        }
+                    });
+                }
+                customerIdMap.push({ androidId: cust.id, serverId: serverCust.id });
+            } catch (error) {
+                addSyncWarning('customer', cust.id, error);
             }
-            customerIdMap.push({ androidId: cust.id, serverId: serverCust.id });
         }
     }
 
@@ -197,31 +227,34 @@ exports.pushLocalData = async (req, res) => {
     const categoryIdMap = [];
     if (categories && Array.isArray(categories)) {
         for (const cat of categories) {
-            let serverCat = await prisma.category.findUnique({ where: { androidId: cat.id }});
-            // Fallback: jika kategori dibuat dari web (tidak punya androidId), cari berdasarkan serverId
-            if (!serverCat && cat.serverId) {
-                serverCat = await prisma.category.findUnique({ where: { id: parseInt(cat.serverId) }});
-                if (serverCat) {
-                    await prisma.category.update({ where: { id: serverCat.id }, data: { androidId: cat.id } });
-                }
-            }
-            if (!serverCat) {
-                serverCat = await prisma.category.create({
-                    data: {
-                        androidId: cat.id,
-                        name: cat.name,
-                        displayType: 'normal'
+            try {
+                let serverCat = await prisma.category.findUnique({ where: { androidId: cat.id }});
+                // Fallback: jika kategori dibuat dari web (tidak punya androidId), cari berdasarkan serverId
+                if (!serverCat && cat.serverId) {
+                    serverCat = await prisma.category.findUnique({ where: { id: parseInt(cat.serverId) }});
+                    if (serverCat) {
+                        await prisma.category.update({ where: { id: serverCat.id }, data: { androidId: cat.id } });
                     }
-                });
-                savedCategories++;
-            } else {
-                // Update nama kategori jika berubah
-                await prisma.category.update({
-                    where: { id: serverCat.id },
-                    data: { name: cat.name || serverCat.name }
-                });
+                }
+                if (!serverCat) {
+                    serverCat = await prisma.category.create({
+                        data: {
+                            androidId: cat.id,
+                            name: cat.name,
+                            displayType: 'normal'
+                        }
+                    });
+                    savedCategories++;
+                } else {
+                    await prisma.category.update({
+                        where: { id: serverCat.id },
+                        data: { name: cat.name || serverCat.name }
+                    });
+                }
+                categoryIdMap.push({ androidId: cat.id, serverId: serverCat.id });
+            } catch (error) {
+                addSyncWarning('category', cat.id, error);
             }
-            categoryIdMap.push({ androidId: cat.id, serverId: serverCat.id });
         }
     }
 
@@ -229,55 +262,56 @@ exports.pushLocalData = async (req, res) => {
     const productIdMap = [];
     if (products && Array.isArray(products)) {
         for (const prod of products) {
-            let serverProd = await prisma.product.findUnique({ where: { androidId: prod.id }});
-            // Fallback: jika produk dibuat dari web (tidak punya androidId), cari berdasarkan serverId
-            if (!serverProd && prod.serverId) {
-                serverProd = await prisma.product.findUnique({ where: { id: parseInt(prod.serverId) }});
-                // Set androidId agar lookup berikutnya lebih cepat
-                if (serverProd) {
-                    await prisma.product.update({ where: { id: serverProd.id }, data: { androidId: prod.id } });
+            try {
+                let serverProd = await prisma.product.findUnique({ where: { androidId: prod.id }});
+                // Fallback: jika produk dibuat dari web (tidak punya androidId), cari berdasarkan serverId
+                if (!serverProd && prod.serverId) {
+                    serverProd = await prisma.product.findUnique({ where: { id: parseInt(prod.serverId) }});
+                    if (serverProd) {
+                        await prisma.product.update({ where: { id: serverProd.id }, data: { androidId: prod.id } });
+                    }
                 }
-            }
-            if (!serverProd) {
-                // Cari categoryId asli di server berdasarkan androidId kategori
-                const category = await prisma.category.findUnique({ where: { androidId: prod.categoryId }});
-                const categoryId = category ? category.id : prod.categoryId; 
+                if (!serverProd) {
+                    const category = await prisma.category.findUnique({ where: { androidId: prod.categoryId }});
+                    const categoryId = category ? category.id : prod.categoryId;
 
-                serverProd = await prisma.product.create({
-                    data: {
-                        androidId: prod.id,
-                        categoryId: categoryId,
-                        sku: prod.sku || `PROD-${prod.id}-${Date.now()}`,
-                        name: prod.name,
-                        price: Number(prod.price),
-                        costPrice: Number(prod.costPrice || 0),
-                        stock: Number(prod.stock || 0),
-                        isActive: true,
-                        isUnlimitedStock: Boolean(prod.isUnlimitedStock)
-                    }
-                });
-                savedProducts++;
-            } else {
-                // Update produk yang sudah ada di server dengan data terbaru dari Android
-                const category = await prisma.category.findUnique({ where: { androidId: prod.categoryId }});
-                const categoryId = category ? category.id : (prod.categoryId || serverProd.categoryId);
+                    serverProd = await prisma.product.create({
+                        data: {
+                            androidId: prod.id,
+                            categoryId: categoryId,
+                            sku: prod.sku || `PROD-${prod.id}-${Date.now()}`,
+                            name: prod.name,
+                            price: Number(prod.price),
+                            costPrice: Number(prod.costPrice || 0),
+                            stock: Number(prod.stock || 0),
+                            isActive: true,
+                            isUnlimitedStock: Boolean(prod.isUnlimitedStock)
+                        }
+                    });
+                    savedProducts++;
+                } else {
+                    const category = await prisma.category.findUnique({ where: { androidId: prod.categoryId }});
+                    const categoryId = category ? category.id : (prod.categoryId || serverProd.categoryId);
 
-                await prisma.product.update({
-                    where: { id: serverProd.id },
-                    data: {
-                        name: prod.name || serverProd.name,
-                        price: Number(prod.price),
-                        costPrice: Number(prod.costPrice || 0),
-                        categoryId: categoryId,
-                        stock: Number(prod.stock ?? serverProd.stock),
-                        isUnlimitedStock: prod.isUnlimitedStock !== undefined ? Boolean(prod.isUnlimitedStock) : serverProd.isUnlimitedStock,
-                        barcode: prod.barcode || serverProd.barcode,
-                        minStock: prod.minStock !== undefined ? Number(prod.minStock) : serverProd.minStock
-                    }
-                });
-                savedProducts++;
+                    await prisma.product.update({
+                        where: { id: serverProd.id },
+                        data: {
+                            name: prod.name || serverProd.name,
+                            price: Number(prod.price),
+                            costPrice: Number(prod.costPrice || 0),
+                            categoryId: categoryId,
+                            stock: Number(prod.stock ?? serverProd.stock),
+                            isUnlimitedStock: prod.isUnlimitedStock !== undefined ? Boolean(prod.isUnlimitedStock) : serverProd.isUnlimitedStock,
+                            barcode: prod.barcode || serverProd.barcode,
+                            minStock: prod.minStock !== undefined ? Number(prod.minStock) : serverProd.minStock
+                        }
+                    });
+                    savedProducts++;
+                }
+                productIdMap.push({ androidId: prod.id, serverId: serverProd.id });
+            } catch (error) {
+                addSyncWarning('product', prod.id, error);
             }
-            productIdMap.push({ androidId: prod.id, serverId: serverProd.id });
         }
     }
 
@@ -433,7 +467,7 @@ exports.pushLocalData = async (req, res) => {
           savedTransactions++;
         }
         } catch(txErr) {
-            console.error(`[SYNC] Gagal proses transaksi id=${tx.id}:`, txErr.message);
+            addSyncWarning('transaction', tx.id, txErr);
         }
       }
     }
@@ -461,7 +495,7 @@ exports.pushLocalData = async (req, res) => {
                     savedExpenses++;
                 }
             } catch(expErr) {
-                console.error(`[SYNC] Gagal proses expense:`, expErr.message);
+                addSyncWarning('expense', exp.id, expErr);
             }
         }
     }
@@ -498,7 +532,7 @@ exports.pushLocalData = async (req, res) => {
                 }
                 savedShifts++;
             } catch(shiftErr) {
-                console.error(`[SYNC] Gagal proses shift id=${shift.id}:`, shiftErr.message);
+                addSyncWarning('shift', shift.id, shiftErr);
             }
         }
     }
@@ -571,7 +605,7 @@ exports.pushLocalData = async (req, res) => {
                 savedStockReceipts++;
             }
           } catch(receiptErr) {
-              console.error(`[SYNC] Gagal proses stock receipt id=${receipt.id}:`, receiptErr.message);
+              addSyncWarning('stockReceipt', receipt.id, receiptErr);
           }
         }
     }
@@ -605,7 +639,7 @@ exports.pushLocalData = async (req, res) => {
                     });
                 }
                 supplierIdMap.push({ androidId: supp.id, serverId: serverSupp.id });
-            } catch(e) { console.error('[SYNC] Gagal proses supplier:', e.message); }
+            } catch(e) { addSyncWarning('supplier', supp.id, e); }
         }
     }
 
@@ -669,7 +703,7 @@ exports.pushLocalData = async (req, res) => {
                     }
                 }
                 packageIdMap.push({ androidId: pkg.id, serverId: serverPkg.id });
-            } catch(e) { console.error('[SYNC] Gagal proses package:', e.message); }
+            } catch(e) { addSyncWarning('package', pkg.id, e); }
         }
     }
 
@@ -702,7 +736,7 @@ exports.pushLocalData = async (req, res) => {
                     }
                 }
                 dineTableIdMap.push({ androidId: table.id, serverId: serverTable.id });
-            } catch(e) { console.error('[SYNC] Gagal proses dine_table:', e.message); }
+            } catch(e) { addSyncWarning('dineTable', table.id, e); }
         }
     }
 
@@ -745,7 +779,7 @@ exports.pushLocalData = async (req, res) => {
                     });
                 }
                 addonIdMap.push({ androidId: addon.id, serverId: serverAddon.id });
-            } catch(e) { console.error('[SYNC] Gagal proses addon:', e.message); }
+            } catch(e) { addSyncWarning('addon', addon.id, e); }
         }
     }
 
@@ -753,6 +787,7 @@ exports.pushLocalData = async (req, res) => {
       success: true,
       message: `Berhasil sinkronisasi. Transaksi: ${savedTransactions}, Produk: ${savedProducts}, Kategori: ${savedCategories}, Pelanggan: ${savedCustomers}, Supplier: ${savedSuppliers}, Paket: ${savedPackages}`,
       stats: { savedTransactions, savedExpenses, savedShifts, savedCategories, savedProducts, savedCustomers, savedStockReceipts, savedSuppliers, savedPackages, savedDineTables, savedAddons },
+      warnings: syncWarnings,
       idMap: {
           categories: categoryIdMap,
           products: productIdMap,
@@ -765,6 +800,7 @@ exports.pushLocalData = async (req, res) => {
     });
 
   } catch (error) {
+    console.error('[SYNC] pushLocalData gagal:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 };

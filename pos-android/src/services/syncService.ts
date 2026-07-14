@@ -577,112 +577,87 @@ export const syncService = {
                     );
                 }
                 
-                // Update status isSynced = 1 dan serverId di local SQLite database
-                await db.transaction(async (tx: any) => {
-                    // Update Categories with serverId
-                    if (idMap.categories) {
-                        for (const item of idMap.categories) {
-                            await tx.executeSql('UPDATE categories SET serverId = ?, isSynced = 1 WHERE id = ?', [item.serverId, item.androidId]);
-                        }
+                // react-native-sqlite-storage tidak menunggu callback transaction yang async.
+                // Jalankan pembaruan berurutan agar status sinkron selalu selesai sebelum return.
+                if (idMap.categories) {
+                    for (const item of idMap.categories) {
+                        await db.executeSql('UPDATE categories SET serverId = ?, isSynced = 1 WHERE id = ?', [item.serverId, item.androidId]);
                     }
+                }
 
-                    // Update Products with serverId
-                    if (idMap.products) {
-                        for (const item of idMap.products) {
-                            await tx.executeSql('UPDATE products SET serverId = ?, isSynced = 1 WHERE id = ?', [item.serverId, item.androidId]);
-                        }
+                if (idMap.products) {
+                    for (const item of idMap.products) {
+                        await db.executeSql('UPDATE products SET serverId = ?, isSynced = 1 WHERE id = ?', [item.serverId, item.androidId]);
                     }
+                }
 
-                    // Update Customers with serverId
-                    if (idMap.customers) {
-                        for (const item of idMap.customers) {
-                            await tx.executeSql('UPDATE customers SET serverId = ?, isSynced = 1 WHERE id = ?', [item.serverId, item.androidId]);
-                        }
+                if (idMap.customers) {
+                    for (const item of idMap.customers) {
+                        await db.executeSql('UPDATE customers SET serverId = ?, isSynced = 1 WHERE id = ?', [item.serverId, item.androidId]);
                     }
+                }
 
-                    if (transactions.length > 0) {
-                        const txIds = transactions.map(t => `'${t.id}'`).join(',');
-                        await tx.executeSql(`UPDATE transactions SET isSynced = 1 WHERE id IN (${txIds})`);
-                    }
-                    if (expenses.length > 0) {
-                        const expIds = expenses.map(e => e.id).join(',');
-                        await tx.executeSql(`UPDATE expenses SET isSynced = 1 WHERE id IN (${expIds})`);
-                    }
-                    if (shifts.length > 0) {
-                        const shiftIds = shifts.map(s => `'${s.id}'`).join(',');
-                        await tx.executeSql(`UPDATE shifts SET isSynced = 1 WHERE id IN (${shiftIds})`);
-                    }
-                    if (stockReceipts.length > 0) {
-                        const receiptIds = stockReceipts.map(r => `'${r.id}'`).join(',');
-                        await tx.executeSql(`UPDATE stock_receipts SET isSynced = 1 WHERE id IN (${receiptIds})`);
-                    }
-                    
-                    // Update Suppliers with serverId
-                    if (idMap.suppliers) {
-                        for (const item of idMap.suppliers) {
-                            await tx.executeSql('UPDATE suppliers SET serverId = ?, isSynced = 1 WHERE id = ?', [item.serverId, item.androidId]);
-                        }
-                    }
+                if (transactions.length > 0) {
+                    const txIds = transactions.map(t => `'${t.id}'`).join(',');
+                    await db.executeSql(`UPDATE transactions SET isSynced = 1 WHERE id IN (${txIds})`);
+                }
+                if (expenses.length > 0) {
+                    const expIds = expenses.map(e => e.id).join(',');
+                    await db.executeSql(`UPDATE expenses SET isSynced = 1 WHERE id IN (${expIds})`);
+                }
+                if (shifts.length > 0) {
+                    const shiftIds = shifts.map(s => `'${s.id}'`).join(',');
+                    await db.executeSql(`UPDATE shifts SET isSynced = 1 WHERE id IN (${shiftIds})`);
+                }
+                if (stockReceipts.length > 0) {
+                    const receiptIds = stockReceipts.map(r => `'${r.id}'`).join(',');
+                    await db.executeSql(`UPDATE stock_receipts SET isSynced = 1 WHERE id IN (${receiptIds})`);
+                }
 
-                    // Update Packages with serverId
-                    if (idMap.packages) {
-                        for (const item of idMap.packages) {
-                            await tx.executeSql('UPDATE packages SET serverId = ?, isSynced = 1 WHERE id = ?', [item.serverId, item.androidId]);
-                        }
+                if (idMap.suppliers) {
+                    for (const item of idMap.suppliers) {
+                        await db.executeSql('UPDATE suppliers SET serverId = ?, isSynced = 1 WHERE id = ?', [item.serverId, item.androidId]);
                     }
+                }
 
-                    // Update DineTables with serverId
-                    if (idMap.dineTables) {
-                        for (const item of idMap.dineTables) {
-                            await tx.executeSql('UPDATE dine_tables SET serverId = ?, isSynced = 1 WHERE id = ?', [item.serverId, item.androidId]);
-                        }
+                if (idMap.packages) {
+                    for (const item of idMap.packages) {
+                        await db.executeSql('UPDATE packages SET serverId = ?, isSynced = 1 WHERE id = ?', [item.serverId, item.androidId]);
                     }
+                }
 
-                    // Update ProductAddons with serverId
-                    if (idMap.addons) {
-                        for (const item of idMap.addons) {
-                            await tx.executeSql('UPDATE product_addons SET serverId = ?, isSynced = 1 WHERE id = ?', [item.serverId, item.androidId]);
-                        }
+                if (idMap.dineTables) {
+                    for (const item of idMap.dineTables) {
+                        await db.executeSql('UPDATE dine_tables SET serverId = ?, isSynced = 1 WHERE id = ?', [item.serverId, item.androidId]);
                     }
+                }
 
-                    // Mark any remaining as synced (backup)
-                    if (categories.length > 0) {
-                        const ids = categories.map(c => c.id).join(',');
-                        await tx.executeSql(`UPDATE categories SET isSynced = 1 WHERE id IN (${ids}) AND isSynced = 0`);
+                if (idMap.addons) {
+                    for (const item of idMap.addons) {
+                        await db.executeSql('UPDATE product_addons SET serverId = ?, isSynced = 1 WHERE id = ?', [item.serverId, item.androidId]);
                     }
-                    if (products.length > 0) {
-                        const ids = products.map(p => p.id).join(',');
-                        await tx.executeSql(`UPDATE products SET isSynced = 1 WHERE id IN (${ids}) AND isSynced = 0`);
-                    }
-                    if (customers.length > 0) {
-                        const ids = customers.map(c => c.id).join(',');
-                        await tx.executeSql(`UPDATE customers SET isSynced = 1 WHERE id IN (${ids}) AND isSynced = 0`);
-                    }
-                    if (suppliers.length > 0) {
-                        const ids = suppliers.map(s => s.id).join(',');
-                        await tx.executeSql(`UPDATE suppliers SET isSynced = 1 WHERE id IN (${ids}) AND isSynced = 0`);
-                    }
-                    if (packages.length > 0) {
-                        const ids = packages.map(p => p.id).join(',');
-                        await tx.executeSql(`UPDATE packages SET isSynced = 1 WHERE id IN (${ids}) AND isSynced = 0`);
-                    }
-                    if (dineTables.length > 0) {
-                        const ids = dineTables.map(t => t.id).join(',');
-                        await tx.executeSql(`UPDATE dine_tables SET isSynced = 1 WHERE id IN (${ids}) AND isSynced = 0`);
-                    }
-                    if (addons.length > 0) {
-                        const ids = addons.map(a => a.id).join(',');
-                        await tx.executeSql(`UPDATE product_addons SET isSynced = 1 WHERE id IN (${ids}) AND isSynced = 0`);
-                    }
-                });
-                return { success: true, message: 'Local data pushed to server and IDs mapped successfully' };
+                }
+
+                return {
+                    success: true,
+                    message: 'Local data pushed to server and IDs mapped successfully',
+                    warnings: Array.isArray(res.data.warnings) ? res.data.warnings : [],
+                };
             }
 
             return { success: false, error: 'Server returned failure' };
 
-        } catch (error) {
+        } catch (error: any) {
             console.error('Push Local Data Error:', error);
-            return { success: false, error };
+            return {
+                success: false,
+                status: error?.response?.status,
+                error:
+                    error?.response?.data?.message ||
+                    error?.response?.data?.error ||
+                    error?.message ||
+                    'Push data lokal gagal.',
+            };
         }
     },
 

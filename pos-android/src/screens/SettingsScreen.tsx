@@ -1058,7 +1058,14 @@ export default function SettingsScreen({ navigation }: any) {
                                                 const pushRes = await syncService.pushLocalData();
                                                 console.log('[SYNC] pushLocalData result:', pushRes);
                                                 if (!pushRes.success) {
-                                                    Alert.alert('Peringatan', 'Data master berhasil ditarik, tapi gagal mendorong data lokal ke server.');
+                                                    if (pushRes.status === 401 || pushRes.status === 403) {
+                                                        showServerLoginRequired(normalizedApiBaseUrl);
+                                                        return;
+                                                    }
+                                                    Alert.alert(
+                                                        'Peringatan',
+                                                        `Data master berhasil ditarik, tetapi data lokal gagal dikirim.\n\n${pushRes.error || 'Alasan tidak diketahui.'}`
+                                                    );
                                                     return;
                                                 }
                                                 // 3. Tarik histori transaksi dari server (30 hari)
@@ -1085,6 +1092,17 @@ export default function SettingsScreen({ navigation }: any) {
                                                     }
                                                     useStore.getState().setSettings(reloadedSettings);
                                                 } catch (e) { console.warn('Gagal reload settings setelah sync:', e); }
+                                                if (pushRes.warnings?.length > 0) {
+                                                    const warningSummary = pushRes.warnings
+                                                        .slice(0, 3)
+                                                        .map((warning: any) => `${warning.entity}: ${warning.message}`)
+                                                        .join('\n');
+                                                    Alert.alert(
+                                                        'Sinkronisasi Sebagian',
+                                                        `Data utama sudah tersinkron. ${pushRes.warnings.length} data lokal belum dapat dikirim dan akan dicoba lagi.\n\n${warningSummary}`
+                                                    );
+                                                    return;
+                                                }
                                                 Alert.alert('Berhasil', 'Sinkronisasi dua arah selesai! Data terbaru sudah diunduh.');
                                             } catch (e) {
                                                 Alert.alert('Error', 'Terjadi kesalahan sistem.');
