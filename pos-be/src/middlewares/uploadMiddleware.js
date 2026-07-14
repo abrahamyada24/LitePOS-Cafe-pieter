@@ -1,6 +1,7 @@
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { uploadDir } = require('../config/storage');
 
 /**
  * LOGIKA PENYIMPANAN LOKAL (Disk Storage)
@@ -8,14 +9,11 @@ const fs = require('fs');
  */
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        const uploadPath = path.join(__dirname, '../../public/uploads');
-
-        // Pastikan folder 'public/uploads' tersedia, jika tidak ada maka buat otomatis
-        if (!fs.existsSync(uploadPath)) {
-            fs.mkdirSync(uploadPath, { recursive: true });
+        if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
         }
 
-        cb(null, uploadPath);
+        cb(null, uploadDir);
     },
     filename: (req, file, cb) => {
         // Generate nama file unik: asset-timestamp-random.ekstensi

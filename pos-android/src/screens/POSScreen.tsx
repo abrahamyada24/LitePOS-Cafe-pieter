@@ -3,10 +3,13 @@ import { View, Text, TouchableOpacity, FlatList, Image, Alert, useWindowDimensio
 import tw, { useAppColorScheme } from 'twrnc';
 import { useStore } from '../store/useStore';
 import { syncService } from '../services/syncService';
+import api, { resolveApiAssetUrl } from '../services/api';
 import { getDBConnection } from '../database/db';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { Camera, CameraType } from 'react-native-camera-kit';
+import { printKitchenTicket } from '../utils/kitchenPrinter';
 
-export default function POSScreen({ navigation }: any) {
+export default function POSScreen({ navigation, route }: any) {
     useAppColorScheme(tw);
     const { width } = useWindowDimensions();
     const isTablet = width >= 768;
@@ -32,11 +35,12 @@ export default function POSScreen({ navigation }: any) {
     const [qtyInput, setQtyInput] = useState('');
     const [editingQtyItem, setEditingQtyItem] = useState<any>(null);
 
-    // Barcode Scanner State (text input based)
+    // Barcode scanner state
     const [showScanner, setShowScanner] = useState(false);
-    const [scannedAlert, setScannedAlert] = useState<string | null>(null);
+    const [showCamera, setShowCamera] = useState(false);
     const [barcodeInput, setBarcodeInput] = useState('');
     const barcodeInputRef = useRef<TextInput>(null);
+    const cameraScanLockedRef = useRef(false);
 
     // Mobile cart panel state
     const [mobileCartExpanded, setMobileCartExpanded] = useState(false);
@@ -45,6 +49,7 @@ export default function POSScreen({ navigation }: any) {
     const collapsedHeight = 72;
     const cartPanelAnim = React.useRef(new Animated.Value(0)).current; // 0 = collapsed, 1 = expanded
     const [refreshing, setRefreshing] = useState(false);
+    const [isPrintingKitchen, setIsPrintingKitchen] = useState(false);
 
     const cart = useStore((state) => state.cart);
     const settings = useStore((state) => state.settings);
@@ -54,13 +59,107 @@ export default function POSScreen({ navigation }: any) {
     const updateCartItemNotes = useStore((state) => state.updateCartItemNotes);
     const updateCartItem = useStore((state) => state.updateCartItem);
     const clearCart = useStore((state) => state.clearCart);
+    const setPendingOrderContext = useStore((state) => state.setPendingOrderContext);
+    const pendingOrderContext = useStore((state) => state.pendingOrderContext);
     const cartTotal = useStore((state) => state.cartTotal());
     const cartSubtotal = useStore((state) => state.cartSubtotal());
     const cartItemCount = cart.reduce((acc, item) => acc + item.quantity, 0);
 
     const formatRp = (num: number) => 'Rp ' + (Math.round(num) || 0).toLocaleString('id-ID');
 
+    const parsePendingCartPayload = (cartData: string) => {
+        try {
+            const parsed = JSON.parse(cartData || '[]');
+            if (Array.isArray(parsed)) {
+                return { items: parsed, meta: {} as any };
+            }
+            return {
+                items: Array.isArray(parsed.items) ? parsed.items : [],
+                meta: parsed || {} as any,
+            };
+        } catch {
+            return { items: [], meta: {} as any };
+        }
+    };
+
+    const getPendingMeta = (pending: any) => parsePendingCartPayload(pending.cartData).meta;
+    const getPendingItemCount = (pending: any) => parsePendingCartPayload(pending.cartData).items.length;
+    const isTablePendingOrder = (pending: any) => {
+        const meta = getPendingMeta(pending);
+        return meta?.source === 'TABLE_QR' || Boolean(meta?.tableNumber);
+    };
+    const getPendingDisplayName = (pending: any) => {
+        const meta = getPendingMeta(pending);
+        if (meta?.tableNumber) {
+            const customer = meta.customerName || 'Pelanggan';
+            return `Meja ${meta.tableNumber} - ${customer}`;
+        }
+        return pending.name || 'Order Pending';
+    };
+
+    const resolvePendingCartItems = async (items: any[]) => {
+        const db = await getDBConnection();
+        const resolvedItems: any[] = [];
+
+        for (const item of items) {
+            let localProduct: any = null;
+            const serverProductId = Number(item.serverProductId || item.productId);
+            const localProductId = Number(item.id || item.productId);
+
+            if (serverProductId && !Number.isNaN(serverProductId)) {
+                const [serverRes] = await db.executeSql('SELECT * FROM products WHERE serverId = ? LIMIT 1', [serverProductId]);
+                if (serverRes.rows.length > 0) localProduct = serverRes.rows.item(0);
+            }
+
+            if (!localProduct && localProductId && !Number.isNaN(localProductId)) {
+                const [localRes] = await db.executeSql('SELECT * FROM products WHERE id = ? LIMIT 1', [localProductId]);
+                if (localRes.rows.length > 0) localProduct = localRes.rows.item(0);
+            }
+
+            const quantity = Math.max(1, Number(item.quantity || item.qty || 1));
+            resolvedItems.push({
+                ...(localProduct || item),
+                id: localProduct?.id || item.id || item.productId,
+                name: localProduct?.name || item.name || item.productName || 'Produk',
+                price: Number(item.price ?? localProduct?.price ?? 0),
+                basePrice: Number(item.basePrice ?? item.price ?? localProduct?.price ?? 0),
+                stock: localProduct?.stock ?? item.stock ?? 999,
+                isUnlimitedStock: localProduct?.isUnlimitedStock ?? item.isUnlimitedStock ?? 1,
+                imageUrl: localProduct?.imageUrl ?? item.imageUrl ?? null,
+                notes: item.notes || undefined,
+                quantity,
+                cartItemId: `${localProduct?.id || item.id || item.productId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+            });
+        }
+
+        return resolvedItems;
+    };
+
+    const getProductCartId = (product: any) => product._isPackage ? `pkg-${product.id}` : product.id;
+    const getProductCartItems = (product: any) => {
+        const productCartId = String(getProductCartId(product));
+        return cart.filter(item => String(item.id) === productCartId);
+    };
+    const getProductCartQuantity = (product: any) => (
+        getProductCartItems(product).reduce((total, item) => total + item.quantity, 0)
+    );
+    const sortSelectedProductsFirst = (items: any[]) => items
+        .map((item, index) => ({
+            item,
+            index,
+            cartIndex: cart.findIndex(cartItem => String(cartItem.id) === String(getProductCartId(item))),
+        }))
+        .sort((a, b) => {
+            const aSelected = a.cartIndex >= 0;
+            const bSelected = b.cartIndex >= 0;
+            if (aSelected !== bSelected) return aSelected ? -1 : 1;
+            if (aSelected && bSelected && a.cartIndex !== b.cartIndex) return a.cartIndex - b.cartIndex;
+            return a.index - b.index;
+        })
+        .map(entry => entry.item);
+
     const filteredProducts = (() => {
+        let visibleProducts: any[];
         if (showPaketCategory) {
             // Show active packages as sellable items
             const pkgs = packages.map(pkg => ({
@@ -69,13 +168,16 @@ export default function POSScreen({ navigation }: any) {
                 isUnlimitedStock: 1,
                 stock: 999,
             }));
-            return searchQuery.trim()
+            visibleProducts = searchQuery.trim()
                 ? pkgs.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()))
                 : pkgs;
+        } else {
+            visibleProducts = searchQuery.trim()
+                ? products.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                : products;
         }
-        return searchQuery.trim()
-            ? products.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()))
-            : products;
+
+        return sortSelectedProductsFirst(visibleProducts);
     })();
 
     const loadData = useCallback(async () => {
@@ -101,10 +203,39 @@ export default function POSScreen({ navigation }: any) {
             for (let i = 0; i < prodResults.rows.length; i++) prods.push(prodResults.rows.item(i));
             setProducts(prods);
 
-            // Load pending sales
+            // Load local pending sales
             const [pendingRes] = await db.executeSql('SELECT * FROM saved_transactions ORDER BY createdAt DESC');
             const pending: any[] = [];
-            for (let i = 0; i < pendingRes.rows.length; i++) pending.push(pendingRes.rows.item(i));
+            for (let i = 0; i < pendingRes.rows.length; i++) {
+                const localPending = pendingRes.rows.item(i);
+                const localMeta = parsePendingCartPayload(localPending.cartData).meta;
+                const isTableOrder = localMeta?.source === 'TABLE_QR' || Boolean(localMeta?.tableNumber);
+                if (isTableOrder && !settings.enableTableOrder) continue;
+                pending.push({ ...localPending, source: 'local' });
+            }
+
+            // Load server pending orders, including table QR orders submitted from public catalog
+            try {
+                const remoteRes = await api.get('/saved-transactions');
+                if (remoteRes.data?.success && Array.isArray(remoteRes.data.data)) {
+                    for (const remote of remoteRes.data.data) {
+                        const remoteMeta = parsePendingCartPayload(remote.cartData).meta;
+                        const isTableOrder = remoteMeta?.source === 'TABLE_QR' || Boolean(remoteMeta?.tableNumber);
+                        if (isTableOrder && !settings.enableTableOrder) continue;
+                        pending.push({
+                            id: remote.id,
+                            name: remote.name,
+                            cartData: remote.cartData,
+                            createdAt: remote.createdAt,
+                            source: 'server',
+                            user: remote.user
+                        });
+                    }
+                }
+            } catch (remoteError: any) {
+                console.warn('Gagal mengambil order pending server:', remoteError?.message || remoteError);
+            }
+
             setPendingSales(pending);
 
             // Load active packages
@@ -119,7 +250,7 @@ export default function POSScreen({ navigation }: any) {
         } catch (error) {
             console.error(error);
         }
-    }, [selectedCategory]);
+    }, [selectedCategory, settings.enableTableOrder]);
 
     useEffect(() => {
         loadData();
@@ -129,6 +260,13 @@ export default function POSScreen({ navigation }: any) {
         const unsubscribe = navigation.addListener('focus', loadData);
         return unsubscribe;
     }, [navigation, loadData]);
+
+    useEffect(() => {
+        if (route?.params?.openPendingOrders) {
+            setShowPendingModal(true);
+            navigation.setParams?.({ openPendingOrders: false });
+        }
+    }, [navigation, route?.params?.openPendingOrders]);
 
     const onRefresh = useCallback(async () => {
         setRefreshing(true);
@@ -244,6 +382,64 @@ export default function POSScreen({ navigation }: any) {
         updateCartQuantity(item.cartItemId, qty);
     };
 
+    const handleDecreaseProduct = (product: any) => {
+        const productCartItems = getProductCartItems(product);
+        const targetItem = productCartItems[productCartItems.length - 1];
+        if (!targetItem) return;
+        handleUpdateQuantity(targetItem, targetItem.quantity - 1);
+    };
+
+    const renderProductControls = (product: any, compact = false) => {
+        const quantity = getProductCartQuantity(product);
+        const controlWidth = compact ? 112 : undefined;
+
+        if (quantity === 0) {
+            return (
+                <TouchableOpacity
+                    style={[tw`h-9 rounded-lg bg-blue-600 flex-row items-center justify-center`, controlWidth ? { width: controlWidth } : tw`w-full`]}
+                    onPress={(event) => {
+                        event.stopPropagation();
+                        handleProductPress(product);
+                    }}
+                >
+                    <Icon name="plus" size={15} color="white" />
+                    <Text style={tw`text-white font-black text-xs ml-1`}>Tambah</Text>
+                </TouchableOpacity>
+            );
+        }
+
+        return (
+            <View
+                style={[
+                    tw`h-9 rounded-lg border border-blue-600 flex-row items-center overflow-hidden bg-white dark:bg-gray-900`,
+                    controlWidth ? { width: controlWidth } : tw`w-full`,
+                ]}
+            >
+                <TouchableOpacity
+                    style={tw`h-full flex-1 items-center justify-center`}
+                    onPress={(event) => {
+                        event.stopPropagation();
+                        handleDecreaseProduct(product);
+                    }}
+                >
+                    <Icon name="minus" size={15} color={tw.color('blue-700')} />
+                </TouchableOpacity>
+                <View style={tw`h-full min-w-[34px] px-2 items-center justify-center bg-blue-50 dark:bg-blue-900/30`}>
+                    <Text style={tw`text-blue-800 dark:text-blue-200 font-black text-sm`}>{quantity}</Text>
+                </View>
+                <TouchableOpacity
+                    style={tw`h-full flex-1 items-center justify-center bg-blue-600`}
+                    onPress={(event) => {
+                        event.stopPropagation();
+                        handleProductPress(product);
+                    }}
+                >
+                    <Icon name="plus" size={15} color="white" />
+                </TouchableOpacity>
+            </View>
+        );
+    };
+
     const handleBarcodeSubmit = async (code: string) => {
         if (!code.trim()) return;
         try {
@@ -265,42 +461,141 @@ export default function POSScreen({ navigation }: any) {
         }
     };
 
+    const openScannerPanel = () => {
+        setBarcodeInput('');
+        setShowScanner(true);
+        setTimeout(() => barcodeInputRef.current?.focus(), 300);
+    };
+
+    const handleOpenCamera = async () => {
+        if (Platform.OS === 'android') {
+            const granted = await PermissionsAndroid.request(
+                PermissionsAndroid.PERMISSIONS.CAMERA,
+                {
+                    title: 'Izin Kamera',
+                    message: 'Kamera diperlukan untuk memindai barcode produk.',
+                    buttonNegative: 'Batal',
+                    buttonPositive: 'Izinkan',
+                }
+            );
+            if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+                Alert.alert('Izin Ditolak', 'Aktifkan izin kamera untuk menggunakan scan barcode.');
+                return;
+            }
+        }
+
+        cameraScanLockedRef.current = false;
+        setShowCamera(true);
+    };
+
+    const handleCameraBarcodeRead = async (event: any) => {
+        if (cameraScanLockedRef.current) return;
+        const code = event?.nativeEvent?.codeStringValue;
+        if (!code) return;
+
+        cameraScanLockedRef.current = true;
+        await handleBarcodeSubmit(code);
+        setShowCamera(false);
+        setShowScanner(false);
+        setTimeout(() => {
+            cameraScanLockedRef.current = false;
+        }, 500);
+    };
+
+    const handlePrintKitchen = async () => {
+        if (isPrintingKitchen || cart.length === 0) return;
+        setIsPrintingKitchen(true);
+        try {
+            await printKitchenTicket(settings, cart, {
+                tableNumber: pendingOrderContext?.tableNumber,
+                customerName: pendingOrderContext?.customerName,
+                orderName: pendingOrderContext?.source === 'TABLE_QR' ? 'ORDER MEJA' : undefined,
+                queueLabel: pendingOrderContext?.queueLabel,
+            });
+            Alert.alert('Berhasil', 'Tiket dapur berhasil dicetak.');
+        } catch (error: any) {
+            Alert.alert('Gagal Cetak Dapur', error?.message || 'Periksa koneksi printer di Pengaturan.');
+        } finally {
+            setIsPrintingKitchen(false);
+        }
+    };
+
 
 
     const resumePendingSale = async (pending: any) => {
         try {
-            const cartData = JSON.parse(pending.cartData);
+            const { items, meta } = parsePendingCartPayload(pending.cartData);
+            const cartData = await resolvePendingCartItems(items);
             clearCart();
             for (const item of cartData) {
-                addToCart(item);
-                if (item.quantity > 1) {
-                    // addToCart adds one at a time, so we need to set the qty
-                    // This is handled after initial addToCart
-                }
-            }
-            // Restore quantities
-            for (const item of cartData) {
-                const cartItemId = `${item.id}-${(item.notes || '').toLowerCase().trim()}`;
-                updateCartQuantity(cartItemId, item.quantity);
+                addToCartNewLine(item);
             }
 
-            // Delete the saved transaction
-            const db = await getDBConnection();
-            await db.executeSql('DELETE FROM saved_transactions WHERE id = ?', [pending.id]);
+            if (meta?.source === 'TABLE_QR' || meta?.tableNumber) {
+                setPendingOrderContext({
+                    source: meta.source || pending.source,
+                    orderType: 'DINE_IN',
+                    tableNumber: meta.tableNumber,
+                    customerName: meta.customerName,
+                    note: meta.note,
+                    orderCode: meta.orderCode,
+                    queueNumber: meta.queueNumber,
+                    queueLabel: meta.queueLabel,
+                });
+            }
+
+            let kitchenPrintError: any = null;
+            if ((meta?.source === 'TABLE_QR' || meta?.tableNumber) && settings.enableKitchenPrint) {
+                try {
+                    await printKitchenTicket(settings, cartData, {
+                        tableNumber: meta.tableNumber,
+                        customerName: meta.customerName,
+                        orderName: 'ORDER MEJA',
+                        queueLabel: meta.queueLabel,
+                    });
+                } catch (printError) {
+                    kitchenPrintError = printError;
+                }
+            }
+
+            if (pending.source === 'server') {
+                await api.delete(`/saved-transactions/${pending.id}`);
+            } else {
+                const db = await getDBConnection();
+                await db.executeSql('DELETE FROM saved_transactions WHERE id = ?', [pending.id]);
+            }
             loadData();
             setShowPendingModal(false);
+            if (kitchenPrintError) {
+                Alert.alert(
+                    'Order Masuk ke Kasir',
+                    `Cetak dapur gagal: ${kitchenPrintError?.message || 'Periksa koneksi printer.'}`,
+                );
+            }
         } catch (e) {
             Alert.alert('Error', 'Gagal melanjutkan penjualan tersimpan.');
         }
     };
 
-    const deletePendingSale = async (id: string) => {
+    useEffect(() => {
+        const pendingOrder = route?.params?.pendingOrder;
+        if (!pendingOrder) return;
+
+        navigation.setParams?.({ pendingOrder: undefined });
+        resumePendingSale(pendingOrder);
+    }, [route?.params?.pendingOrder]);
+
+    const deletePendingSale = async (pending: any) => {
         Alert.alert('Hapus', 'Hapus penjualan yang disimpan ini?', [
             { text: 'Batal', style: 'cancel' },
             {
                 text: 'Hapus', style: 'destructive', onPress: async () => {
-                    const db = await getDBConnection();
-                    await db.executeSql('DELETE FROM saved_transactions WHERE id = ?', [id]);
+                    if (pending.source === 'server') {
+                        await api.delete(`/saved-transactions/${pending.id}`);
+                    } else {
+                        const db = await getDBConnection();
+                        await db.executeSql('DELETE FROM saved_transactions WHERE id = ?', [pending.id]);
+                    }
                     loadData();
                 }
             }
@@ -308,19 +603,23 @@ export default function POSScreen({ navigation }: any) {
     };
 
     const renderProduct = ({ item }: { item: any }) => {
+        const quantity = getProductCartQuantity(item);
+        const selectedCardStyle = quantity > 0
+            ? 'border-blue-500 bg-blue-50 dark:bg-gray-800'
+            : 'border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-800';
+
         if (!settings.showImages) {
             return (
                 <TouchableOpacity
-                    style={tw`flex-row m-2 bg-white dark:bg-gray-800 rounded-xl overflow-hidden border border-gray-100 dark:border-gray-800 shadow-sm items-center p-3`}
+                    style={tw`flex-row m-2 rounded-xl overflow-hidden border shadow-sm items-center p-3 ${selectedCardStyle}`}
                     onPress={() => handleProductPress(item)}
                 >
                     <View style={tw`flex-1`}>
                         <Text style={tw`font-bold text-gray-800 dark:text-gray-100 text-[15px]`} numberOfLines={1}>{item.name}</Text>
                         <Text style={tw`text-blue-600 font-bold mt-1 text-xs`}>{formatRp(item.price)}</Text>
+                        <Text style={tw`text-gray-400 dark:text-gray-500 text-[10px] mt-1`}>Stok: {item.isUnlimitedStock === 1 ? '∞' : item.stock}</Text>
                     </View>
-                    <View style={tw`bg-gray-50 dark:bg-gray-900 px-3 py-1 rounded-full border border-gray-200 dark:border-gray-700`}>
-                        <Text style={tw`text-gray-500 dark:text-gray-400 font-bold text-[10px]`}>Stok: {item.isUnlimitedStock === 1 ? '∞' : item.stock}</Text>
-                    </View>
+                    {renderProductControls(item, true)}
                 </TouchableOpacity>
             );
         }
@@ -328,20 +627,33 @@ export default function POSScreen({ navigation }: any) {
         return (
             <View style={{ flex: 1 / numCols, padding: 8 }}>
                 <TouchableOpacity
-                    style={tw`bg-white dark:bg-gray-800 rounded-xl overflow-hidden border border-gray-100 dark:border-gray-800 shadow-sm`}
+                    style={tw`rounded-xl overflow-hidden border shadow-sm ${selectedCardStyle}`}
                     onPress={() => handleProductPress(item)}
                 >
-                    <View style={tw`h-32 bg-gray-100 dark:bg-gray-800 items-center justify-center`}>
+                    <View style={tw`h-32 bg-gray-100 dark:bg-gray-800 items-center justify-center relative`}>
                         {item.imageUrl ? (
-                            <Image source={{ uri: item.imageUrl }} style={tw`w-full h-full`} />
+                            <Image
+                                source={{ uri: resolveApiAssetUrl(item.imageUrl, settings.apiBaseUrl) || undefined }}
+                                style={tw`w-full h-full`}
+                            />
                         ) : (
                             <Text style={tw`text-gray-400 dark:text-gray-500 text-xs uppercase tracking-widest font-bold`}>NO IMG</Text>
                         )}
+                        {quantity > 0 && (
+                            <View style={tw`absolute top-2 left-2 bg-blue-600 rounded-full px-2 py-1`}>
+                                <Text style={tw`text-white text-[10px] font-black`}>DIPILIH</Text>
+                            </View>
+                        )}
                     </View>
-                    <View style={tw`p-3`}>
+                    <View style={tw`p-3 min-h-[116px] justify-between`}>
+                        <View>
                         <Text style={tw`font-bold text-gray-800 dark:text-gray-100 text-sm`} numberOfLines={1}>{item.name}</Text>
                         <Text style={tw`text-blue-600 font-bold mt-1 text-xs`}>{formatRp(item.price)}</Text>
                         <Text style={tw`text-gray-400 dark:text-gray-500 text-[10px] mt-1`}>Stok: {item.isUnlimitedStock === 1 ? '∞' : item.stock}</Text>
+                        </View>
+                        <View style={tw`mt-2`}>
+                            {renderProductControls(item)}
+                        </View>
                     </View>
                 </TouchableOpacity>
             </View>
@@ -390,20 +702,28 @@ export default function POSScreen({ navigation }: any) {
         <View style={tw`flex-1 bg-gray-50 dark:bg-gray-900`}>
             <View style={tw`bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700`}>
                 {/* Search bar */}
-                <View style={tw`flex-row items-center mx-3 mt-3 mb-2 bg-gray-100 dark:bg-gray-700 rounded-xl px-3`}>
-                    <Icon name="magnify" size={15} color={tw.color('gray-400')} style={tw`mr-2`} />
-                    <TextInput
-                        style={tw`flex-1 py-2.5 text-gray-800 dark:text-gray-100 text-sm`}
-                        placeholder="Cari menu..."
-                        placeholderTextColor={tw.color('gray-400')}
-                        value={searchQuery}
-                        onChangeText={setSearchQuery}
-                    />
-                    {searchQuery.length > 0 && (
-                        <TouchableOpacity onPress={() => setSearchQuery('')}>
-                            <Icon name="close" size={14} color={tw.color('gray-400')} />
-                        </TouchableOpacity>
-                    )}
+                <View style={tw`flex-row items-center mx-3 mt-3 mb-2`}>
+                    <View style={tw`flex-1 flex-row items-center bg-gray-100 dark:bg-gray-700 rounded-xl px-3`}>
+                        <Icon name="magnify" size={15} color={tw.color('gray-400')} style={tw`mr-2`} />
+                        <TextInput
+                            style={tw`flex-1 py-2.5 text-gray-800 dark:text-gray-100 text-sm`}
+                            placeholder="Cari menu..."
+                            placeholderTextColor={tw.color('gray-400')}
+                            value={searchQuery}
+                            onChangeText={setSearchQuery}
+                        />
+                        {searchQuery.length > 0 && (
+                            <TouchableOpacity onPress={() => setSearchQuery('')} style={tw`p-1`}>
+                                <Icon name="close" size={14} color={tw.color('gray-400')} />
+                            </TouchableOpacity>
+                        )}
+                    </View>
+                    <TouchableOpacity
+                        style={tw`ml-2 h-11 w-11 rounded-xl bg-blue-600 items-center justify-center`}
+                        onPress={openScannerPanel}
+                    >
+                        <Icon name="barcode-scan" size={22} color="white" />
+                    </TouchableOpacity>
                 </View>
                 {/* Category pills */}
                 <FlatList
@@ -436,6 +756,7 @@ export default function POSScreen({ navigation }: any) {
 
             <FlatList
                 data={filteredProducts}
+                extraData={cart}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#3b82f6']} />}
                 numColumns={!settings.showImages ? 1 : (isTablet ? 3 : 2)}
                 key={(!settings.showImages ? 'list' : 'grid') + (isTablet ? '-tablet' : '-mobile')}
@@ -482,6 +803,16 @@ export default function POSScreen({ navigation }: any) {
                     <Text style={tw`font-bold text-gray-500 dark:text-gray-400 uppercase text-xs`}>Total Tagihan</Text>
                     <Text style={tw`font-black text-2xl text-blue-600`}>{formatRp(cartTotal)}</Text>
                 </View>
+                {settings.enableKitchenPrint && (
+                    <TouchableOpacity
+                        style={tw`mb-3 py-3 rounded-xl items-center flex-row justify-center border border-orange-300 bg-orange-50 ${isPrintingKitchen || cart.length === 0 ? 'opacity-50' : ''}`}
+                        disabled={isPrintingKitchen || cart.length === 0}
+                        onPress={handlePrintKitchen}
+                    >
+                        <Icon name="chef-hat" size={18} color={tw.color('orange-700')} style={tw`mr-2`} />
+                        <Text style={tw`font-black text-orange-700`}>{isPrintingKitchen ? 'Mencetak...' : 'Cetak Dapur'}</Text>
+                    </TouchableOpacity>
+                )}
                 <TouchableOpacity
                     style={tw`py-4 rounded-xl items-center flex-row justify-center shadow-sm ${cart.length === 0 ? 'bg-gray-300' : 'bg-blue-600'}`}
                     disabled={cart.length === 0}
@@ -557,6 +888,16 @@ export default function POSScreen({ navigation }: any) {
                             <Text style={tw`text-gray-400 text-[10px] font-bold`}>{cartItemCount} item di keranjang</Text>
                         </View>
                     </View>
+                    {settings.enableKitchenPrint && (
+                        <TouchableOpacity
+                            style={tw`mr-2 px-3 py-2.5 rounded-xl flex-row items-center border border-orange-300 bg-orange-50 ${isPrintingKitchen ? 'opacity-50' : ''}`}
+                            disabled={isPrintingKitchen}
+                            onPress={handlePrintKitchen}
+                        >
+                            <Icon name="chef-hat" size={16} color={tw.color('orange-700')} />
+                            <Text style={tw`text-orange-700 font-black text-xs ml-1`}>{isPrintingKitchen ? '...' : 'Dapur'}</Text>
+                        </TouchableOpacity>
+                    )}
                     <TouchableOpacity
                         style={tw`bg-blue-600 px-5 py-2.5 rounded-xl flex-row items-center`}
                         onPress={() => navigation.navigate('Checkout')}
@@ -620,26 +961,12 @@ export default function POSScreen({ navigation }: any) {
         );
     };
 
-    const renderScannerFAB = () => {
-        // Position changes based on platform and layout — bottom bar is now always visible
-        const bottomPosition = isTablet ? 'bottom-6' : (cartItemCount > 0 ? (mobileCartExpanded ? `bottom-[${expandedHeight + 8}px]` : 'bottom-24') : 'bottom-20');
-        return (
-            <TouchableOpacity
-                style={tw`absolute ${bottomPosition} right-4 bg-blue-600 p-4 rounded-full shadow-lg z-50 items-center justify-center`}
-                onPress={() => setShowScanner(true)}
-            >
-                <Icon name="barcode-scan" size={24} color="white" />
-            </TouchableOpacity>
-        );
-    };
-
     return (
         <View style={tw`flex-1 bg-white dark:bg-gray-800 flex-row`}>
             {renderProductsPane()}
             {isTablet && renderCartPane()}
             {renderMobileCartPanel()}
             {renderPendingFAB()}
-            {renderScannerFAB()}
 
             {/* Add-on / Notes Modal */}
             <Modal visible={addonModalVisible} transparent animationType="fade">
@@ -742,7 +1069,7 @@ export default function POSScreen({ navigation }: any) {
                 <View style={tw`flex-1 bg-black/50 justify-end`}>
                     <View style={tw`bg-white dark:bg-gray-800 rounded-t-3xl max-h-[70%] p-6`}>
                         <View style={tw`flex-row justify-between items-center mb-5`}>
-                            <Text style={tw`text-xl font-bold text-gray-800 dark:text-gray-100`}>Penjualan Tersimpan</Text>
+                            <Text style={tw`text-xl font-bold text-gray-800 dark:text-gray-100`}>Order Meja & Pending</Text>
                             <TouchableOpacity onPress={() => setShowPendingModal(false)} style={tw`p-2 bg-gray-100 dark:bg-gray-700 rounded-full`}>
                                 <Icon name="close" size={18} color={tw.color('gray-600')} />
                             </TouchableOpacity>
@@ -750,25 +1077,44 @@ export default function POSScreen({ navigation }: any) {
                         <FlatList
                             data={pendingSales}
                             keyExtractor={item => item.id}
-                            ListEmptyComponent={() => <Text style={tw`text-center text-gray-400 py-8`}>Tidak ada penjualan tersimpan</Text>}
-                            renderItem={({ item }) => (
-                                <View style={tw`flex-row items-center bg-gray-50 dark:bg-gray-900 p-4 rounded-xl mb-3 border border-gray-100 dark:border-gray-800`}>
-                                    <View style={tw`flex-1`}>
-                                        <Text style={tw`font-bold text-gray-800 dark:text-gray-100`}>{item.name}</Text>
-                                        <Text style={tw`text-xs text-gray-500 dark:text-gray-400 mt-1`}>{new Date(item.createdAt).toLocaleString('id-ID')}</Text>
-                                        <Text style={tw`text-xs text-blue-600 mt-0.5 font-bold`}>{JSON.parse(item.cartData).length} item</Text>
+                            ListEmptyComponent={() => <Text style={tw`text-center text-gray-400 py-8`}>Belum ada order meja atau pending</Text>}
+                            renderItem={({ item }) => {
+                                const meta = getPendingMeta(item);
+                                const isTableOrder = isTablePendingOrder(item);
+                                return (
+                                    <View style={tw`flex-row items-center bg-gray-50 dark:bg-gray-900 p-4 rounded-xl mb-3 border border-gray-100 dark:border-gray-800`}>
+                                        <View style={tw`flex-1`}>
+                                            <View style={tw`flex-row items-center flex-wrap`}>
+                                                <Text style={tw`font-bold text-gray-800 dark:text-gray-100 mr-2`}>{getPendingDisplayName(item)}</Text>
+                                                {isTableOrder && (
+                                                    <View style={tw`bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full mr-1`}>
+                                                        <Text style={tw`text-[9px] font-black text-emerald-700 uppercase`}>Order Meja</Text>
+                                                    </View>
+                                                )}
+                                                {item.source === 'server' && (
+                                                    <View style={tw`bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full`}>
+                                                        <Text style={tw`text-[9px] font-black text-blue-600 uppercase`}>Server</Text>
+                                                    </View>
+                                                )}
+                                            </View>
+                                            <Text style={tw`text-xs text-gray-500 dark:text-gray-400 mt-1`}>{new Date(item.createdAt).toLocaleString('id-ID')}</Text>
+                                            {meta?.orderCode ? (
+                                                <Text style={tw`text-xs text-gray-500 dark:text-gray-400 mt-0.5`}>{meta.orderCode}</Text>
+                                            ) : null}
+                                            <Text style={tw`text-xs text-blue-600 mt-0.5 font-bold`}>{getPendingItemCount(item)} item</Text>
+                                        </View>
+                                        <View style={tw`flex-row gap-2`}>
+                                            <TouchableOpacity style={tw`p-2 bg-red-50 rounded-lg`} onPress={() => deletePendingSale(item)}>
+                                                <Icon name="delete-outline" size={16} color={tw.color('red-500')} />
+                                            </TouchableOpacity>
+                                            <TouchableOpacity style={tw`bg-blue-600 px-4 py-2 rounded-xl flex-row items-center`} onPress={() => resumePendingSale(item)}>
+                                                <Text style={tw`text-white font-bold text-sm`}>Lanjutkan</Text>
+                                                <Icon name="chevron-right" size={14} color="white" />
+                                            </TouchableOpacity>
+                                        </View>
                                     </View>
-                                    <View style={tw`flex-row gap-2`}>
-                                        <TouchableOpacity style={tw`p-2 bg-red-50 rounded-lg`} onPress={() => deletePendingSale(item.id)}>
-                                            <Icon name="delete-outline" size={16} color={tw.color('red-500')} />
-                                        </TouchableOpacity>
-                                        <TouchableOpacity style={tw`bg-blue-600 px-4 py-2 rounded-xl flex-row items-center`} onPress={() => resumePendingSale(item)}>
-                                            <Text style={tw`text-white font-bold text-sm`}>Lanjutkan</Text>
-                                            <Icon name="chevron-right" size={14} color="white" />
-                                        </TouchableOpacity>
-                                    </View>
-                                </View>
-                            )}
+                                );
+                            }}
                         />
                     </View>
                 </View>
@@ -785,23 +1131,63 @@ export default function POSScreen({ navigation }: any) {
                             </TouchableOpacity>
                         </View>
 
-                        <Text style={tw`text-[10px] text-center text-gray-500 mb-3 mt-2`}>Ketik manual atau scan dengan alat Eksternal</Text>
-                                <TextInput
-                                    ref={barcodeInputRef}
-                                    style={tw`border-2 border-blue-400 rounded-xl px-4 py-3 text-lg font-bold text-gray-800 dark:text-gray-100 bg-blue-50 dark:bg-gray-700 mb-3 text-center tracking-widest`}
-                                    placeholder="Input barcode..."
-                                    placeholderTextColor={tw.color('gray-400')}
-                                    value={barcodeInput}
-                                    onChangeText={setBarcodeInput}
-                                    returnKeyType="done"
-                                    onSubmitEditing={() => handleBarcodeSubmit(barcodeInput)}
-                                />
-                                <TouchableOpacity
-                                    style={tw`bg-blue-600 py-3 rounded-xl items-center shadow-md`}
-                                    onPress={() => handleBarcodeSubmit(barcodeInput)}
-                                >
-                                    <Text style={tw`text-white font-bold text-base`}>Proses</Text>
-                                </TouchableOpacity>
+                        <TouchableOpacity
+                            style={tw`bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 py-4 rounded-xl items-center flex-row justify-center mb-4`}
+                            onPress={handleOpenCamera}
+                        >
+                            <Icon name="camera" size={22} color={tw.color('blue-600')} style={tw`mr-2`} />
+                            <Text style={tw`text-blue-700 dark:text-blue-200 font-black`}>Scan dengan Kamera</Text>
+                        </TouchableOpacity>
+
+                        <View style={tw`flex-row items-center mb-3`}>
+                            <View style={tw`flex-1 h-px bg-gray-200 dark:bg-gray-700`} />
+                            <Text style={tw`px-3 text-[10px] text-gray-400 font-bold uppercase`}>Barcode USB / Manual</Text>
+                            <View style={tw`flex-1 h-px bg-gray-200 dark:bg-gray-700`} />
+                        </View>
+
+                        <TextInput
+                            ref={barcodeInputRef}
+                            style={tw`border border-gray-300 dark:border-gray-600 rounded-xl px-4 py-3 text-lg font-bold text-gray-800 dark:text-gray-100 bg-gray-50 dark:bg-gray-700 mb-3 text-center tracking-widest`}
+                            placeholder="Ketik atau scan barcode"
+                            placeholderTextColor={tw.color('gray-400')}
+                            value={barcodeInput}
+                            onChangeText={setBarcodeInput}
+                            returnKeyType="done"
+                            onSubmitEditing={() => handleBarcodeSubmit(barcodeInput)}
+                        />
+                        <TouchableOpacity
+                            style={tw`bg-blue-600 py-3 rounded-xl items-center`}
+                            onPress={() => handleBarcodeSubmit(barcodeInput)}
+                        >
+                            <Text style={tw`text-white font-bold text-base`}>Tambahkan Produk</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* Full-screen camera keeps scanner controls away from cart actions */}
+            <Modal visible={showCamera} animationType="fade" onRequestClose={() => setShowCamera(false)}>
+                <View style={tw`flex-1 bg-black`}>
+                    <Camera
+                        style={tw`flex-1`}
+                        cameraType={CameraType.Back}
+                        scanBarcode={true}
+                        showFrame={true}
+                        laserColor="#3b82f6"
+                        frameColor="white"
+                        onReadCode={handleCameraBarcodeRead}
+                    />
+                    <View style={tw`absolute top-0 left-0 right-0 pt-10 px-4 pb-4 bg-black/60 flex-row items-center justify-between`}>
+                        <View>
+                            <Text style={tw`text-white font-black text-lg`}>Scan Barcode</Text>
+                            <Text style={tw`text-gray-300 text-xs mt-1`}>Arahkan kamera ke barcode produk</Text>
+                        </View>
+                        <TouchableOpacity
+                            style={tw`w-11 h-11 rounded-full bg-white/20 items-center justify-center`}
+                            onPress={() => setShowCamera(false)}
+                        >
+                            <Icon name="close" size={24} color="white" />
+                        </TouchableOpacity>
                     </View>
                 </View>
             </Modal>

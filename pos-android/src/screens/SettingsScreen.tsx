@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     Alert, PermissionsAndroid, Platform, View, Text, TouchableOpacity,
     ScrollView, TextInput, Switch, Image, LayoutAnimation, UIManager, Linking
@@ -15,7 +15,9 @@ import RNFS from 'react-native-fs';
 import { pick, types } from '@react-native-documents/picker';
 import { requestPrinterPermissions } from '../utils/permissions';
 import { RECEIPT_LOGO_BASE64 } from '../assets/receiptLogoBase64';
-import { API_URL } from '../services/api';
+import ViewShot from 'react-native-view-shot';
+import api, { DEFAULT_API_URL, getApiBaseUrl, setApiBaseUrl as persistApiBaseUrl } from '../services/api';
+import { connectConfiguredPrinter } from '../utils/printerConnection';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
     UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -62,6 +64,8 @@ export default function SettingsScreen({ navigation }: any) {
     const [enablePreOrder, setEnablePreOrder] = useState<boolean>(settings?.enablePreOrder ?? false);
     const [enableShift, setEnableShift] = useState<boolean>(settings?.enableShift ?? true);
     const [enableDineTable, setEnableDineTable] = useState<boolean>(settings?.enableDineTable ?? false);
+    const [enableTableOrder, setEnableTableOrder] = useState<boolean>(settings?.enableTableOrder ?? false);
+    const [enableKitchenPrint, setEnableKitchenPrint] = useState<boolean>(settings?.enableKitchenPrint ?? false);
     const [allowNegativeStock, setAllowNegativeStock] = useState<boolean>(settings?.allowNegativeStock ?? false);
     const [showLogoOnReceipt, setShowLogoOnReceipt] = useState<boolean>(settings?.showLogoOnReceipt ?? true);
     const [receiptFooter, setReceiptFooter] = useState<string>(settings?.receiptFooter || '');
@@ -71,14 +75,16 @@ export default function SettingsScreen({ navigation }: any) {
     const [loyaltyPointValue, setLoyaltyPointValue] = useState<string>(String(settings?.loyalty_point_value || '0'));
     const [loyaltyMinPoints, setLoyaltyMinPoints] = useState<string>(String(settings?.loyalty_min_points || '0'));
     const [googleSheetUrl, setGoogleSheetUrl] = useState<string>(settings?.google_sheet_url || '');
+    const [apiBaseUrl, setApiBaseUrlInput] = useState<string>(settings?.apiBaseUrl || DEFAULT_API_URL);
     const [, , setColorScheme] = useAppColorScheme(tw);
+    const logoShotRef = useRef<any>(null);
 
     // Printer state
     const [bleDevices, setBleDevices] = useState<any[]>([]);
     const [usbDevices, setUsbDevices] = useState<any[]>([]);
     const [isScanning, setIsScanning] = useState(false);
     const [connectedPrinter, setConnectedPrinter] = useState<string | null>(null);
-    const [printerType, setPrinterType] = useState<string | null>(null);
+    const [printerType, setPrinterType] = useState<'BLE' | 'USB' | null>(null);
     const [activeTab, setActiveTab] = useState<'BLE' | 'USB'>('BLE');
 
     // Accordion state
@@ -100,6 +106,7 @@ export default function SettingsScreen({ navigation }: any) {
                 const item = results.rows.item(i);
                 rawSettings[item.key] = item.value;
             }
+            const normalizedApiBaseUrl = await persistApiBaseUrl(rawSettings.apiBaseUrl || await getApiBaseUrl());
             const finalSettings = {
                 ...settings,
                 storeName: rawSettings.storeName || 'LitePOS',
@@ -108,6 +115,8 @@ export default function SettingsScreen({ navigation }: any) {
                 storeLogo: rawSettings.storeLogo || null,
                 enablePreOrder: rawSettings.enablePreOrder === 'true',
                 enableDineTable: rawSettings.enableDineTable === 'true',
+                enableTableOrder: rawSettings.enableTableOrder === 'true',
+                enableKitchenPrint: rawSettings.enableKitchenPrint === 'true',
                 enableShift: rawSettings.enableShift === undefined ? true : rawSettings.enableShift === 'true',
                 showImages: rawSettings.showImages === 'true',
                 printerAddress: rawSettings.printerAddress || null,
@@ -122,6 +131,7 @@ export default function SettingsScreen({ navigation }: any) {
                 loyalty_point_value: Number(rawSettings.loyalty_point_value || 0),
                 loyalty_min_points: Number(rawSettings.loyalty_min_points || 0),
                 google_sheet_url: rawSettings.google_sheet_url || '',
+                apiBaseUrl: normalizedApiBaseUrl,
             };
             setStoreName(finalSettings.storeName);
             setStoreAddress(finalSettings.storeAddress);
@@ -130,12 +140,15 @@ export default function SettingsScreen({ navigation }: any) {
             setEnablePreOrder(finalSettings.enablePreOrder);
             setEnableShift(rawSettings.enableShift === undefined ? true : rawSettings.enableShift === 'true');
             setEnableDineTable(finalSettings.enableDineTable);
+            setEnableTableOrder(finalSettings.enableTableOrder);
+            setEnableKitchenPrint(finalSettings.enableKitchenPrint);
             setLoyaltyActive(finalSettings.loyalty_active);
             setLoyaltyMultiplier(String(finalSettings.loyalty_multiplier));
             setLoyaltyMultiplierAmount(String(finalSettings.loyalty_multiplier_amount));
             setLoyaltyPointValue(String(finalSettings.loyalty_point_value));
             setLoyaltyMinPoints(String(finalSettings.loyalty_min_points));
             setGoogleSheetUrl(finalSettings.google_sheet_url);
+            setApiBaseUrlInput(finalSettings.apiBaseUrl);
             setShowImages(finalSettings.showImages);
             setIsDarkMode(finalSettings.theme === 'dark');
             setAllowNegativeStock(finalSettings.allowNegativeStock);
@@ -157,6 +170,7 @@ export default function SettingsScreen({ navigation }: any) {
         try {
             const db = await getDBConnection();
             const themeToSave = isDarkMode ? 'dark' : 'light';
+            const normalizedApiBaseUrl = await persistApiBaseUrl(apiBaseUrl || DEFAULT_API_URL);
             const settingsToSave = [
                 ['storeName', storeName],
                 ['storeAddress', storeAddress],
@@ -165,6 +179,8 @@ export default function SettingsScreen({ navigation }: any) {
                 ['enablePreOrder', enablePreOrder ? 'true' : 'false'],
                 ['enableShift', enableShift ? 'true' : 'false'],
                 ['enableDineTable', enableDineTable ? 'true' : 'false'],
+                ['enableTableOrder', enableTableOrder ? 'true' : 'false'],
+                ['enableKitchenPrint', enableKitchenPrint ? 'true' : 'false'],
                 ['showImages', showImages ? 'true' : 'false'],
                 ['theme', themeToSave],
                 ['allowNegativeStock', allowNegativeStock ? 'true' : 'false'],
@@ -176,21 +192,23 @@ export default function SettingsScreen({ navigation }: any) {
                 ['loyalty_point_value', loyaltyPointValue],
                 ['loyalty_min_points', loyaltyMinPoints],
                 ['google_sheet_url', googleSheetUrl],
+                ['apiBaseUrl', normalizedApiBaseUrl],
             ];
             for (const [key, value] of settingsToSave) {
                 await db.executeSql(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`, [key, value]);
             }
-            if (connectedPrinter) {
+            if (connectedPrinter && printerType) {
                 await db.executeSql(`INSERT OR REPLACE INTO settings (key, value) VALUES ('printerAddress', ?)`, [connectedPrinter]);
-                await db.executeSql(`INSERT OR REPLACE INTO settings (key, value) VALUES ('printerType', ?)`, ['BLE']);
+                await db.executeSql(`INSERT OR REPLACE INTO settings (key, value) VALUES ('printerType', ?)`, [printerType]);
             }
-            setSettings({ ...settings, storeName, storeAddress, storePhone, storeLogo, enablePreOrder, enableShift, enableDineTable, showImages, printerAddress: connectedPrinter, printerType: 'BLE', theme: themeToSave, allowNegativeStock, showLogoOnReceipt, receiptFooter,
+            setSettings({ ...settings, storeName, storeAddress, storePhone, storeLogo, enablePreOrder, enableShift, enableDineTable, enableTableOrder, enableKitchenPrint, showImages, printerAddress: connectedPrinter, printerType, theme: themeToSave, allowNegativeStock, showLogoOnReceipt, receiptFooter,
                 loyalty_active: loyaltyActive,
                 loyalty_multiplier: Number(loyaltyMultiplier),
                 loyalty_multiplier_amount: Number(loyaltyMultiplierAmount),
                 loyalty_point_value: Number(loyaltyPointValue),
                 loyalty_min_points: Number(loyaltyMinPoints),
-                google_sheet_url: googleSheetUrl
+                google_sheet_url: googleSheetUrl,
+                apiBaseUrl: normalizedApiBaseUrl
             });
             setColorScheme(themeToSave);
         } catch (error) {
@@ -203,7 +221,30 @@ export default function SettingsScreen({ navigation }: any) {
             saveSettings();
         }, 800);
         return () => clearTimeout(timer);
-    }, [storeName, storeAddress, storePhone, storeLogo, enablePreOrder, enableShift, enableDineTable, showImages, isDarkMode, allowNegativeStock, showLogoOnReceipt, receiptFooter, loyaltyActive, loyaltyMultiplier, loyaltyMultiplierAmount, loyaltyPointValue, loyaltyMinPoints, googleSheetUrl]);
+    }, [storeName, storeAddress, storePhone, storeLogo, enablePreOrder, enableShift, enableDineTable, enableTableOrder, enableKitchenPrint, showImages, isDarkMode, allowNegativeStock, showLogoOnReceipt, receiptFooter, loyaltyActive, loyaltyMultiplier, loyaltyMultiplierAmount, loyaltyPointValue, loyaltyMinPoints, googleSheetUrl, apiBaseUrl]);
+
+    const persistBackendUrl = async (value: string = apiBaseUrl) => {
+        const normalized = await persistApiBaseUrl(value || DEFAULT_API_URL);
+        const db = await getDBConnection();
+        await db.executeSql(`INSERT OR REPLACE INTO settings (key, value) VALUES ('apiBaseUrl', ?)`, [normalized]);
+        setApiBaseUrlInput(normalized);
+        setSettings({ ...useStore.getState().settings, apiBaseUrl: normalized });
+        return normalized;
+    };
+
+    const handleTestApiConnection = async () => {
+        try {
+            const normalized = await persistBackendUrl();
+            const res = await api.get('/health', { timeout: 5000 });
+            Alert.alert(
+                'Koneksi Berhasil',
+                `Backend aktif: ${normalized}\nDatabase: ${res.data?.database || 'UNKNOWN'}`
+            );
+        } catch (e: any) {
+            const message = e?.response?.data?.error || e?.message || 'Tidak bisa menghubungi backend.';
+            Alert.alert('Koneksi Gagal', `${message}\n\nPastikan HP/PC berada di jaringan yang sama dan backend sedang berjalan.`);
+        }
+    };
 
 
     // ── Bluetooth ─────────────────────────────────────────────────────────────
@@ -226,44 +267,37 @@ export default function SettingsScreen({ navigation }: any) {
     };
 
     // ── Test Print ───────────────────────────────────────────────────────────
+    const getPrintableLogoBase64 = async (): Promise<string> => {
+        if (storeLogo && logoShotRef.current?.capture) {
+            try {
+                const uri = await logoShotRef.current.capture();
+                return await RNFS.readFile(uri.replace('file://', ''), 'base64');
+            } catch (logoErr) {
+                console.warn('Logo capture failed, using default logo:', logoErr);
+            }
+        }
+
+        return RECEIPT_LOGO_BASE64;
+    };
+
     const handleTestPrint = async () => {
         if (!connectedPrinter || !printerType) {
             Alert.alert('Info', 'Belum ada printer yang tersambung.');
             return;
         }
 
-        const hasPerms = await requestPrinterPermissions();
-        if (!hasPerms && printerType === 'BLE') {
-            Alert.alert('Izin Ditolak', 'Dibutuhkan izin Bluetooth untuk mencetak.');
-            return;
-        }
-
         try {
-            const printerClass = printerType === 'USB' ? USBPrinter : BLEPrinter;
-            try { await printerClass.init(); } catch (e) { /* Already initialized */ }
-            try {
-                if (printerType === 'BLE') {
-                    await printerClass.connectPrinter(connectedPrinter);
-                } else {
-                    const [vendorStr, productStr] = connectedPrinter.split('|');
-                    await printerClass.connectPrinter(Number(vendorStr), Number(productStr));
-                }
-            } catch (e) { /* Already connected */ }
+            const printerClass = await connectConfiguredPrinter({
+                printerAddress: connectedPrinter,
+                printerType,
+            });
 
             // Print logo
             if (showLogoOnReceipt === true || String(showLogoOnReceipt) === 'true') {
                 try {
-                    let logoToPrint = RECEIPT_LOGO_BASE64;
-                    if (storeLogo) {
-                        const logoUrl = storeLogo.startsWith('http') ? storeLogo : `${API_URL}${storeLogo}`;
-                        const tempFile = `${RNFS.CachesDirectoryPath}/temp_print_logo.png`;
-                        const res = await RNFS.downloadFile({ fromUrl: logoUrl, toFile: tempFile }).promise;
-                        if (res.statusCode === 200) {
-                            logoToPrint = await RNFS.readFile(tempFile, 'base64');
-                        }
-                    }
+                    const logoToPrint = await getPrintableLogoBase64();
                     await printerClass.printImageBase64(logoToPrint, { imageWidth: 180 });
-                    await new Promise<void>(resolve => setTimeout(() => resolve(), 1500));
+                    await new Promise<void>(resolve => setTimeout(() => resolve(), 500));
                 } catch (logoErr) {
                     console.warn('Logo print failed (lanjut cetak teks):', logoErr);
                 }
@@ -276,7 +310,10 @@ export default function SettingsScreen({ navigation }: any) {
             let text = '';
             text += center(storeNameForPrint, WIDTH) + '\n';
             if (settings.storeAddress) {
-                text += center(settings.storeAddress.substring(0, WIDTH), WIDTH) + '\n';
+                const addressLines = wrapText(settings.storeAddress, WIDTH);
+                for (const line of addressLines) {
+                    text += center(line, WIDTH) + '\n';
+                }
             }
             if (settings.storePhone) {
                 text += center(`Telp: ${settings.storePhone} `, WIDTH) + '\n';
@@ -292,7 +329,10 @@ export default function SettingsScreen({ navigation }: any) {
             text += `TOTAL: Rp 10000 \n`;
             text += LINE;
             if (settings.receiptFooter) {
-                text += center(settings.receiptFooter, WIDTH) + '\n';
+                const footerLines = wrapText(settings.receiptFooter, WIDTH);
+                for (const line of footerLines) {
+                    text += center(line, WIDTH) + '\n';
+                }
             }
             text += 'Terima Kasih!\n';
 
@@ -307,6 +347,44 @@ export default function SettingsScreen({ navigation }: any) {
         const len = text.length;
         const spaces = Math.max(0, Math.floor((width - len) / 2));
         return ' '.repeat(spaces) + text;
+    };
+
+    const wrapText = (text: string, width: number): string[] => {
+        const result: string[] = [];
+        const paragraphs = text.split('\n');
+        for (const paragraph of paragraphs) {
+            if (paragraph.length <= width) {
+                result.push(paragraph);
+                continue;
+            }
+            const words = paragraph.split(' ');
+            let currentLine = '';
+            for (const word of words) {
+                if (currentLine.length === 0) {
+                    if (word.length > width) {
+                        for (let i = 0; i < word.length; i += width) {
+                            result.push(word.substring(i, i + width));
+                        }
+                    } else {
+                        currentLine = word;
+                    }
+                } else if ((currentLine + ' ' + word).length <= width) {
+                    currentLine += ' ' + word;
+                } else {
+                    result.push(currentLine);
+                    if (word.length > width) {
+                        for (let i = 0; i < word.length; i += width) {
+                            result.push(word.substring(i, i + width));
+                        }
+                        currentLine = '';
+                    } else {
+                        currentLine = word;
+                    }
+                }
+            }
+            if (currentLine) result.push(currentLine);
+        }
+        return result;
     };
 
     const savePrinterToDb = async (address: string, type: 'BLE' | 'USB') => {
@@ -332,8 +410,8 @@ export default function SettingsScreen({ navigation }: any) {
     const connectUSB = async (device: any) => {
         setIsScanning(true);
         try {
-            await USBPrinter.connectPrinter(device.vendor_id, device.product_id);
             const printerId = `${device.vendor_id}|${device.product_id}`;
+            await connectConfiguredPrinter({ printerAddress: printerId, printerType: 'USB' });
             setConnectedPrinter(printerId); setPrinterType('USB');
             await savePrinterToDb(printerId, 'USB');
             Alert.alert('Tersambung', 'Printer USB siap digunakan.');
@@ -416,7 +494,7 @@ export default function SettingsScreen({ navigation }: any) {
                                         for (const s of (data.suppliers || [])) await db.executeSql('INSERT OR REPLACE INTO suppliers (id, name, phone, address, notes) VALUES (?,?,?,?,?)', [s.id, s.name, s.phone || null, s.address || null, s.notes || null]);
                                         for (const p of (data.packages || [])) await db.executeSql('INSERT OR REPLACE INTO packages (id, name, description, price, isActive, createdAt) VALUES (?,?,?,?,?,?)', [p.id, p.name, p.description || null, p.price, p.isActive, p.createdAt]);
                                         for (const pi of (data.package_items || [])) await db.executeSql('INSERT OR REPLACE INTO package_items (id, packageId, productId, quantity) VALUES (?,?,?,?)', [pi.id, pi.packageId, pi.productId, pi.quantity]);
-                                        for (const t of (data.transactions || [])) await db.executeSql('INSERT OR REPLACE INTO transactions (id, invoiceNumber, grandTotal, discountAmount, paymentMethod, cashAmount, changeAmount, customerId, customerName, createdAt, status, preOrderDate) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', [t.id, t.invoiceNumber, t.grandTotal, t.discountAmount || 0, t.paymentMethod, t.cashAmount || 0, t.changeAmount || 0, t.customerId || null, t.customerName || null, t.createdAt, t.status || 'COMPLETED', t.preOrderDate || null]);
+                                        for (const t of (data.transactions || [])) await db.executeSql('INSERT OR REPLACE INTO transactions (id, invoiceNumber, grandTotal, discountAmount, paymentMethod, cashAmount, changeAmount, customerId, customerName, createdAt, status, preOrderDate, paymentStatus, paidAmount, remainingAmount, paidAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', [t.id, t.invoiceNumber, t.grandTotal, t.discountAmount || 0, t.paymentMethod, t.cashAmount || 0, t.changeAmount || 0, t.customerId || null, t.customerName || null, t.createdAt, t.status || 'COMPLETED', t.preOrderDate || null, t.paymentStatus || 'PAID', t.paymentStatus === 'UNPAID' ? 0 : (t.paidAmount || t.grandTotal || 0), t.remainingAmount || 0, t.paymentStatus === 'UNPAID' ? null : (t.paidAt || t.createdAt)]);
                                         for (const ti of (data.transaction_items || [])) await db.executeSql('INSERT OR REPLACE INTO transaction_items (id, transactionId, productId, quantity, price, notes) VALUES (?,?,?,?,?,?)', [ti.id, ti.transactionId, ti.productId || null, ti.quantity, ti.price, ti.notes || null]);
                                         for (const e of (data.expenses || [])) await db.executeSql('INSERT OR REPLACE INTO expenses (id, description, amount, category, createdAt) VALUES (?,?,?,?,?)', [e.id, e.description, e.amount, e.category || 'Umum', e.createdAt]);
 
@@ -449,6 +527,29 @@ export default function SettingsScreen({ navigation }: any) {
                 </View>
             </View>
 
+            {storeLogo && showLogoOnReceipt ? (
+                <View pointerEvents="none" style={{ position: 'absolute', left: -10000, top: -10000, width: 220, height: 120 }}>
+                    <ViewShot
+                        ref={logoShotRef}
+                        options={{ format: 'jpg', quality: 0.95 }}
+                        style={{
+                            width: 220,
+                            height: 120,
+                            padding: 10,
+                            backgroundColor: '#FFFFFF',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                        }}
+                    >
+                        <Image
+                            source={{ uri: storeLogo }}
+                            style={{ width: 200, height: 100 }}
+                            resizeMode="contain"
+                        />
+                    </ViewShot>
+                </View>
+            ) : null}
+
             <ScrollView contentContainerStyle={tw`p-4 pb-10`}>
                 {/* ── PROFIL TOKO ────────────────────────────────────────────────── */}
                 <SectionItem
@@ -472,7 +573,9 @@ export default function SettingsScreen({ navigation }: any) {
                         <Text style={tw`text-xs font-bold text-gray-500 mb-2`}>Logo Toko</Text>
                         <View style={tw`flex-row items-center mb-4`}>
                             {storeLogo ? (
-                                <Image source={{ uri: storeLogo }} style={tw`w-16 h-16 rounded-xl mr-4 border border-gray-200`} resizeMode="contain" />
+                                <View style={tw`w-24 h-16 rounded-xl mr-4 border border-gray-200 bg-white items-center justify-center overflow-hidden`}>
+                                    <Image source={{ uri: storeLogo }} style={{ width: 88, height: 56 }} resizeMode="contain" />
+                                </View>
                             ) : (
                                 <View style={tw`w-16 h-16 rounded-xl mr-4 bg-gray-100 dark:bg-gray-900 items-center justify-center border border-dashed border-gray-300`}>
                                     <Icon name="camera" size={20} color={tw.color('gray-400')} />
@@ -486,14 +589,23 @@ export default function SettingsScreen({ navigation }: any) {
                                     }}>
                                     <Text style={tw`text-blue-600 font-bold text-xs`}>Pilih Logo</Text>
                                 </TouchableOpacity>
-                                {storeLogo && <TouchableOpacity onPress={() => setStoreLogo(null)}><Text style={tw`text-red-400 text-xs font-bold`}>Hapus Logo</Text></TouchableOpacity>}
+                                {storeLogo && (
+                                    <TouchableOpacity
+                                        onPress={() => Alert.alert('Hapus Logo', 'Logo toko akan dihapus dari struk. Lanjutkan?', [
+                                            { text: 'Batal', style: 'cancel' },
+                                            { text: 'Hapus', style: 'destructive', onPress: () => setStoreLogo(null) },
+                                        ])}
+                                    >
+                                        <Text style={tw`text-red-400 text-xs font-bold`}>Hapus Logo</Text>
+                                    </TouchableOpacity>
+                                )}
                             </View>
                         </View>
                         
                         <View style={tw`flex-row justify-between items-center bg-gray-50 dark:bg-gray-900 p-3 rounded-xl mb-4 border border-gray-100 dark:border-gray-800`}>
                             <View>
                                 <Text style={tw`text-sm font-bold text-gray-800 dark:text-gray-100`}>Tampilkan Logo di Struk</Text>
-                                <Text style={tw`text-xs text-gray-500 dark:text-gray-400`}>Cetak logo bawaan pada bagian atas struk</Text>
+                                <Text style={tw`text-xs text-gray-500 dark:text-gray-400`}>Cetak logo toko pada bagian atas struk</Text>
                             </View>
                             <Switch value={showLogoOnReceipt} onValueChange={setShowLogoOnReceipt} trackColor={{ false: '#d1d5db', true: '#93c5fd' }} thumbColor={showLogoOnReceipt ? '#2563eb' : '#f3f4f6'} />
                         </View>
@@ -554,7 +666,35 @@ export default function SettingsScreen({ navigation }: any) {
                                 </View>
                                 <Text style={tw`text-gray-500 text-xs`}>Kelola meja dine-in (restoran, kafe)</Text>
                             </View>
-                            <Switch value={enableDineTable} onValueChange={setEnableDineTable} trackColor={{ false: '#d1d5db', true: '#86efac' }} thumbColor={enableDineTable ? '#16a34a' : '#f3f4f6'} />
+                            <Switch
+                                value={enableDineTable}
+                                onValueChange={(value) => {
+                                    setEnableDineTable(value);
+                                    if (!value) setEnableTableOrder(false);
+                                }}
+                                trackColor={{ false: '#d1d5db', true: '#86efac' }}
+                                thumbColor={enableDineTable ? '#16a34a' : '#f3f4f6'}
+                            />
+                        </View>
+
+                        {/* Table Order */}
+                        <View style={tw`flex-row items-center justify-between pt-4 border-t border-gray-100 dark:border-gray-800`}>
+                            <View style={tw`flex-1 mr-4`}>
+                                <View style={tw`flex-row items-center mb-1`}>
+                                    <Icon name="qrcode-scan" size={14} color={tw.color('emerald-600')} style={tw`mr-2`} />
+                                    <Text style={tw`text-gray-800 dark:text-gray-100 font-bold`}>Order Meja via QR</Text>
+                                </View>
+                                <Text style={tw`text-gray-500 text-xs`}>Terima order pembeli dari QR meja</Text>
+                            </View>
+                            <Switch
+                                value={enableTableOrder}
+                                onValueChange={(value) => {
+                                    setEnableTableOrder(value);
+                                    if (value) setEnableDineTable(true);
+                                }}
+                                trackColor={{ false: '#d1d5db', true: '#6ee7b7' }}
+                                thumbColor={enableTableOrder ? '#059669' : '#f3f4f6'}
+                            />
                         </View>
 
                         {/* Allow Negative Stock */}
@@ -669,7 +809,21 @@ export default function SettingsScreen({ navigation }: any) {
                                 <Text style={tw`text-green-700 font-bold ml-2 flex-1 text-xs`}>Tersambung: {printerType} — {connectedPrinter.substring(0, 20)}</Text>
                             </View>
                         )}
-                        {/* Toggle was here */}
+                        <View style={tw`flex-row items-center justify-between mb-4 pb-4 border-b border-gray-100 dark:border-gray-800`}>
+                            <View style={tw`flex-1 mr-4`}>
+                                <View style={tw`flex-row items-center mb-1`}>
+                                    <Icon name="chef-hat" size={16} color={tw.color('orange-600')} style={tw`mr-2`} />
+                                    <Text style={tw`text-gray-800 dark:text-gray-100 font-bold`}>Aktifkan Cetak Dapur</Text>
+                                </View>
+                                <Text style={tw`text-gray-500 text-xs`}>Tampilkan tombol tiket dapur di layar kasir</Text>
+                            </View>
+                            <Switch
+                                value={enableKitchenPrint}
+                                onValueChange={setEnableKitchenPrint}
+                                trackColor={{ false: '#d1d5db', true: '#fdba74' }}
+                                thumbColor={enableKitchenPrint ? '#ea580c' : '#f3f4f6'}
+                            />
+                        </View>
                         <View style={tw`flex-row items-center justify-between mb-3`}>
                             <Text style={tw`text-gray-800 dark:text-gray-100 font-bold text-sm`}>Daftar Perangkat</Text>
                             <View style={tw`flex-row`}>
@@ -824,10 +978,34 @@ export default function SettingsScreen({ navigation }: any) {
                         <Text style={tw`text-gray-500 text-sm mb-4`}>
                             Sinkronisasi data Master (Produk, Kategori) dari Server, dan dorong sisa Transaksi Lokal ke Server.
                         </Text>
+                        <View style={tw`mb-4`}>
+                            <Text style={tw`text-xs font-bold text-gray-500 mb-2 uppercase tracking-wider ml-1`}>URL Backend / API</Text>
+                            <TextInput
+                                style={tw`bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-100 rounded-xl px-4 py-3 font-medium`}
+                                placeholder="http://192.168.1.10:5000"
+                                placeholderTextColor={tw.color('gray-400')}
+                                value={apiBaseUrl}
+                                onChangeText={setApiBaseUrlInput}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                keyboardType="url"
+                            />
+                            <Text style={tw`text-[10px] text-gray-400 mt-1 ml-1`}>
+                                Isi alamat backend saja. Jika menulis /api di akhir, aplikasi akan menyesuaikan otomatis.
+                            </Text>
+                        </View>
+                        <TouchableOpacity
+                            style={tw`bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 py-3 rounded-xl flex-row justify-center items-center mb-2`}
+                            onPress={handleTestApiConnection}
+                        >
+                            <Icon name="lan-connect" size={16} color={tw.color('blue-600')} style={tw`mr-2`} />
+                            <Text style={tw`font-bold text-blue-700 dark:text-blue-300`}>Tes Koneksi Backend</Text>
+                        </TouchableOpacity>
                         <TouchableOpacity 
                             style={tw`bg-blue-600 py-3.5 rounded-xl flex-row justify-center items-center mb-2`}
                             onPress={async () => {
-                                Alert.alert('Sinkronisasi', 'Mulai sinkronisasi data dengan server?', [
+                                const normalizedApiBaseUrl = await persistBackendUrl();
+                                Alert.alert('Sinkronisasi', `Mulai sinkronisasi data dengan server?\n\nServer: ${normalizedApiBaseUrl}`, [
                                     { text: 'Batal', style: 'cancel' },
                                     {
                                         text: 'Ya, Sinkron',
@@ -864,7 +1042,7 @@ export default function SettingsScreen({ navigation }: any) {
                                                     let reloadedSettings: any = {};
                                                     for (let i = 0; i < settingsRes.rows.length; i++) {
                                                         const row = settingsRes.rows.item(i);
-                                                        if (['showImages', 'enablePreOrder', 'enableShift', 'enableDineTable', 'allowNegativeStock', 'loyalty_active'].includes(row.key)) {
+                                                        if (['showImages', 'enablePreOrder', 'enableShift', 'enableDineTable', 'enableTableOrder', 'allowNegativeStock', 'loyalty_active', 'enableKitchenPrint'].includes(row.key)) {
                                                             reloadedSettings[row.key] = row.value === 'true';
                                                         } else if (['loyalty_multiplier', 'loyalty_multiplier_amount', 'loyalty_point_value', 'loyalty_min_points'].includes(row.key)) {
                                                             reloadedSettings[row.key] = Number(row.value || 0);

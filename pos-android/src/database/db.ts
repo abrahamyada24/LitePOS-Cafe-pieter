@@ -52,6 +52,10 @@ export const createTables = async (db: any) => {
       createdAt TEXT NOT NULL,
       status TEXT DEFAULT 'COMPLETED',
       preOrderDate TEXT,
+      paymentStatus TEXT DEFAULT 'PAID',
+      paidAmount REAL DEFAULT 0,
+      remainingAmount REAL DEFAULT 0,
+      paidAt TEXT,
       orderType TEXT DEFAULT 'TAKE_AWAY',
       tableName TEXT
     );
@@ -225,6 +229,10 @@ export const createTables = async (db: any) => {
     { table: 'transactions', column: 'customerId', def: 'INTEGER' },
     { table: 'transactions', column: 'customerName', def: 'TEXT' },
     { table: 'transactions', column: 'preOrderDate', def: 'TEXT' },
+    { table: 'transactions', column: 'paymentStatus', def: "TEXT DEFAULT 'PAID'" },
+    { table: 'transactions', column: 'paidAmount', def: 'REAL DEFAULT 0' },
+    { table: 'transactions', column: 'remainingAmount', def: 'REAL DEFAULT 0' },
+    { table: 'transactions', column: 'paidAt', def: 'TEXT' },
     { table: 'transactions', column: 'orderType', def: "TEXT DEFAULT 'TAKE_AWAY'" },
     { table: 'transactions', column: 'tableName', def: 'TEXT' },
     { table: 'customers', column: 'loyaltyDiscount', def: 'REAL DEFAULT 0' },
@@ -278,10 +286,23 @@ export const createTables = async (db: any) => {
 export const getStoreSummary = async (db: any) => {
   const today = new Date().toISOString().split('T')[0];
   const [revenueRes] = await db.executeSql(
-    `SELECT SUM(grandTotal) as total FROM transactions WHERE createdAt LIKE '${today}%' AND status != 'RETURNED'`
+    `SELECT SUM(
+       CASE
+         WHEN COALESCE(paidAmount, 0) > 0 THEN paidAmount
+         ELSE grandTotal
+       END
+     ) as total
+     FROM transactions
+     WHERE COALESCE(paidAt, createdAt) LIKE '${today}%'
+       AND status != 'RETURNED'
+       AND COALESCE(paymentStatus, 'PAID') = 'PAID'`
   );
   const [countRes] = await db.executeSql(
-    `SELECT COUNT(*) as count FROM transactions WHERE createdAt LIKE '${today}%' AND status != 'RETURNED'`
+    `SELECT COUNT(*) as count
+     FROM transactions
+     WHERE COALESCE(paidAt, createdAt) LIKE '${today}%'
+       AND status != 'RETURNED'
+       AND COALESCE(paymentStatus, 'PAID') = 'PAID'`
   );
   const [returnRes] = await db.executeSql(
     `SELECT COUNT(*) as count FROM transactions WHERE createdAt LIKE '${today}%' AND status = 'RETURNED'`
@@ -332,17 +353,19 @@ export const seedInitialData = async (db: any) => {
     await db.executeSql(`INSERT INTO settings (key, value) VALUES ('storeAddress', '')`);
     await db.executeSql(`INSERT INTO settings (key, value) VALUES ('storePhone', '')`);
     await db.executeSql(`INSERT INTO settings (key, value) VALUES ('showImages', 'true')`);
+    await db.executeSql(`INSERT INTO settings (key, value) VALUES ('enableTableOrder', 'false')`);
+    await db.executeSql(`INSERT INTO settings (key, value) VALUES ('enableKitchenPrint', 'false')`);
     await db.executeSql(`INSERT INTO settings (key, value) VALUES ('theme', 'light')`);
   } else {
     // Ensure new settings keys exist
     const settingKeys = [
-      'storeAddress', 'storePhone', 'enablePreOrder', 'allowNegativeStock', 'receiptFooter',
+      'storeAddress', 'storePhone', 'enablePreOrder', 'enableTableOrder', 'allowNegativeStock', 'receiptFooter', 'enableKitchenPrint',
       'loyalty_active', 'loyalty_multiplier', 'loyalty_multiplier_amount', 'loyalty_point_value', 'loyalty_min_points',
-      'store_id', 'license_expire_date', 'license_type', 'google_sheet_url'
+      'store_id', 'license_expire_date', 'license_type', 'google_sheet_url', 'apiBaseUrl'
     ];
     for (const key of settingKeys) {
       let defaultVal = '';
-      if (key === 'enablePreOrder' || key === 'allowNegativeStock' || key === 'loyalty_active') {
+      if (key === 'enablePreOrder' || key === 'enableTableOrder' || key === 'allowNegativeStock' || key === 'loyalty_active' || key === 'enableKitchenPrint') {
         defaultVal = 'false';
       } else if (key === 'loyalty_multiplier' || key === 'loyalty_multiplier_amount' || key === 'loyalty_point_value' || key === 'loyalty_min_points') {
         defaultVal = key === 'loyalty_multiplier_amount' ? '1000' : (key === 'loyalty_multiplier' ? '1' : '0');

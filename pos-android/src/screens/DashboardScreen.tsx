@@ -16,6 +16,8 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useStore } from '../store/useStore';
 import { getDBConnection, getStoreSummary } from '../database/db';
 import tw, { useAppColorScheme } from 'twrnc';
+import { getPaidAmount, getPaymentStatusLabel, getPaymentStatusMessage, getRemainingAmount } from '../utils/preOrderPayment';
+import { openCashierShift } from '../services/shiftService';
 
 const { width } = Dimensions.get('window');
 const isTablet = width >= 768;
@@ -76,7 +78,7 @@ const toLocalDate = (isoDay: string) => {
 };
 
 // ─── STAT CARD COMPONENT ─────────────────────────────────────────────────────
-const StatCard = ({ icon, label, value, sub, color, bgColor, onPress, delay = 0 }: any) => {
+const StatCard = ({ icon, label, value, sub, color, bgColor, onPress, delay = 0, fill = true }: any) => {
     const COLORS = useThemeColors();
     const styles = useStyles();
     const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -96,7 +98,10 @@ const StatCard = ({ icon, label, value, sub, color, bgColor, onPress, delay = 0 
         Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true }).start();
 
     return (
-        <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }, { scale: scaleAnim }], flex: 1 }}>
+        <Animated.View style={[
+            { opacity: fadeAnim, transform: [{ translateY: slideAnim }, { scale: scaleAnim }] },
+            fill ? { flex: 1 } : null,
+        ]}>
             <TouchableOpacity
                 activeOpacity={1}
                 onPress={onPress}
@@ -203,6 +208,9 @@ export default function DashboardScreen({ navigation }: any) {
     const [selectedDate, setSelectedDate] = useState('');
     const [showPreOrderModal, setShowPreOrderModal] = useState(false);
     const [shiftSummary, setShiftSummary] = useState({ totalSales: 0, totalExpenses: 0 });
+    const [pickupPaymentOrder, setPickupPaymentOrder] = useState<any>(null);
+    const [pickupPaymentMethod, setPickupPaymentMethod] = useState('CASH');
+    const [pickupCashAmount, setPickupCashAmount] = useState('');
 
     // Animations
     const headerAnim = useRef(new Animated.Value(0)).current;
@@ -230,6 +238,7 @@ export default function DashboardScreen({ navigation }: any) {
             const [preRes] = await db.executeSql(
                 `SELECT t.id, t.invoiceNumber, t.customerName, t.customerId,
                         t.preOrderDate, t.grandTotal, t.status, t.preOrderConfirmed,
+                        t.paymentStatus, t.paidAmount, t.remainingAmount, t.paidAt,
                         c.phone as customerPhone
                  FROM transactions t
                  LEFT JOIN customers c ON t.customerId = c.id
@@ -257,8 +266,15 @@ export default function DashboardScreen({ navigation }: any) {
             if (currentShift?.openedAt) {
                 const since = currentShift.openedAt;
                 const [salesRes] = await db.executeSql(
-                    `SELECT COALESCE(SUM(grandTotal), 0) as total FROM transactions
-                     WHERE createdAt >= ? AND status = 'COMPLETED'`,
+                    `SELECT COALESCE(SUM(
+                        CASE
+                            WHEN COALESCE(paidAmount, 0) > 0 THEN paidAmount
+                            ELSE grandTotal
+                        END
+                    ), 0) as total FROM transactions
+                     WHERE COALESCE(paidAt, createdAt) >= ?
+                       AND status = 'COMPLETED'
+                       AND COALESCE(paymentStatus, 'PAID') = 'PAID'`,
                     [since]
                 );
                 const [expRes] = await db.executeSql(
@@ -307,14 +323,8 @@ export default function DashboardScreen({ navigation }: any) {
     const handleOpenShift = async () => {
         const cash = parseFloat(openingCashInput.replace(/[^0-9]/g, '') || '0');
         try {
-            const db = await getDBConnection();
-            const shiftId = `SHIFT-${Date.now()}`;
-            const now = new Date().toISOString();
-            await db.executeSql(
-                `INSERT INTO shifts (id, userId, userName, openedAt, openingCash, status) VALUES (?, ?, ?, ?, ?, 'OPEN')`,
-                [shiftId, user?.id || 0, user?.name || 'Kasir', now, cash]
-            );
-            setActiveShift({ id: shiftId, openingCash: cash, openedAt: now });
+            const shift = await openCashierShift(user, cash);
+            setActiveShift(shift);
             setOpeningCashInput('');
         } catch (e) {
             Alert.alert('Error', 'Gagal membuka shift.');
@@ -370,6 +380,18 @@ export default function DashboardScreen({ navigation }: any) {
         setShowPreOrderModal(true);
     };
 
+    const getOrderStatusBadgeStyle = (status?: string) => {
+        if (status === 'UNPAID') return [styles.orderStatusBadge, { backgroundColor: COLORS.dangerLight }];
+        if (status === 'PARTIAL') return [styles.orderStatusBadge, { backgroundColor: COLORS.warningLight }];
+        return styles.orderStatusBadge;
+    };
+
+    const getOrderStatusTextStyle = (status?: string) => {
+        if (status === 'UNPAID') return [styles.orderStatusText, { color: COLORS.danger }];
+        if (status === 'PARTIAL') return [styles.orderStatusText, { color: COLORS.warning }];
+        return styles.orderStatusText;
+    };
+
     const openWhatsApp = (order: any) => {
         const rawPhone = order.customerPhone || '';
         let phone = rawPhone.replace(/\D/g, '');
@@ -383,15 +405,35 @@ export default function DashboardScreen({ navigation }: any) {
         }
         const storeName = settings?.storeName || 'LitePOS';
         const dateDisplay = formatDateDisplay(selectedDate);
+        const paymentMessage = getPaymentStatusMessage(order, formatRp);
         const message = encodeURIComponent(
-            `Halo ${order.customerName}, pesanan Anda di ${storeName} sudah siap untuk diambil pada ${dateDisplay}. Silahkan segera diambil. Terima kasih!`
+            `Halo ${order.customerName}, pesanan Anda di ${storeName} sudah siap untuk diambil pada ${dateDisplay}.\n${paymentMessage}\nSilahkan segera diambil. Terima kasih!`
         );
         Linking.openURL(`whatsapp://send?phone=${phone}&text=${message}`).catch(() => {
             Alert.alert('WhatsApp tidak tersedia', 'Pastikan WhatsApp sudah terinstall di HP ini.');
         });
     };
 
+    const markOrderConfirmed = async (order: any) => {
+        const db = await getDBConnection();
+        await db.executeSql(
+            `UPDATE transactions SET preOrderConfirmed = 1, isSynced = 0 WHERE id = ?`,
+            [order.id]
+        );
+        const updated = selectedDateOrders.filter(o => o.id !== order.id);
+        setSelectedDateOrders(updated);
+        if (updated.length === 0) setShowPreOrderModal(false);
+        loadData();
+    };
+
     const confirmOrder = (order: any) => {
+        if (getRemainingAmount(order) > 0) {
+            setPickupPaymentOrder(order);
+            setPickupPaymentMethod('CASH');
+            setPickupCashAmount('');
+            return;
+        }
+
         Alert.alert(
             'Konfirmasi Pengambilan',
             `Tandai pesanan "${order.customerName}" (${order.invoiceNumber}) sebagai sudah diambil?`,
@@ -401,15 +443,7 @@ export default function DashboardScreen({ navigation }: any) {
                     text: 'Ya, Sudah Diambil',
                     onPress: async () => {
                         try {
-                            const db = await getDBConnection();
-                            await db.executeSql(
-                                `UPDATE transactions SET preOrderConfirmed = 1 WHERE id = ?`,
-                                [order.id]
-                            );
-                            const updated = selectedDateOrders.filter(o => o.id !== order.id);
-                            setSelectedDateOrders(updated);
-                            if (updated.length === 0) setShowPreOrderModal(false);
-                            loadData();
+                            await markOrderConfirmed(order);
                         } catch (e) {
                             Alert.alert('Error', 'Gagal mengkonfirmasi pesanan.');
                         }
@@ -417,6 +451,50 @@ export default function DashboardScreen({ navigation }: any) {
                 }
             ]
         );
+    };
+
+    const confirmPickupPayment = async () => {
+        if (!pickupPaymentOrder) return;
+        const remaining = getRemainingAmount(pickupPaymentOrder);
+        const rawCash = parseInt(pickupCashAmount.replace(/\D/g, '') || '0', 10);
+        if (pickupPaymentMethod === 'CASH' && rawCash < remaining) {
+            Alert.alert('Uang Kurang', `Uang tunai tidak cukup.\nKurang: ${formatRp(remaining - rawCash)}`);
+            return;
+        }
+
+        try {
+            const db = await getDBConnection();
+            const paidAt = new Date().toISOString();
+            await db.executeSql(
+                `UPDATE transactions
+                 SET paymentStatus = 'PAID',
+                     paidAmount = grandTotal,
+                     remainingAmount = 0,
+                     paymentMethod = ?,
+                     cashAmount = ?,
+                     changeAmount = ?,
+                     paidAt = ?,
+                     preOrderConfirmed = 1,
+                     isSynced = 0
+                 WHERE id = ?`,
+                [
+                    pickupPaymentMethod,
+                    pickupPaymentMethod === 'CASH' ? rawCash : remaining,
+                    pickupPaymentMethod === 'CASH' ? Math.max(0, rawCash - remaining) : 0,
+                    paidAt,
+                    pickupPaymentOrder.id
+                ]
+            );
+
+            const updated = selectedDateOrders.filter(o => o.id !== pickupPaymentOrder.id);
+            setSelectedDateOrders(updated);
+            if (updated.length === 0) setShowPreOrderModal(false);
+            setPickupPaymentOrder(null);
+            setPickupCashAmount('');
+            loadData();
+        } catch (e) {
+            Alert.alert('Error', 'Gagal menyimpan pelunasan pesanan.');
+        }
     };
 
     const totalPreOrderCount = upcomingPreOrders.reduce((s, g) => s + (g.orders || []).length, 0);
@@ -458,54 +536,78 @@ export default function DashboardScreen({ navigation }: any) {
                 {/* ═══ SHIFT BANNER ═══ */}
                 {settings.enableShift && (!activeShift ? (
                     <View style={styles.shiftBannerClosed}>
-                        <Icon name="briefcase-outline" size={16} color={COLORS.warning} style={{ marginRight: 8 }} />
-                        <Text style={styles.shiftLabel}>Kas awal:</Text>
-                        <TextInput
-                            style={styles.shiftInput}
-                            keyboardType="numeric"
-                            placeholder="0"
-                            placeholderTextColor={COLORS.textMuted}
-                            value={openingCashInput ? parseInt(openingCashInput.replace(/[^0-9]/g, '') || '0').toLocaleString('id-ID') : ''}
-                            onChangeText={t => setOpeningCashInput(t.replace(/[^0-9]/g, ''))}
-                        />
-                        <TouchableOpacity
-                            style={styles.shiftOpenBtn}
-                            onPress={handleOpenShift}
-                        >
-                            <Icon name="play" size={14} color={COLORS.white} style={{ marginRight: 4 }} />
-                            <Text style={styles.shiftOpenBtnText}>Buka</Text>
-                        </TouchableOpacity>
+                        <View style={styles.shiftClosedHeader}>
+                            <View style={styles.shiftIconBox}>
+                                <Icon name="briefcase-outline" size={18} color={COLORS.primary} />
+                            </View>
+                            <View style={styles.shiftClosedTitleBlock}>
+                                <Text style={styles.shiftClosedTitle}>Buka shift kasir</Text>
+                                <Text style={styles.shiftClosedSub}>Catat uang tunai sebelum transaksi pertama.</Text>
+                            </View>
+                            <View style={styles.shiftInactiveBadge}>
+                                <View style={styles.shiftInactiveDot} />
+                                <Text style={styles.shiftInactiveText}>Belum aktif</Text>
+                            </View>
+                        </View>
+                        <View style={styles.shiftInputRow}>
+                            <View style={styles.shiftInputWrapCompact}>
+                                <Text style={styles.shiftInputPrefixCompact}>Rp</Text>
+                                <TextInput
+                                    style={styles.shiftInput}
+                                    keyboardType="numeric"
+                                    placeholder="0"
+                                    placeholderTextColor={COLORS.textMuted}
+                                    value={openingCashInput ? parseInt(openingCashInput.replace(/[^0-9]/g, '') || '0', 10).toLocaleString('id-ID') : ''}
+                                    onChangeText={t => setOpeningCashInput(t.replace(/[^0-9]/g, ''))}
+                                    onSubmitEditing={handleOpenShift}
+                                />
+                            </View>
+                            <TouchableOpacity style={styles.shiftOpenBtn} onPress={handleOpenShift}>
+                                <Icon name="play" size={15} color="#FFFFFF" />
+                                <Text style={styles.shiftOpenBtnText}>Mulai</Text>
+                            </TouchableOpacity>
+                        </View>
                     </View>
                 ) : (
                     <View style={styles.shiftBannerActive}>
                         <View style={styles.shiftActiveTop}>
-                            <Icon name="briefcase-outline" size={14} color="rgba(255,255,255,0.8)" style={{ marginRight: 8 }} />
-                            <Text style={styles.shiftActiveLabel}>
-                                {user?.name} · {new Date(activeShift.openedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
-                            </Text>
+                            <View style={styles.shiftActiveIdentity}>
+                                <View style={styles.shiftActiveBadge}>
+                                    <View style={styles.shiftActiveDot} />
+                                    <Text style={styles.shiftActiveBadgeText}>Shift aktif</Text>
+                                </View>
+                                <Text style={styles.shiftActiveLabel}>
+                                    {user?.name} | buka {new Date(activeShift.openedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
+                                </Text>
+                            </View>
                             <TouchableOpacity onPress={handleCloseShift} style={styles.shiftCloseBtn}>
-                                <Icon name="lock" size={12} color={COLORS.white} style={{ marginRight: 4 }} />
+                                <Icon name="lock-outline" size={14} color={COLORS.danger} style={{ marginRight: 5 }} />
                                 <Text style={styles.shiftCloseBtnText}>Tutup</Text>
                             </TouchableOpacity>
                         </View>
+                        <View style={styles.shiftBalanceRow}>
+                            <View>
+                                <Text style={styles.shiftBalanceLabel}>Saldo kas seharusnya</Text>
+                                <Text style={styles.shiftBalanceHint}>Kas awal + penjualan - pengeluaran</Text>
+                            </View>
+                            <Text style={styles.shiftTotalValue} numberOfLines={1} adjustsFontSizeToFit>
+                                {formatRp(activeShift.openingCash + shiftSummary.totalSales - shiftSummary.totalExpenses)}
+                            </Text>
+                        </View>
                         <View style={styles.shiftBreakdown}>
-                            <View style={styles.shiftRow}>
-                                <Text style={styles.shiftRowLabel}>Kas Awal</Text>
-                                <Text style={styles.shiftRowValue}>{formatRp(activeShift.openingCash)}</Text>
+                            <View style={styles.shiftMetric}>
+                                <Text style={styles.shiftRowLabel}>Kas awal</Text>
+                                <Text style={styles.shiftRowValue} numberOfLines={1} adjustsFontSizeToFit>{formatRp(activeShift.openingCash)}</Text>
                             </View>
-                            <View style={styles.shiftRow}>
-                                <Text style={styles.shiftRowLabel}>+ Penjualan</Text>
-                                <Text style={[styles.shiftRowValue, { color: '#86EFAC' }]}>+{formatRp(shiftSummary.totalSales)}</Text>
+                            <View style={styles.shiftMetricDivider} />
+                            <View style={styles.shiftMetric}>
+                                <Text style={styles.shiftRowLabel}>Penjualan</Text>
+                                <Text style={[styles.shiftRowValue, styles.shiftSalesValue]} numberOfLines={1} adjustsFontSizeToFit>+{formatRp(shiftSummary.totalSales)}</Text>
                             </View>
-                            <View style={styles.shiftRow}>
-                                <Text style={styles.shiftRowLabel}>− Pengeluaran</Text>
-                                <Text style={[styles.shiftRowValue, { color: '#FCA5A5' }]}>−{formatRp(shiftSummary.totalExpenses)}</Text>
-                            </View>
-                            <View style={styles.shiftTotalRow}>
-                                <Text style={styles.shiftTotalLabel}>Saldo Sekarang</Text>
-                                <Text style={styles.shiftTotalValue}>
-                                    {formatRp(activeShift.openingCash + shiftSummary.totalSales - shiftSummary.totalExpenses)}
-                                </Text>
+                            <View style={styles.shiftMetricDivider} />
+                            <View style={styles.shiftMetric}>
+                                <Text style={styles.shiftRowLabel}>Pengeluaran</Text>
+                                <Text style={[styles.shiftRowValue, styles.shiftExpenseValue]} numberOfLines={1} adjustsFontSizeToFit>-{formatRp(shiftSummary.totalExpenses)}</Text>
                             </View>
                         </View>
                     </View>
@@ -514,34 +616,43 @@ export default function DashboardScreen({ navigation }: any) {
                 {/* ═══ HERO & STATS ROW (RESPONSIVE) ═══ */}
                 {isTablet ? (
                     <View style={styles.tabletHeroRow}>
-                        <Animated.View style={[styles.heroCard, { flex: 2, marginRight: 16, marginBottom: 0, opacity: headerAnim }]}>
+                        <Animated.View style={[styles.heroCard, styles.tabletHeroCard, { opacity: headerAnim }]}>
                             <View style={styles.heroBlob1} />
                             <View style={styles.heroBlob2} />
                             <View style={styles.heroTop}>
-                                <View>
+                                <View style={styles.tabletHeroTitleBlock}>
                                     <Text style={styles.heroLabel}>Pendapatan Hari Ini</Text>
-                                    <Text style={styles.heroValue}>{formatRp(summary.todayRevenue)}</Text>
+                                    <Text
+                                        style={[styles.heroValue, styles.tabletHeroValue]}
+                                        numberOfLines={1}
+                                        adjustsFontSizeToFit
+                                        minimumFontScale={0.72}
+                                    >
+                                        {formatRp(summary.todayRevenue)}
+                                    </Text>
                                 </View>
                                 <TouchableOpacity style={styles.heroBtn} onPress={() => navigation.navigate('Laporan')}>
                                     <Icon name="arrow-top-right" size={16} color={COLORS.white} />
                                     <Text style={styles.heroBtnText}>Laporan</Text>
                                 </TouchableOpacity>
                             </View>
-                            <View style={styles.heroDivider} />
-                            <View style={styles.heroBottom}>
-                                <View style={styles.heroStat}>
-                                    <Icon name="trending-up" size={14} color={COLORS.accent} />
-                                    <Text style={styles.heroStatTextGreen}>
-                                        {summary.todayReturns > 0 ? `${summary.todayReturns} Retur` : `${summary.todayCount} Transaksi`}
-                                    </Text>
-                                </View>
-                                <View style={styles.heroStat}>
-                                    <Icon name="clock-outline" size={14} color={COLORS.white + 'AA'} />
-                                    <Text style={styles.heroStatTextMuted}>Update: {updateTime}</Text>
+                            <View style={styles.tabletHeroFooter}>
+                                <View style={styles.heroDivider} />
+                                <View style={[styles.heroBottom, styles.tabletHeroBottom]}>
+                                    <View style={[styles.heroStat, styles.tabletHeroStatPill]}>
+                                        <Icon name="trending-up" size={14} color={COLORS.accent} />
+                                        <Text style={[styles.heroStatTextGreen, styles.tabletHeroStatText]}>
+                                            {summary.todayReturns > 0 ? `${summary.todayReturns} Retur` : `${summary.todayCount} Transaksi`}
+                                        </Text>
+                                    </View>
+                                    <View style={[styles.heroStat, styles.tabletHeroStatPill]}>
+                                        <Icon name="clock-outline" size={14} color={COLORS.white + 'AA'} />
+                                        <Text style={[styles.heroStatTextMuted, styles.tabletHeroStatText]}>Update: {updateTime}</Text>
+                                    </View>
                                 </View>
                             </View>
                         </Animated.View>
-                        <View style={{ flex: 1, justifyContent: 'space-between' }}>
+                        <View style={styles.tabletStatColumn}>
                             <StatCard
                                 icon="cart-variant"
                                 label="Transaksi"
@@ -549,6 +660,7 @@ export default function DashboardScreen({ navigation }: any) {
                                 sub="Sukses hari ini"
                                 color={COLORS.accent}
                                 bgColor={COLORS.accentLight}
+                                fill={false}
                                 delay={100}
                                 onPress={() => navigation.navigate('Laporan')}
                             />
@@ -560,6 +672,7 @@ export default function DashboardScreen({ navigation }: any) {
                                 sub="Item aktif"
                                 color={COLORS.primary}
                                 bgColor={COLORS.primaryLight}
+                                fill={false}
                                 delay={150}
                                 onPress={() => navigation.navigate('Main', { screen: 'Inventori' })}
                             />
@@ -571,6 +684,7 @@ export default function DashboardScreen({ navigation }: any) {
                                 sub="Hampir habis"
                                 color={COLORS.warning}
                                 bgColor={COLORS.warningLight}
+                                fill={false}
                                 delay={200}
                                 onPress={() => navigation.navigate('Main', { screen: 'Inventori' })}
                             />
@@ -747,6 +861,22 @@ export default function DashboardScreen({ navigation }: any) {
                         style={isTablet ? styles.tabletMenuFull : {}}
                     />
 
+                    {settings.enableTableOrder && (
+                        <>
+                            {!isTablet && <View style={{ height: 12 }} />}
+                            <MenuItem
+                                icon="table-chair"
+                                title="Order Meja"
+                                subtitle="Pesanan QR pelanggan"
+                                color="#0F766E"
+                                bgColor="#ECFDF5"
+                                delay={280}
+                                onPress={() => navigation.navigate('TableOrders')}
+                                style={isTablet ? styles.tabletMenuHalf : {}}
+                            />
+                        </>
+                    )}
+
                     {(user?.role === 'ADMIN' || user?.role === 'OWNER') && (
                         <>
                             {!isTablet && <View style={{ height: 12 }} />}
@@ -862,6 +992,8 @@ export default function DashboardScreen({ navigation }: any) {
                                 const now = new Date(); now.setHours(0, 0, 0, 0);
                                 const diffDays = orderDate ? Math.round((orderDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)) : 99;
                                 const isPickupTime = diffDays <= 0;
+                                const remainingAmount = getRemainingAmount(item);
+                                const statusLabel = getPaymentStatusLabel(item.paymentStatus);
 
                                 return (
                                     <View style={[styles.orderItem, index > 0 && { borderTopWidth: 1, borderTopColor: COLORS.border }]}>
@@ -875,9 +1007,12 @@ export default function DashboardScreen({ navigation }: any) {
                                             </View>
                                             <View style={{ alignItems: 'flex-end' }}>
                                                 <Text style={styles.orderTotal}>{formatRp(item.grandTotal)}</Text>
-                                                <View style={styles.orderStatusBadge}>
-                                                    <Text style={styles.orderStatusText}>LUNAS</Text>
+                                                <View style={getOrderStatusBadgeStyle(item.paymentStatus)}>
+                                                    <Text style={getOrderStatusTextStyle(item.paymentStatus)}>{statusLabel}</Text>
                                                 </View>
+                                                {remainingAmount > 0 ? (
+                                                    <Text style={styles.orderRemainingText}>Sisa {formatRp(remainingAmount)}</Text>
+                                                ) : null}
                                             </View>
                                         </View>
 
@@ -932,6 +1067,89 @@ export default function DashboardScreen({ navigation }: any) {
             </Modal>
 
             {/* ═══ CLOSE SHIFT MODAL ═══ */}
+            {pickupPaymentOrder ? (
+                <Modal visible={!!pickupPaymentOrder} transparent animationType="fade">
+                    <View style={styles.shiftModalOverlay}>
+                        <View style={styles.shiftModalCard}>
+                            <View style={{ alignItems: 'center', marginBottom: 20 }}>
+                                <View style={[styles.shiftModalIcon, { backgroundColor: COLORS.warningLight }]}>
+                                    <Icon name="cash-check" size={28} color={COLORS.warning} />
+                                </View>
+                                <Text style={styles.shiftModalTitle}>Pelunasan Pre-Order</Text>
+                                <Text style={styles.shiftModalSub}>
+                                    {pickupPaymentOrder.customerName || 'Pelanggan Umum'} - {pickupPaymentOrder.invoiceNumber}
+                                </Text>
+                            </View>
+
+                            <View style={styles.pickupPaymentSummary}>
+                                <View style={styles.pickupPaymentRow}>
+                                    <Text style={styles.pickupPaymentLabel}>Total</Text>
+                                    <Text style={styles.pickupPaymentValue}>{formatRp(pickupPaymentOrder.grandTotal || 0)}</Text>
+                                </View>
+                                <View style={styles.pickupPaymentRow}>
+                                    <Text style={styles.pickupPaymentLabel}>Sudah dibayar</Text>
+                                    <Text style={styles.pickupPaymentValue}>{formatRp(getPaidAmount(pickupPaymentOrder))}</Text>
+                                </View>
+                                <View style={styles.pickupPaymentRow}>
+                                    <Text style={styles.pickupPaymentLabel}>Sisa bayar</Text>
+                                    <Text style={[styles.pickupPaymentValue, { color: COLORS.danger }]}>{formatRp(getRemainingAmount(pickupPaymentOrder))}</Text>
+                                </View>
+                            </View>
+
+                            <Text style={styles.shiftInputLabel}>Metode Pelunasan</Text>
+                            <View style={styles.pickupMethodRow}>
+                                {['CASH', 'QRIS', 'TRANSFER'].map(method => (
+                                    <TouchableOpacity
+                                        key={method}
+                                        style={[styles.pickupMethodBtn, pickupPaymentMethod === method && styles.pickupMethodBtnActive]}
+                                        onPress={() => setPickupPaymentMethod(method)}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Text style={[styles.pickupMethodText, pickupPaymentMethod === method && styles.pickupMethodTextActive]}>
+                                            {method === 'CASH' ? 'TUNAI' : method}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+
+                            {pickupPaymentMethod === 'CASH' ? (
+                                <>
+                                    <Text style={styles.shiftInputLabel}>Tunai Diterima</Text>
+                                    <View style={styles.shiftInputWrap}>
+                                        <View style={styles.shiftInputPrefix}>
+                                            <Text style={styles.shiftInputPrefixText}>Rp</Text>
+                                        </View>
+                                        <TextInput
+                                            style={styles.shiftCashInput}
+                                            keyboardType="numeric"
+                                            placeholder="0"
+                                            placeholderTextColor={COLORS.textMuted}
+                                            value={pickupCashAmount ? parseInt(pickupCashAmount.replace(/[^0-9]/g, '') || '0').toLocaleString('id-ID') : ''}
+                                            onChangeText={t => setPickupCashAmount(t.replace(/[^0-9]/g, ''))}
+                                        />
+                                    </View>
+                                    {parseInt(pickupCashAmount.replace(/\D/g, '') || '0', 10) >= getRemainingAmount(pickupPaymentOrder) ? (
+                                        <Text style={styles.pickupChangeText}>
+                                            Kembalian {formatRp(parseInt(pickupCashAmount.replace(/\D/g, '') || '0', 10) - getRemainingAmount(pickupPaymentOrder))}
+                                        </Text>
+                                    ) : null}
+                                </>
+                            ) : null}
+
+                            <TouchableOpacity
+                                style={[styles.shiftConfirmBtn, { backgroundColor: COLORS.accent }]}
+                                onPress={confirmPickupPayment}
+                            >
+                                <Text style={styles.shiftConfirmBtnText}>Simpan Pelunasan</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={{ alignItems: 'center', paddingVertical: 8 }} onPress={() => setPickupPaymentOrder(null)}>
+                                <Text style={styles.shiftCancelText}>Batal</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </Modal>
+            ) : null}
+
             <Modal visible={showCloseShiftModal} transparent animationType="fade">
                 <View style={styles.shiftModalOverlay}>
                     <View style={styles.shiftModalCard}>
@@ -1062,119 +1280,207 @@ const getStyles = (COLORS: any) => StyleSheet.create({
 
     // Shift Banner (closed)
     shiftBannerClosed: {
-        backgroundColor: COLORS.warningLight,
+        backgroundColor: COLORS.card,
         borderWidth: 1,
-        borderColor: '#FBBF24',
-        borderRadius: 16,
-        paddingHorizontal: 12,
-        paddingVertical: 10,
+        borderColor: COLORS.border,
+        borderRadius: 12,
+        padding: 14,
+        marginBottom: 14,
+    },
+    shiftClosedHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
         marginBottom: 12,
+    },
+    shiftIconBox: {
+        width: 38,
+        height: 38,
+        borderRadius: 10,
+        backgroundColor: COLORS.primaryLight,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginRight: 10,
+    },
+    shiftClosedTitleBlock: { flex: 1 },
+    shiftClosedTitle: {
+        ...FONTS.bold,
+        fontSize: 14,
+        color: COLORS.textPrimary,
+    },
+    shiftClosedSub: {
+        ...FONTS.regular,
+        fontSize: 10,
+        color: COLORS.textSecondary,
+        marginTop: 2,
+    },
+    shiftInactiveBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginLeft: 8,
+    },
+    shiftInactiveDot: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+        backgroundColor: COLORS.warning,
+        marginRight: 5,
+    },
+    shiftInactiveText: {
+        ...FONTS.bold,
+        fontSize: 9,
+        color: COLORS.warning,
+    },
+    shiftInputRow: {
         flexDirection: 'row',
         alignItems: 'center',
     },
-    shiftLabel: {
+    shiftInputWrapCompact: {
+        flex: 1,
+        height: 44,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+        borderRadius: 9,
+        backgroundColor: COLORS.bg,
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 12,
+    },
+    shiftInputPrefixCompact: {
         ...FONTS.bold,
         fontSize: 12,
-        color: '#92400E',
+        color: COLORS.textSecondary,
         marginRight: 8,
     },
     shiftInput: {
         flex: 1,
-        backgroundColor: COLORS.white,
-        borderWidth: 1,
-        borderColor: '#FBBF24',
-        borderRadius: 10,
-        paddingHorizontal: 8,
-        paddingVertical: 4,
+        padding: 0,
         ...FONTS.bold,
         fontSize: 14,
         color: COLORS.textPrimary,
     },
     shiftOpenBtn: {
-        marginLeft: 8,
-        backgroundColor: COLORS.warning,
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 10,
+        width: 94,
+        height: 44,
+        marginLeft: 10,
+        backgroundColor: COLORS.primary,
+        borderRadius: 9,
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
     },
     shiftOpenBtnText: {
         ...FONTS.bold,
         fontSize: 12,
-        color: COLORS.white,
+        color: '#FFFFFF',
+        marginLeft: 5,
     },
 
     // Shift Banner (active)
     shiftBannerActive: {
-        backgroundColor: COLORS.primary,
-        borderRadius: 16,
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        marginBottom: 12,
+        backgroundColor: COLORS.card,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+        borderRadius: 12,
+        padding: 14,
+        marginBottom: 14,
     },
     shiftActiveTop: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 8,
+        marginBottom: 12,
     },
-    shiftActiveLabel: {
-        ...FONTS.bold,
-        fontSize: 12,
-        color: '#BFDBFE',
-        flex: 1,
-    },
-    shiftCloseBtn: {
-        backgroundColor: COLORS.danger,
-        paddingHorizontal: 10,
-        paddingVertical: 4,
-        borderRadius: 10,
+    shiftActiveIdentity: { flex: 1 },
+    shiftActiveBadge: {
         flexDirection: 'row',
         alignItems: 'center',
+        alignSelf: 'flex-start',
+        marginBottom: 4,
+    },
+    shiftActiveDot: {
+        width: 7,
+        height: 7,
+        borderRadius: 4,
+        backgroundColor: COLORS.accent,
+        marginRight: 6,
+    },
+    shiftActiveBadgeText: {
+        ...FONTS.bold,
+        fontSize: 10,
+        color: COLORS.accent,
+    },
+    shiftActiveLabel: {
+        ...FONTS.regular,
+        fontSize: 11,
+        color: COLORS.textSecondary,
+    },
+    shiftCloseBtn: {
+        borderWidth: 1,
+        borderColor: COLORS.danger,
+        paddingHorizontal: 10,
+        height: 34,
+        borderRadius: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     shiftCloseBtnText: {
         ...FONTS.bold,
-        fontSize: 12,
-        color: COLORS.white,
+        fontSize: 11,
+        color: COLORS.danger,
+    },
+    shiftBalanceRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: 10,
+        borderTopWidth: 1,
+        borderBottomWidth: 1,
+        borderColor: COLORS.border,
+    },
+    shiftBalanceLabel: {
+        ...FONTS.bold,
+        fontSize: 11,
+        color: COLORS.textPrimary,
+    },
+    shiftBalanceHint: {
+        ...FONTS.regular,
+        fontSize: 9,
+        color: COLORS.textMuted,
+        marginTop: 2,
     },
     shiftBreakdown: {
-        backgroundColor: 'rgba(29,78,216,0.5)',
-        borderRadius: 12,
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-        gap: 4,
-    },
-    shiftRow: {
         flexDirection: 'row',
-        justifyContent: 'space-between',
+        alignItems: 'stretch',
+        paddingTop: 11,
+    },
+    shiftMetric: {
+        flex: 1,
+        minWidth: 0,
+    },
+    shiftMetricDivider: {
+        width: 1,
+        backgroundColor: COLORS.border,
+        marginHorizontal: 9,
     },
     shiftRowLabel: {
         ...FONTS.regular,
-        fontSize: 12,
-        color: '#BFDBFE',
+        fontSize: 9,
+        color: COLORS.textSecondary,
+        marginBottom: 3,
     },
     shiftRowValue: {
         ...FONTS.bold,
-        fontSize: 12,
-        color: COLORS.white,
+        fontSize: 11,
+        color: COLORS.textPrimary,
     },
-    shiftTotalRow: {
-        borderTopWidth: 1,
-        borderTopColor: 'rgba(96,165,250,0.3)',
-        marginTop: 4,
-        paddingTop: 6,
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-    },
-    shiftTotalLabel: {
-        ...FONTS.bold,
-        fontSize: 12,
-        color: '#DBEAFE',
-    },
+    shiftSalesValue: { color: COLORS.accent },
+    shiftExpenseValue: { color: COLORS.danger },
     shiftTotalValue: {
         ...FONTS.bold,
-        fontSize: 14,
-        color: COLORS.white,
+        fontSize: 17,
+        color: COLORS.primary,
+        maxWidth: '46%',
+        textAlign: 'right',
     },
 
     // Hero Card
@@ -1637,6 +1943,12 @@ const getStyles = (COLORS: any) => StyleSheet.create({
         fontSize: 10,
         color: '#15803D',
     },
+    orderRemainingText: {
+        ...FONTS.semibold,
+        fontSize: 10,
+        color: COLORS.danger,
+        marginTop: 3,
+    },
     orderActions: {
         flexDirection: 'row',
         gap: 8,
@@ -1704,6 +2016,62 @@ const getStyles = (COLORS: any) => StyleSheet.create({
         ...FONTS.bold,
         fontSize: 16,
         color: COLORS.textPrimary,
+    },
+
+    pickupPaymentSummary: {
+        backgroundColor: COLORS.bg,
+        borderRadius: 16,
+        padding: 14,
+        marginBottom: 18,
+    },
+    pickupPaymentRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginBottom: 8,
+    },
+    pickupPaymentLabel: {
+        ...FONTS.semibold,
+        fontSize: 12,
+        color: COLORS.textSecondary,
+    },
+    pickupPaymentValue: {
+        ...FONTS.bold,
+        fontSize: 13,
+        color: COLORS.textPrimary,
+    },
+    pickupMethodRow: {
+        flexDirection: 'row',
+        gap: 8,
+        marginBottom: 16,
+    },
+    pickupMethodBtn: {
+        flex: 1,
+        paddingVertical: 10,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+        alignItems: 'center',
+        backgroundColor: COLORS.bg,
+    },
+    pickupMethodBtnActive: {
+        borderColor: COLORS.primary,
+        backgroundColor: COLORS.primaryLight,
+    },
+    pickupMethodText: {
+        ...FONTS.bold,
+        fontSize: 11,
+        color: COLORS.textSecondary,
+    },
+    pickupMethodTextActive: {
+        color: COLORS.primary,
+    },
+    pickupChangeText: {
+        ...FONTS.bold,
+        fontSize: 13,
+        color: COLORS.accent,
+        marginTop: -12,
+        marginBottom: 16,
+        textAlign: 'right',
     },
 
     // Close Shift Modal
@@ -1802,6 +2170,43 @@ const getStyles = (COLORS: any) => StyleSheet.create({
     tabletHeroRow: {
         flexDirection: 'row',
         marginBottom: 20,
+        alignItems: 'flex-start',
+    },
+    tabletStatColumn: {
+        flex: 1,
+    },
+    tabletHeroCard: {
+        flex: 2,
+        marginRight: 16,
+        marginBottom: 0,
+        minHeight: 188,
+        alignSelf: 'flex-start',
+        padding: 22,
+    },
+    tabletHeroTitleBlock: {
+        flex: 1,
+        marginRight: 14,
+    },
+    tabletHeroValue: {
+        fontSize: 34,
+    },
+    tabletHeroFooter: {
+        marginTop: 24,
+    },
+    tabletHeroBottom: {
+        gap: 10,
+    },
+    tabletHeroStatPill: {
+        flexShrink: 1,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 14,
+        backgroundColor: COLORS.white + '1A',
+        borderWidth: 1,
+        borderColor: COLORS.white + '24',
+    },
+    tabletHeroStatText: {
+        flexShrink: 1,
     },
     tabletMenuGrid: {
         flexDirection: 'row',

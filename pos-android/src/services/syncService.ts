@@ -1,8 +1,46 @@
-import api from './api';
+import api, { isDeviceAssetUrl } from './api';
 import { getDBConnection } from '../database/db';
 
 // Keys yang hanya ada di device lokal, tidak boleh ditimpa oleh server
-const LOCAL_ONLY_KEYS = ['printerAddress', 'printerType'];
+const LOCAL_ONLY_KEYS = ['printerAddress', 'printerType', 'apiBaseUrl', 'enableKitchenPrint'];
+
+const getImageUploadMetadata = (uri: string) => {
+    const cleanUri = uri.split('?')[0];
+    const extensionMatch = cleanUri.match(/\.([a-z0-9]+)$/i);
+    const extension = (extensionMatch?.[1] || 'jpg').toLowerCase();
+    const mimeType = extension === 'png'
+        ? 'image/png'
+        : extension === 'webp'
+            ? 'image/webp'
+            : 'image/jpeg';
+
+    return {
+        name: `product-${Date.now()}.${extension}`,
+        type: mimeType,
+    };
+};
+
+const uploadProductImage = async (serverProductId: number, imageUri: string) => {
+    const formData = new FormData();
+    const metadata = getImageUploadMetadata(imageUri);
+    formData.append('image', {
+        uri: imageUri,
+        name: metadata.name,
+        type: metadata.type,
+    } as any);
+
+    const response = await api.put(`/products/${serverProductId}`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 30000,
+    });
+
+    const remoteImageUrl = response.data?.data?.imageUrl;
+    if (!remoteImageUrl) {
+        throw new Error('Backend tidak mengembalikan URL gambar produk.');
+    }
+
+    return remoteImageUrl as string;
+};
 
 export const syncService = {
     // 1. Ambil data master dari server
@@ -20,7 +58,7 @@ export const syncService = {
                 // Settings — "NON-EMPTY WINS" merge strategy
                 // Boolean keys: selalu update (false adalah value valid)
                 // String keys: hanya update jika server value non-kosong, atau lokal belum ada
-                const BOOLEAN_KEYS = ['enablePreOrder', 'enableShift', 'enableDineTable', 'allowNegativeStock', 'showImages', 'loyalty_active'];
+                const BOOLEAN_KEYS = ['enablePreOrder', 'enableShift', 'enableDineTable', 'enableTableOrder', 'allowNegativeStock', 'showImages', 'loyalty_active'];
                 const NUMERIC_KEYS = ['taxRate', 'serviceCharge', 'loyalty_multiplier', 'loyalty_multiplier_amount', 'loyalty_point_value', 'loyalty_min_points'];
                 
                 if (data.settings && data.settings.length > 0) {
@@ -64,13 +102,27 @@ export const syncService = {
                         const [catCheck] = await tx.executeSql('SELECT id FROM categories WHERE serverId = ? OR id = ?', [p.categoryId, p.categoryId]);
                         const localCategoryId = catCheck.rows.length > 0 ? catCheck.rows.item(0).id : p.categoryId;
 
-                        const [prodCheck] = await tx.executeSql('SELECT id FROM products WHERE serverId = ? OR id = ?', [p.id, p.androidId]);
+                        const [prodCheck] = await tx.executeSql(
+                            'SELECT id, serverId, isSynced FROM products WHERE serverId = ? OR id = ?',
+                            [p.id, p.androidId]
+                        );
                         if (prodCheck.rows.length > 0) {
-                            const localId = prodCheck.rows.item(0).id;
-                            await tx.executeSql(
-                                'UPDATE products SET categoryId = ?, name = ?, price = ?, costPrice = ?, enableCostPrice = ?, stock = ?, imageUrl = ?, isUnlimitedStock = ?, barcode = ?, minStock = ?, serverId = ?, isSynced = 1 WHERE id = ?',
-                                [localCategoryId, p.name, p.price, p.costPrice || 0, p.enableCostPrice ? 1 : 0, p.stock || 0, p.imageUrl, p.isUnlimitedStock ? 1 : 0, p.barcode, p.minStock || 0, p.id, localId]
-                            );
+                            const localProduct = prodCheck.rows.item(0);
+                            const localId = localProduct.id;
+
+                            if (Number(localProduct.isSynced) === 0) {
+                                // Jangan timpa perubahan/gambar lokal yang belum sempat didorong.
+                                // serverId tetap boleh dipetakan agar upload file punya tujuan pasti.
+                                await tx.executeSql(
+                                    'UPDATE products SET serverId = COALESCE(serverId, ?) WHERE id = ?',
+                                    [p.id, localId]
+                                );
+                            } else {
+                                await tx.executeSql(
+                                    'UPDATE products SET categoryId = ?, name = ?, price = ?, costPrice = ?, enableCostPrice = ?, stock = ?, imageUrl = ?, isUnlimitedStock = ?, barcode = ?, minStock = ?, serverId = ?, isSynced = 1 WHERE id = ?',
+                                    [localCategoryId, p.name, p.price, p.costPrice || 0, p.enableCostPrice ? 1 : 0, p.stock || 0, p.imageUrl, p.isUnlimitedStock ? 1 : 0, p.barcode, p.minStock || 0, p.id, localId]
+                                );
+                            }
                         } else {
                             await tx.executeSql(
                                 'INSERT INTO products (categoryId, name, price, costPrice, enableCostPrice, stock, imageUrl, isUnlimitedStock, barcode, minStock, serverId, isSynced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)',
@@ -490,11 +542,40 @@ export const syncService = {
             }
 
             // Kirim ke server
-            const payload = { transactions, expenses, shifts, categories, products, customers, settings, stockReceipts, suppliers, packages, dineTables, addons };
+            const productsForPush = products.map((product) => {
+                if (!isDeviceAssetUrl(product.imageUrl)) return product;
+
+                const productWithoutLocalImage = { ...product };
+                delete productWithoutLocalImage.imageUrl;
+                return productWithoutLocalImage;
+            });
+            const payload = { transactions, expenses, shifts, categories, products: productsForPush, customers, settings, stockReceipts, suppliers, packages, dineTables, addons };
             const res = await api.post('/sync/push', payload);
             
             if (res.data.success) {
                 const idMap = res.data.idMap || {};
+
+                // File galeri hanya ada di perangkat. Upload setelah serverId produk tersedia,
+                // lalu simpan kembali path relatif backend agar tetap mengikuti apiBaseUrl aktif.
+                const productServerIds = new Map<string, number>(
+                    (idMap.products || []).map(
+                        (item: any) => [String(item.androidId), Number(item.serverId)] as [string, number]
+                    )
+                );
+                for (const product of products.filter((item) => isDeviceAssetUrl(item.imageUrl))) {
+                    const serverProductId = Number(
+                        product.serverId || productServerIds.get(String(product.id)) || 0
+                    );
+                    if (!serverProductId) {
+                        throw new Error(`Server ID untuk gambar produk ${product.name} tidak ditemukan.`);
+                    }
+
+                    const remoteImageUrl = await uploadProductImage(serverProductId, product.imageUrl);
+                    await db.executeSql(
+                        'UPDATE products SET imageUrl = ? WHERE id = ?',
+                        [remoteImageUrl, product.id]
+                    );
+                }
                 
                 // Update status isSynced = 1 dan serverId di local SQLite database
                 await db.transaction(async (tx: any) => {
@@ -639,8 +720,8 @@ export const syncService = {
 
                             // Insert transaction
                             await db.executeSql(
-                                `INSERT INTO transactions (id, invoiceNumber, grandTotal, discountAmount, paymentMethod, cashAmount, changeAmount, customerId, customerName, createdAt, status, preOrderDate, orderType, tableName, isSynced)
-                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+                                `INSERT INTO transactions (id, invoiceNumber, grandTotal, discountAmount, paymentMethod, cashAmount, changeAmount, customerId, customerName, createdAt, status, preOrderDate, paymentStatus, paidAmount, remainingAmount, paidAt, orderType, tableName, isSynced)
+                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
                                 [
                                     tx.id,
                                     tx.invoiceNumber,
@@ -654,6 +735,10 @@ export const syncService = {
                                     tx.createdAt,
                                     tx.status || 'COMPLETED',
                                     tx.preOrderDate,
+                                    tx.paymentStatus || 'PAID',
+                                    tx.paymentStatus === 'UNPAID' ? 0 : (tx.paidAmount || tx.grandTotal || 0),
+                                    tx.remainingAmount || 0,
+                                    tx.paymentStatus === 'UNPAID' ? null : (tx.paidAt || tx.createdAt),
                                     tx.orderType || 'TAKE_AWAY',
                                     tx.tableName,
                                 ]

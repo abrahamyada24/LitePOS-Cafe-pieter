@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useState } from 'react';
-import { UtensilsCrossed, Plus, Trash2, Loader2, Edit2 } from 'lucide-react';
+import { UtensilsCrossed, Plus, Trash2, Loader2, Edit2, QrCode } from 'lucide-react';
+import { useStore } from '../../../store/useStore';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -12,6 +13,7 @@ const STATUS_COLORS = {
 };
 
 export default function TablesPage() {
+    const enableTableOrder = useStore(state => state.settings?.enableTableOrder);
     const [tables, setTables] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showForm, setShowForm] = useState(false);
@@ -64,6 +66,17 @@ export default function TablesPage() {
         setEditId(table.id);
         setForm({ number: table.number, name: table.name || '', capacity: String(table.capacity) });
         setShowForm(true);
+    };
+
+    const copyTableOrderLink = async (tableNumber) => {
+        if (typeof window === 'undefined') return;
+        const url = `${window.location.origin}/katalog?table=${encodeURIComponent(tableNumber)}`;
+        try {
+            await navigator.clipboard.writeText(url);
+            alert(`Link order meja ${tableNumber} disalin.`);
+        } catch {
+            window.prompt('Salin link order meja:', url);
+        }
     };
 
     return (
@@ -125,6 +138,14 @@ export default function TablesPage() {
                                 <option value="RESERVED">Reserved</option>
                                 <option value="CLEANING">Cleaning</option>
                             </select>
+                            {enableTableOrder && (
+                                <button
+                                    onClick={() => copyTableOrderLink(t.number)}
+                                    className="mt-2 w-full text-xs font-bold rounded-lg px-2 py-1.5 bg-white/70 hover:bg-white flex items-center justify-center gap-1.5"
+                                >
+                                    <QrCode size={13} /> Salin Link QR
+                                </button>
+                            )}
                         </div>
                     ))}
                 </div>

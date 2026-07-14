@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { 
   Save, Store, CreditCard, ShieldCheck, UploadCloud, 
   Receipt, Printer, Smartphone, DollarSign, Loader2, Image as ImageIcon,
-  Truck, Plus, X, Trash2, Gift, Layout, PackageSearch
+  Truck, Plus, X, Trash2, Gift, Layout, PackageSearch, QrCode
 } from 'lucide-react';
 import { useStore } from '../../../store/useStore';
 
@@ -34,7 +34,8 @@ export default function SettingsPage() {
     theme: 'light',
     enablePreOrder: false,
     enableShift: true,
-    enableDineTable: false
+    enableDineTable: false,
+    enableTableOrder: false
   });
 
   const [loyaltyForm, setLoyaltyForm] = useState({
@@ -96,7 +97,8 @@ export default function SettingsPage() {
         theme: settings.theme || 'light',
         enablePreOrder: settings.enablePreOrder || false,
         enableShift: settings.enableShift !== undefined ? settings.enableShift : true,
-        enableDineTable: settings.enableDineTable || false
+        enableDineTable: settings.enableDineTable || false,
+        enableTableOrder: settings.enableTableOrder || false
       });
       if (settings.logoUrl) {
           setLogoPreview(settings.logoUrl.startsWith('http') ? settings.logoUrl : `${API_URL}${settings.logoUrl}`);
@@ -116,7 +118,12 @@ export default function SettingsPage() {
   };
 
   const handleToggle = (name) => {
-    setForm(prev => ({ ...prev, [name]: !prev[name] }));
+    setForm(prev => {
+      const next = { ...prev, [name]: !prev[name] };
+      if (name === 'enableTableOrder' && !prev.enableTableOrder) next.enableDineTable = true;
+      if (name === 'enableDineTable' && prev.enableDineTable) next.enableTableOrder = false;
+      return next;
+    });
   };
 
   const handleFileChange = (e) => {
@@ -479,6 +486,20 @@ export default function SettingsPage() {
                         <label className="relative inline-flex items-center cursor-pointer">
                             <input type="checkbox" className="sr-only peer" checked={form.enableDineTable} onChange={() => handleToggle('enableDineTable')} />
                             <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                        </label>
+                    </div>
+
+                    <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                        <div className="flex items-start gap-3">
+                            <QrCode size={18} className="text-emerald-600 mt-0.5" />
+                            <div>
+                                <p className="font-bold text-gray-800 text-sm">Order Meja via QR</p>
+                                <p className="text-xs text-gray-500">Pembeli memesan dari QR meja dan order masuk ke kasir.</p>
+                            </div>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer ml-4">
+                            <input type="checkbox" className="sr-only peer" checked={form.enableTableOrder} onChange={() => handleToggle('enableTableOrder')} />
+                            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
                         </label>
                     </div>
                 </div>

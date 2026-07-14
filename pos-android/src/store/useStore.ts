@@ -18,6 +18,16 @@ interface StoreState {
     discount: number;
     discountType: 'amount' | 'percent';
     activeShift: { id: string; openingCash: number; openedAt: string } | null;
+    pendingOrderContext: {
+        orderType?: 'DINE_IN' | 'TAKE_AWAY';
+        tableNumber?: string;
+        customerName?: string;
+        note?: string;
+        source?: string;
+        orderCode?: string;
+        queueNumber?: number;
+        queueLabel?: string;
+    } | null;
     settings: {
         storeName: string;
         storeAddress: string;
@@ -26,6 +36,8 @@ interface StoreState {
         enablePreOrder: boolean;
         enableShift: boolean;
         enableDineTable: boolean;
+        enableTableOrder: boolean;
+        enableKitchenPrint: boolean;
         showImages: boolean;
         printerAddress: string | null;
         printerType: 'BLE' | 'USB' | null;
@@ -42,10 +54,13 @@ interface StoreState {
         license_expire_date?: string;
         license_type?: 'TRIAL' | 'PREMIUM';
         google_sheet_url?: string;
+        apiBaseUrl?: string;
     };
     setSettings: (settings: any) => void;
     setUser: (user: any) => void;
     setActiveShift: (shift: { id: string; openingCash: number; openedAt: string } | null) => void;
+    setPendingOrderContext: (context: StoreState['pendingOrderContext']) => void;
+    clearPendingOrderContext: () => void;
     addToCart: (product: any) => void;
     addToCartNewLine: (product: any) => void;
     removeFromCart: (cartItemId: string) => void;
@@ -65,6 +80,7 @@ export const useStore = create<StoreState>((set, get) => ({
     discount: 0,
     discountType: 'amount',
     activeShift: null,
+    pendingOrderContext: null,
     settings: {
         storeName: 'LitePOS',
         storeAddress: '',
@@ -73,6 +89,8 @@ export const useStore = create<StoreState>((set, get) => ({
         enablePreOrder: false,
         enableShift: true,
         enableDineTable: false,
+        enableTableOrder: false,
+        enableKitchenPrint: false,
         showImages: true,
         printerAddress: null,
         printerType: null,
@@ -85,10 +103,13 @@ export const useStore = create<StoreState>((set, get) => ({
         loyalty_multiplier_amount: 1000,
         loyalty_point_value: 0,
         loyalty_min_points: 0,
+        apiBaseUrl: '',
     },
     setSettings: (settings) => set({ settings }),
     setUser: (user) => set({ user }),
     setActiveShift: (shift) => set({ activeShift: shift }),
+    setPendingOrderContext: (context) => set({ pendingOrderContext: context }),
+    clearPendingOrderContext: () => set({ pendingOrderContext: null }),
     addToCart: (product) => {
         const { cart } = get();
         const cartItemId = `${product.id}-${(product.notes || '').toLowerCase().trim()}`;
@@ -102,8 +123,9 @@ export const useStore = create<StoreState>((set, get) => ({
     // Always adds a brand-new line (restaurant style) — never merges into existing
     addToCartNewLine: (product) => {
         const { cart } = get();
-        const cartItemId = `${product.id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-        set({ cart: [...cart, { ...product, cartItemId, quantity: 1 }] });
+        const cartItemId = product.cartItemId || `${product.id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        const quantity = Math.max(1, Number(product.quantity || product.qty || 1));
+        set({ cart: [...cart, { ...product, cartItemId, quantity }] });
     },
     updateCartItem: (cartItemId, patch) => {
         const { cart } = get();
@@ -147,7 +169,7 @@ export const useStore = create<StoreState>((set, get) => ({
             });
         }
     },
-    clearCart: () => set({ cart: [], discount: 0, discountType: 'amount' }),
+    clearCart: () => set({ cart: [], discount: 0, discountType: 'amount', pendingOrderContext: null }),
     cartSubtotal: () => {
         const { cart } = get();
         return cart.reduce((total, item) => total + (item.price * item.quantity), 0);

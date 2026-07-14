@@ -5,7 +5,7 @@ import {
   LayoutDashboard, ShoppingCart, Users, Settings,
   ChevronDown, Box, ClipboardList, UserCircle, LogOut, Utensils,
   Wallet, Clock, PackageCheck, ClipboardCheck, UtensilsCrossed, Truck, Gift,
-  PlayCircle, Pause, AlertCircle
+  PlayCircle, Pause, AlertCircle, QrCode
 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -73,7 +73,10 @@ export default function Sidebar({ isMobileOpen, setIsMobileOpen }) {
 
   // Fetch pending saved transactions count
   useEffect(() => {
-    if (!mounted) return;
+    if (!mounted || !settings?.enableTableOrder) {
+      setPendingSalesCount(0);
+      return;
+    }
     const fetchPendingSales = async () => {
       try {
         const token = localStorage.getItem('token');
@@ -91,7 +94,7 @@ export default function Sidebar({ isMobileOpen, setIsMobileOpen }) {
     fetchPendingSales();
     const interval = setInterval(fetchPendingSales, 30000);
     return () => clearInterval(interval);
-  }, [mounted]);
+  }, [mounted, settings?.enableTableOrder]);
 
   const toggleSubmenu = (key) => {
     setExpandedMenu(prev => ({ ...prev, [key]: !prev[key] }));
@@ -112,6 +115,7 @@ export default function Sidebar({ isMobileOpen, setIsMobileOpen }) {
 
   const isAdminOrOwner = user?.role === 'ADMIN' || user?.role === 'OWNER';
   const enableDineTable = settings?.enableDineTable;
+  const enableTableOrder = settings?.enableTableOrder;
 
   return (
     <>
@@ -176,6 +180,9 @@ export default function Sidebar({ isMobileOpen, setIsMobileOpen }) {
             )}
 
             {/* TRANSACTIONS & REPORTS */}
+            {enableTableOrder && (
+              <SidebarItem icon={QrCode} label="Order Meja" href="/order-meja" badge={pendingSalesCount} />
+            )}
             <SidebarItem icon={ShoppingCart} label="Transaksi" href="/transactions" />
 
             {isAdminOrOwner && (

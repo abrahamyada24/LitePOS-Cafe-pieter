@@ -4,13 +4,12 @@ import { launchImageLibrary } from 'react-native-image-picker';
 import tw, { useAppColorScheme } from 'twrnc';
 import { getDBConnection } from '../database/db';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-// @ts-ignore
-import { BLEPrinter, USBPrinter } from 'react-native-thermal-receipt-printer-image-qr';
 import { useStore } from '../store/useStore';
 import StockReceivingScreen from './StockReceivingScreen';
 import StockOpnameScreen from './StockOpnameScreen';
-import { requestPrinterPermissions } from '../utils/permissions';
 import RNFS from 'react-native-fs';
+import { resolveApiAssetUrl } from '../services/api';
+import { closeConfiguredPrinter, connectConfiguredPrinter } from '../utils/printerConnection';
 
 type TabType = 'products' | 'categories' | 'customers' | 'penerimaan' | 'opname' | 'stokDarurat';
 
@@ -201,6 +200,63 @@ export default function ManagementScreen({ navigation }: any) {
         setProductModalVisible(true);
     };
 
+    const buildBarcodeRawBase64 = (barcodeData: string, productName: string, priceText: string): string => {
+        // Build ESC/POS raw bytes for barcode label printing (offline, no internet needed)
+        const bytes: number[] = [];
+
+        // ESC @ — Initialize printer
+        bytes.push(0x1B, 0x40);
+
+        // ESC a 1 — Center alignment
+        bytes.push(0x1B, 0x61, 0x01);
+
+        // Print product name (normal size)
+        const nameEncoder = new TextEncoder();
+        const nameBytes = nameEncoder.encode(productName.toUpperCase() + '\n');
+        bytes.push(...nameBytes);
+
+        // GS w 2 — Set barcode width (module width = 2)
+        bytes.push(0x1D, 0x77, 0x02);
+
+        // GS h 60 — Set barcode height (60 dots)
+        bytes.push(0x1D, 0x68, 0x3C);
+
+        // GS H 2 — Set HRI (Human Readable Interpretation) position: below barcode
+        bytes.push(0x1D, 0x48, 0x02);
+
+        // GS f 0 — Set HRI font to Font A
+        bytes.push(0x1D, 0x66, 0x00);
+
+        // GS k 73 n data — Print CODE128 barcode
+        // Format: GS k m n d1...dn
+        // m = 73 (CODE128), n = length of data
+        const barcodeBytes = nameEncoder.encode(barcodeData);
+        bytes.push(0x1D, 0x6B, 0x49, barcodeBytes.length + 2);
+        // CODE128: start with Code B ({B) for alphanumeric
+        bytes.push(0x7B, 0x42); // {B = Code B
+        bytes.push(...barcodeBytes);
+
+        // Line feed after barcode
+        bytes.push(0x0A, 0x0A);
+
+        // Print price (centered, normal size)
+        if (priceText) {
+            const priceBytes = nameEncoder.encode(priceText + '\n');
+            bytes.push(...priceBytes);
+        }
+
+        // Feed and partial cut
+        bytes.push(0x0A, 0x0A, 0x0A, 0x0A);
+
+        // Convert to base64
+        const uint8 = new Uint8Array(bytes);
+        let binary = '';
+        for (let i = 0; i < uint8.length; i++) {
+            binary += String.fromCharCode(uint8[i]);
+        }
+        return btoa(binary);
+    };
+
     const handlePrintBarcode = async (product: any) => {
         if (!product.barcode) {
             Alert.alert('Info', 'Produk ini belum memiliki barcode.');
@@ -212,45 +268,15 @@ export default function ManagementScreen({ navigation }: any) {
         }
 
         try {
-            const hasPerms = await requestPrinterPermissions();
-            if (!hasPerms && settings.printerType === 'BLE') {
-                Alert.alert('Izin Ditolak', 'Dibutuhkan izin Bluetooth untuk mencetak.');
-                return;
-            }
+            const printerClass = await connectConfiguredPrinter(settings);
 
-            const printerClass = settings.printerType === 'USB' ? USBPrinter : BLEPrinter;
-            try { await printerClass.init(); } catch { }
-            if (settings.printerType === 'BLE') {
-                await printerClass.connectPrinter(settings.printerAddress);
-            } else {
-                await printerClass.connectPrinter(settings.printerAddress, { vendorId: '', productId: '' } as any);
-            }
+            const priceText = product.price ? `Rp ${product.price.toLocaleString('id-ID')}` : '';
+            const base64Data = buildBarcodeRawBase64(product.barcode, product.name, priceText);
+            await printerClass.printRaw(base64Data);
 
-            // Print Barcode format CODE128 (73), width=2, height=64, HRI=below (2)
-            await printerClass.printText(`\n\n`);
-            await printerClass.printText(`<C>${product.name.toUpperCase()}</C>\n`);
-            try {
-                const barcodeUrl = `https://barcode.orcascan.com/?type=code128&data=${encodeURIComponent(product.barcode)}`;
-                const tempFile = `${RNFS.CachesDirectoryPath}/temp_barcode.png`;
-                const res = await RNFS.downloadFile({ fromUrl: barcodeUrl, toFile: tempFile }).promise;
-                if (res.statusCode === 200) {
-                    const base64Image = await RNFS.readFile(tempFile, 'base64');
-                    await printerClass.printImageBase64(base64Image, { imageWidth: 300 });
-                } else {
-                    await printerClass.printText(`<C>[Gagal Unduh Barcode]</C>\n`);
-                }
-            } catch (err) {
-                console.log("Barcode Error:", err);
-                await printerClass.printText(`<C>[Gambar Barcode Gagal]</C>\n`);
-            }
-            await printerClass.printText(`<C>${product.barcode}</C>\n`);
-            await printerClass.printText(`\n\n\n\n`);
-
-            if (settings.printerType === 'BLE') {
-                await printerClass.closeConn();
-            }
-        } catch (error) {
-            Alert.alert('Error', 'Gagal mencetak barcode. Pastikan printer menyala dan terhubung.');
+            await closeConfiguredPrinter(settings, printerClass);
+        } catch (error: any) {
+            Alert.alert('Error', error?.message || 'Gagal mencetak barcode. Pastikan printer menyala dan terhubung.');
         }
     };
 
@@ -718,7 +744,11 @@ export default function ManagementScreen({ navigation }: any) {
                                     }}
                                 >
                                     {productImageUrl ? (
-                                        <Icon name="image" source={{ uri: productImageUrl }} style={tw`w-12 h-12 rounded-lg mr-3`} resizeMode="cover" />
+                                        <Image
+                                            source={{ uri: resolveApiAssetUrl(productImageUrl, settings.apiBaseUrl) || undefined }}
+                                            style={tw`w-12 h-12 rounded-lg mr-3`}
+                                            resizeMode="cover"
+                                        />
                                     ) : (
                                         <Icon name="camera" size={22} color={tw.color('blue-400')} style={tw`mr-2`} />
                                     )}

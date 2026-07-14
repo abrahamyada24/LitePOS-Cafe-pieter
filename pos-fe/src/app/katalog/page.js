@@ -1,410 +1,827 @@
 /* eslint-disable @next/next/no-img-element */
-"use client"
-import React, { useState, useEffect, useCallback } from 'react';
-import { Search, Grid, List, AlignJustify, MessageCircle, ShoppingBag, X, ChevronLeft, ZoomIn, ZoomOut, Package } from 'lucide-react';
+"use client";
+
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  ChevronLeft,
+  ClipboardCheck,
+  MessageCircle,
+  Minus,
+  Package,
+  Plus,
+  Search,
+  Send,
+  ShoppingBag,
+  Trash2,
+  Utensils,
+  X,
+} from "lucide-react";
+
+const RAW_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+const API_URL = RAW_API_URL.replace(/\/api$/, "").replace(/\/$/, "");
 
 export default function KatalogPage() {
-    const [products, setProducts] = useState([]);
-    const [categories, setCategories] = useState([]);
-    const [settings, setSettings] = useState(null);
-    const [searchQuery, setSearchQuery] = useState('');
-    const [isSearching, setIsSearching] = useState(false);
-    const [selectedCategory, setSelectedCategory] = useState('All');
-    const [viewMode, setViewMode] = useState('grid');
-    const [loading, setLoading] = useState(true);
+  const [products, setProducts] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [settings, setSettings] = useState(null);
+  const [tableNumber, setTableNumber] = useState("");
+  const [cart, setCart] = useState([]);
+  const [showCart, setShowCart] = useState(false);
+  const [customerName, setCustomerName] = useState("");
+  const [orderNote, setOrderNote] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [orderSuccess, setOrderSuccess] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("All");
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [selectedProduct, setSelectedProduct] = useState(null);
+  const [detailCartItemId, setDetailCartItemId] = useState(null);
+  const [detailQty, setDetailQty] = useState(1);
+  const [detailNotes, setDetailNotes] = useState("");
 
-    // Detail Modal State
-    const [selectedProduct, setSelectedProduct] = useState(null);
-    const [showDetail, setShowDetail] = useState(false);
-    const [zoomLevel, setZoomLevel] = useState(1);
-    const [imagePosition, setImagePosition] = useState({ x: 0, y: 0 });
-    const [isDragging, setIsDragging] = useState(false);
-    const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      setTableNumber((params.get("table") || params.get("meja") || "").trim().toUpperCase());
+    }
+    fetchCatalog();
+  }, []);
 
-    useEffect(() => {
-        fetchCatalog();
-    }, []);
+  const tableOrderRequested = Boolean(tableNumber);
+  const isTableMode = tableOrderRequested && settings?.enableTableOrder === true;
 
-    const fetchCatalog = async () => {
-        try {
-            const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
-            const res = await fetch(`${API_URL}/api/catalog`);
-            const json = await res.json();
-            if (json.success) {
-                setProducts(json.data.products);
-                setCategories(json.data.categories);
-                setSettings(json.data.settings);
-            }
-        } catch (error) {
-            console.error("Gagal mengambil data katalog", error);
-        } finally {
-            setLoading(false);
-        }
-    };
+  const fetchCatalog = async () => {
+    setLoading(true);
+    setLoadError("");
+    try {
+      const res = await fetch(`${API_URL}/api/catalog`);
+      const json = await res.json();
+      if (!json.success) throw new Error(json.message || "Katalog belum tersedia.");
+      setProducts(Array.isArray(json.data.products) ? json.data.products : []);
+      setCategories(Array.isArray(json.data.categories) ? json.data.categories : []);
+      setSettings(json.data.settings || null);
+    } catch (error) {
+      setLoadError(error.message || "Gagal mengambil katalog.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    const formatRupiah = (number) => {
-        return new Intl.NumberFormat('id-ID', {
-            style: 'currency',
-            currency: 'IDR',
-            minimumFractionDigits: 0
-        }).format(number);
-    };
+  const formatRupiah = (number) => {
+    return new Intl.NumberFormat("id-ID", {
+      style: "currency",
+      currency: "IDR",
+      minimumFractionDigits: 0,
+    }).format(Number(number) || 0);
+  };
 
-    const getAPIUrl = () => process.env.NEXT_PUBLIC_API_URL || '';
+  const getImageUrl = (imageUrl) => {
+    if (!imageUrl) return null;
+    if (imageUrl.startsWith("http")) return imageUrl;
+    return `${API_URL}${imageUrl}`;
+  };
 
-    const getImageUrl = (imageUrl) => {
-        if (!imageUrl) return null;
-        if (imageUrl.startsWith('http')) return imageUrl;
-        return `${getAPIUrl()}${imageUrl}`;
-    };
+  const isUnlimitedStock = (item) => {
+    return item?.isUnlimitedStock === true || item?.isUnlimitedStock === 1 || item?.isUnlimitedStock === "1";
+  };
 
-    const openProductDetail = (product) => {
-        setSelectedProduct(product);
-        setShowDetail(true);
-        setZoomLevel(1);
-        setImagePosition({ x: 0, y: 0 });
-    };
+  const getStockLabel = (product) => {
+    if (isUnlimitedStock(product)) return "Tersedia";
+    const stock = Number(product.stock) || 0;
+    return stock <= 5 ? `Sisa ${stock}` : `${stock} tersedia`;
+  };
 
-    const closeProductDetail = () => {
-        setShowDetail(false);
-        setSelectedProduct(null);
-        setZoomLevel(1);
-        setImagePosition({ x: 0, y: 0 });
-    };
+  const isProductAvailable = (product) => {
+    return isUnlimitedStock(product) || Number(product.stock || 0) > 0;
+  };
 
-    const openWhatsApp = (product) => {
-        let phone = settings?.phone || '';
-        if (!phone) {
-            alert('Nomor WhatsApp toko belum diatur.');
-            return;
-        }
-        if (phone.startsWith('0')) {
-            phone = '62' + phone.slice(1);
-        }
-        phone = phone.replace(/\D/g, '');
-        const message = `Halo, saya ingin bertanya tentang produk *${product.name}* (Harga: ${formatRupiah(product.price)}). Apakah masih tersedia?`;
-        const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
-        window.open(url, '_blank');
-    };
+  const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const cartTotal = cart.reduce((sum, item) => sum + Number(item.price) * item.quantity, 0);
 
-    const toggleViewMode = () => {
-        if (viewMode === 'grid') setViewMode('list');
-        else if (viewMode === 'list') setViewMode('compact');
-        else setViewMode('grid');
-    };
-
-    const filteredProducts = products.filter(p => {
-        const matchSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase());
-        const matchCat = selectedCategory === 'All' || p.categoryId === parseInt(selectedCategory);
-        return matchSearch && matchCat;
+  const filteredProducts = useMemo(() => {
+    const keyword = searchQuery.trim().toLowerCase();
+    return products.filter((product) => {
+      const matchSearch = !keyword || product.name.toLowerCase().includes(keyword);
+      const matchCategory = selectedCategory === "All" || String(product.categoryId) === selectedCategory;
+      return matchSearch && matchCategory;
     });
+  }, [products, searchQuery, selectedCategory]);
 
-    // Zoom handlers
-    const handleZoomIn = () => {
-        setZoomLevel(prev => Math.min(prev + 0.5, 4));
-    };
+  const getProductCartQty = (productId) => {
+    return cart.filter((item) => item.id === productId).reduce((sum, item) => sum + item.quantity, 0);
+  };
 
-    const handleZoomOut = () => {
-        setZoomLevel(prev => {
-            const newZoom = Math.max(prev - 0.5, 1);
-            if (newZoom === 1) setImagePosition({ x: 0, y: 0 });
-            return newZoom;
-        });
-    };
+  const addToCart = (product, qty = 1, notes = "") => {
+    const quantity = Math.max(1, Number(qty) || 1);
+    const cleanNotes = String(notes || "").trim();
+    const currentQty = getProductCartQty(product.id);
 
-    const handleMouseDown = (e) => {
-        if (zoomLevel <= 1) return;
-        setIsDragging(true);
-        setDragStart({ x: e.clientX - imagePosition.x, y: e.clientY - imagePosition.y });
-    };
-
-    const handleMouseMove = useCallback((e) => {
-        if (!isDragging || zoomLevel <= 1) return;
-        setImagePosition({
-            x: e.clientX - dragStart.x,
-            y: e.clientY - dragStart.y
-        });
-    }, [isDragging, zoomLevel, dragStart]);
-
-    const handleMouseUp = () => {
-        setIsDragging(false);
-    };
-
-    const handleTouchStart = (e) => {
-        if (zoomLevel <= 1) return;
-        const touch = e.touches[0];
-        setIsDragging(true);
-        setDragStart({ x: touch.clientX - imagePosition.x, y: touch.clientY - imagePosition.y });
-    };
-
-    const handleTouchMove = useCallback((e) => {
-        if (!isDragging || zoomLevel <= 1) return;
-        const touch = e.touches[0];
-        setImagePosition({
-            x: touch.clientX - dragStart.x,
-            y: touch.clientY - dragStart.y
-        });
-    }, [isDragging, zoomLevel, dragStart]);
-
-    const handleTouchEnd = () => {
-        setIsDragging(false);
-    };
-
-    if (loading) {
-        return (
-            <div className="min-h-screen flex items-center justify-center bg-gray-50">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-500"></div>
-            </div>
-        );
+    if (!isUnlimitedStock(product) && currentQty + quantity > Number(product.stock || 0)) {
+      alert("Jumlah melebihi stok yang tersedia.");
+      return;
     }
 
-    return (
-        <div className="min-h-screen bg-gray-50 pb-20">
-            {/* ==================== STORE HEADER ==================== */}
-            <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-5 flex items-center gap-4">
-                {settings?.logoUrl && (
-                    <div className="w-14 h-14 rounded-full bg-white overflow-hidden border-2 border-white/50 shrink-0 flex items-center justify-center">
-                        <img
-                            src={getImageUrl(settings.logoUrl)}
-                            alt="Logo Toko"
-                            className="w-full h-full object-cover"
-                        />
-                    </div>
-                )}
-                <div className="flex-1 min-w-0">
-                    <h1 className="text-lg font-bold truncate">{settings?.storeName || 'Katalog Toko'}</h1>
-                    {settings?.address && <p className="text-xs text-white/80 truncate mt-0.5">{settings.address}</p>}
-                </div>
-            </div>
+    const cartItemId = `${product.id}-${cleanNotes.toLowerCase() || "regular"}`;
+    setCart((prev) => {
+      const existing = prev.find((item) => item.cartItemId === cartItemId);
+      if (existing) {
+        return prev.map((item) =>
+          item.cartItemId === cartItemId
+            ? { ...item, quantity: item.quantity + quantity }
+            : item
+        );
+      }
 
-            {/* ==================== TOOLBAR ==================== */}
-            <div className="bg-white sticky top-0 z-40 shadow-sm px-4 py-3 flex items-center gap-3">
-                {isSearching ? (
-                    <div className="flex-1 flex items-center bg-gray-100 rounded-lg px-3 py-2">
-                        <Search size={18} className="text-gray-400" />
-                        <input
-                            type="text"
-                            autoFocus
-                            placeholder="Cari produk..."
-                            className="bg-transparent border-none outline-none flex-1 ml-2 text-sm"
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                        />
-                        <button onClick={() => { setIsSearching(false); setSearchQuery(''); }}>
-                            <X size={18} className="text-gray-500" />
-                        </button>
-                    </div>
-                ) : (
-                    <>
-                        <div className="flex-1 relative">
-                            <select
-                                className="w-full bg-gray-100 text-gray-700 text-sm rounded-lg px-3 py-2.5 appearance-none outline-none font-medium"
-                                value={selectedCategory}
-                                onChange={(e) => setSelectedCategory(e.target.value)}
-                            >
-                                <option value="All">Semua Kategori</option>
-                                {categories.map(cat => (
-                                    <option key={cat.id} value={cat.id}>{cat.name}</option>
-                                ))}
-                            </select>
-                            <div className="absolute right-3 top-3 pointer-events-none">
-                                <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
-                            </div>
-                        </div>
-                        <button onClick={() => setIsSearching(true)} className="p-2 text-gray-500 hover:bg-gray-100 rounded-full">
-                            <Search size={22} />
-                        </button>
-                        <button onClick={toggleViewMode} className="p-2 text-gray-500 hover:bg-gray-100 rounded-full">
-                            {viewMode === 'grid' && <Grid size={22} />}
-                            {viewMode === 'list' && <List size={22} />}
-                            {viewMode === 'compact' && <AlignJustify size={22} />}
-                        </button>
-                    </>
-                )}
-            </div>
+      return [
+        ...prev,
+        {
+          cartItemId,
+          id: product.id,
+          name: product.name,
+          categoryName: product.category?.name || null,
+          price: Number(product.price),
+          imageUrl: product.imageUrl,
+          stock: product.stock,
+          isUnlimitedStock: product.isUnlimitedStock,
+          quantity,
+          notes: cleanNotes,
+        },
+      ];
+    });
 
-            {/* ==================== PRODUCT LIST ==================== */}
-            <div className={`p-4 ${viewMode === 'grid' ? 'grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3' : 'flex flex-col gap-3'}`}>
-                {filteredProducts.length === 0 ? (
-                    <div className="col-span-full py-20 flex flex-col items-center text-gray-400">
-                        <ShoppingBag size={48} className="mb-4 opacity-50" />
-                        <p>Tidak ada produk ditemukan</p>
-                    </div>
-                ) : (
-                    filteredProducts.map(product => {
-                        const imageUrl = getImageUrl(product.imageUrl);
+    setSelectedProduct(null);
+    setDetailCartItemId(null);
+    setDetailQty(1);
+    setDetailNotes("");
+  };
 
-                        {/* ===== GRID VIEW ===== */}
-                        if (viewMode === 'grid') {
-                            return (
-                                <div key={product.id} onClick={() => openProductDetail(product)} className="bg-white rounded-xl overflow-hidden shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition-all active:scale-[0.98]">
-                                    <div className="aspect-square bg-gray-100 relative flex items-center justify-center overflow-hidden">
-                                        {imageUrl ? (
-                                            <img src={imageUrl} alt={product.name} className="w-full h-full object-cover" />
-                                        ) : (
-                                            <div className="text-gray-300 flex flex-col items-center gap-1">
-                                                <Package size={32} />
-                                            </div>
-                                        )}
-                                        <div className={`absolute top-2 left-2 px-2 py-0.5 rounded-full text-[10px] font-bold shadow-sm ${product.stock <= 5 ? 'bg-red-50 text-red-500' : 'bg-white/90 backdrop-blur-sm text-gray-600'}`}>
-                                            {product.stock <= 5 ? `Sisa ${product.stock}` : `${product.stock} Stok`}
-                                        </div>
-                                    </div>
-                                    <div className="p-3">
-                                        <h3 className="text-sm text-gray-800 line-clamp-2 leading-tight">{product.name}</h3>
-                                        <p className="font-bold text-gray-900 text-sm mt-1">{formatRupiah(product.price)}<span className="text-[10px] text-gray-400 font-normal"> /Pcs</span></p>
-                                    </div>
-                                </div>
-                            );
-                        }
-
-                        {/* ===== LIST VIEW ===== */}
-                        if (viewMode === 'list') {
-                            return (
-                                <div key={product.id} onClick={() => openProductDetail(product)} className="bg-white rounded-xl p-3 flex gap-3 items-center shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition-all active:scale-[0.99]">
-                                    <div className="w-20 h-20 bg-gray-100 rounded-lg overflow-hidden shrink-0 flex items-center justify-center">
-                                        {imageUrl ? (
-                                            <img src={imageUrl} alt={product.name} className="w-full h-full object-cover" />
-                                        ) : (
-                                            <Package size={24} className="text-gray-300" />
-                                        )}
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                        <h3 className="text-gray-800 font-medium truncate">{product.name}</h3>
-                                        <p className="font-bold text-gray-900 mt-0.5">{formatRupiah(product.price)}<span className="text-xs text-gray-400 font-normal"> /Pcs</span></p>
-                                        <p className={`text-xs mt-0.5 font-medium ${product.stock <= 5 ? 'text-red-500' : 'text-gray-500'}`}>{product.stock} Stok</p>
-                                    </div>
-                                    <div className="w-9 h-9 rounded-full bg-green-50 text-green-600 flex items-center justify-center shrink-0">
-                                        <MessageCircle size={18} />
-                                    </div>
-                                </div>
-                            );
-                        }
-
-                        {/* ===== COMPACT VIEW ===== */}
-                        return (
-                            <div key={product.id} onClick={() => openProductDetail(product)} className="bg-white px-4 py-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 flex justify-between items-center active:bg-gray-100 transition-colors">
-                                <div className="min-w-0 flex-1">
-                                    <h3 className="text-gray-800 font-medium truncate">{product.name}</h3>
-                                    <div className="flex items-center gap-3 mt-0.5">
-                                        <p className="font-bold text-gray-900">{formatRupiah(product.price)}<span className="text-xs text-gray-400 font-normal"> /Pcs</span></p>
-                                        <p className={`text-xs font-medium ${product.stock <= 5 ? 'text-red-500' : 'text-gray-500'}`}>{product.stock} Stok</p>
-                                    </div>
-                                </div>
-                                <MessageCircle size={20} className="text-green-500 shrink-0 ml-3" />
-                            </div>
-                        );
-                    })
-                )}
-            </div>
-
-            {/* ==================== PRODUCT DETAIL MODAL ==================== */}
-            {showDetail && selectedProduct && (
-                <div className="fixed inset-0 z-50 bg-white flex flex-col">
-                    {/* Detail Header */}
-                    <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 shrink-0">
-                        <button onClick={closeProductDetail} className="p-1 -ml-1 text-gray-600 hover:bg-gray-100 rounded-full">
-                            <ChevronLeft size={24} />
-                        </button>
-                        <h2 className="text-sm font-medium text-gray-700 truncate mx-3 flex-1 text-center">Detail Produk</h2>
-                        <div className="w-8"></div>
-                    </div>
-
-                    {/* Detail Body (Scrollable) */}
-                    <div className="flex-1 overflow-y-auto">
-                        {/* Product Image with Zoom */}
-                        <div className="relative bg-gray-100 w-full aspect-square overflow-hidden select-none"
-                            onMouseDown={handleMouseDown}
-                            onMouseMove={handleMouseMove}
-                            onMouseUp={handleMouseUp}
-                            onMouseLeave={handleMouseUp}
-                            onTouchStart={handleTouchStart}
-                            onTouchMove={handleTouchMove}
-                            onTouchEnd={handleTouchEnd}
-                            style={{ cursor: zoomLevel > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default' }}
-                        >
-                            {getImageUrl(selectedProduct.imageUrl) ? (
-                                <img
-                                    src={getImageUrl(selectedProduct.imageUrl)}
-                                    alt={selectedProduct.name}
-                                    className="w-full h-full object-contain transition-transform duration-200"
-                                    style={{
-                                        transform: `scale(${zoomLevel}) translate(${imagePosition.x / zoomLevel}px, ${imagePosition.y / zoomLevel}px)`,
-                                    }}
-                                    draggable={false}
-                                />
-                            ) : (
-                                <div className="w-full h-full flex flex-col items-center justify-center text-gray-300">
-                                    <Package size={64} />
-                                    <p className="text-sm mt-2">Tidak ada gambar</p>
-                                </div>
-                            )}
-
-                            {/* Zoom Controls */}
-                            {getImageUrl(selectedProduct.imageUrl) && (
-                                <div className="absolute bottom-3 right-3 flex gap-2">
-                                    <button onClick={handleZoomOut} disabled={zoomLevel <= 1} className="w-9 h-9 bg-white/90 backdrop-blur-sm rounded-full flex items-center justify-center shadow-md disabled:opacity-30 active:scale-90 transition-transform">
-                                        <ZoomOut size={18} className="text-gray-700" />
-                                    </button>
-                                    <button onClick={handleZoomIn} disabled={zoomLevel >= 4} className="w-9 h-9 bg-white/90 backdrop-blur-sm rounded-full flex items-center justify-center shadow-md disabled:opacity-30 active:scale-90 transition-transform">
-                                        <ZoomIn size={18} className="text-gray-700" />
-                                    </button>
-                                </div>
-                            )}
-
-                            {/* Zoom Indicator */}
-                            {zoomLevel > 1 && (
-                                <div className="absolute top-3 left-3 bg-black/60 text-white text-xs px-2.5 py-1 rounded-full">
-                                    {zoomLevel.toFixed(1)}x
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Product Info */}
-                        <div className="px-5 py-4">
-                            {selectedProduct.category && (
-                                <span className="text-xs text-blue-500 font-medium bg-blue-50 px-2.5 py-1 rounded-full">{selectedProduct.category.name}</span>
-                            )}
-                            <h1 className="text-xl font-bold text-gray-900 mt-3">{selectedProduct.name}</h1>
-                            <p className="text-2xl font-bold text-gray-900 mt-2">
-                                {formatRupiah(selectedProduct.price)}
-                                <span className="text-sm text-gray-400 font-normal"> /Pcs</span>
-                            </p>
-                            <div className="mt-3 flex items-center gap-2">
-                                <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${selectedProduct.stock <= 5 ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
-                                    <div className={`w-1.5 h-1.5 rounded-full ${selectedProduct.stock <= 5 ? 'bg-red-500' : 'bg-green-500'}`}></div>
-                                    Stok: {selectedProduct.stock}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Fixed Bottom: WhatsApp CTA */}
-                    <div className="shrink-0 border-t border-gray-100 bg-white px-5 py-4">
-                        <button
-                            onClick={() => openWhatsApp(selectedProduct)}
-                            className="w-full bg-[#25D366] hover:bg-[#1fba59] active:bg-[#1aa84f] text-white font-bold py-3.5 px-6 rounded-xl flex items-center justify-center gap-3 transition-colors shadow-lg shadow-green-500/20"
-                        >
-                            <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 00-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
-                            Pesan via WhatsApp
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            {/* ==================== FLOATING WA BUTTON ==================== */}
-            <button
-                onClick={() => {
-                    let phone = settings?.phone || '';
-                    if (!phone) return;
-                    if (phone.startsWith('0')) phone = '62' + phone.slice(1);
-                    phone = phone.replace(/\D/g, '');
-                    window.open(`https://wa.me/${phone}?text=Halo,%20saya%20ingin%20bertanya%20tentang%20katalog%20toko%20Anda.`, '_blank');
-                }}
-                className="fixed bottom-6 right-6 w-14 h-14 bg-[#25D366] text-white rounded-full flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-transform z-40"
-            >
-                <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 00-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
-            </button>
-        </div>
+  const updateCartQuantity = (cartItemId, quantity) => {
+    setCart((prev) =>
+      prev
+        .map((item) => {
+          if (item.cartItemId !== cartItemId) return item;
+          const nextQty = Math.max(0, Number(quantity) || 0);
+          if (!isUnlimitedStock(item) && nextQty > Number(item.stock || 0)) {
+            alert("Jumlah melebihi stok yang tersedia.");
+            return item;
+          }
+          return { ...item, quantity: nextQty };
+        })
+        .filter((item) => item.quantity > 0)
     );
+  };
+
+  const removeCartItem = (cartItemId) => {
+    setCart((prev) => prev.filter((item) => item.cartItemId !== cartItemId));
+  };
+
+  const decreaseProductQuantity = (productId) => {
+    setCart((prev) => {
+      const regularIndex = prev.findIndex((item) => item.id === productId && !item.notes);
+      const fallbackIndex = prev.findLastIndex((item) => item.id === productId);
+      const targetIndex = regularIndex >= 0 ? regularIndex : fallbackIndex;
+
+      if (targetIndex < 0) return prev;
+
+      return prev
+        .map((item, index) =>
+          index === targetIndex ? { ...item, quantity: item.quantity - 1 } : item
+        )
+        .filter((item) => item.quantity > 0);
+    });
+  };
+
+  const openProductDetail = (product) => {
+    const productItems = cart.filter((item) => item.id === product.id);
+    const editableItem =
+      productItems.find((item) => !item.notes) ||
+      (productItems.length === 1 ? productItems[0] : null);
+
+    setSelectedProduct(product);
+    setDetailCartItemId(editableItem?.cartItemId || null);
+    setDetailQty(editableItem?.quantity || 1);
+    setDetailNotes(editableItem?.notes || "");
+  };
+
+  const closeProductDetail = () => {
+    setSelectedProduct(null);
+    setDetailCartItemId(null);
+    setDetailQty(1);
+    setDetailNotes("");
+  };
+
+  const saveProductDetail = () => {
+    if (!selectedProduct) return;
+
+    const quantity = Math.max(0, Number(detailQty) || 0);
+    const cleanNotes = String(detailNotes || "").trim();
+    const cartItemId = `${selectedProduct.id}-${cleanNotes.toLowerCase() || "regular"}`;
+    const otherProductQty = cart
+      .filter((item) => item.id === selectedProduct.id && item.cartItemId !== detailCartItemId)
+      .reduce((sum, item) => sum + item.quantity, 0);
+
+    if (
+      !isUnlimitedStock(selectedProduct) &&
+      otherProductQty + quantity > Number(selectedProduct.stock || 0)
+    ) {
+      alert("Jumlah melebihi stok yang tersedia.");
+      return;
+    }
+
+    setCart((prev) => {
+      const withoutEditedItem = detailCartItemId
+        ? prev.filter((item) => item.cartItemId !== detailCartItemId)
+        : prev;
+
+      if (quantity === 0) return withoutEditedItem;
+
+      const sameItem = withoutEditedItem.find((item) => item.cartItemId === cartItemId);
+      if (sameItem) {
+        return withoutEditedItem.map((item) =>
+          item.cartItemId === cartItemId
+            ? { ...item, quantity: item.quantity + quantity }
+            : item
+        );
+      }
+
+      return [
+        ...withoutEditedItem,
+        {
+          cartItemId,
+          id: selectedProduct.id,
+          name: selectedProduct.name,
+          categoryName: selectedProduct.category?.name || null,
+          price: Number(selectedProduct.price),
+          imageUrl: selectedProduct.imageUrl,
+          stock: selectedProduct.stock,
+          isUnlimitedStock: selectedProduct.isUnlimitedStock,
+          quantity,
+          notes: cleanNotes,
+        },
+      ];
+    });
+
+    closeProductDetail();
+  };
+
+  const submitTableOrder = async () => {
+    if (!isTableMode) {
+      alert("Fitur order meja sedang tidak aktif.");
+      return;
+    }
+    if (!tableNumber) {
+      alert("Nomor meja tidak ditemukan.");
+      return;
+    }
+    if (cart.length === 0) {
+      alert("Keranjang masih kosong.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await fetch(`${API_URL}/api/catalog/table-order`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tableNumber,
+          customerName,
+          note: orderNote,
+          items: cart.map((item) => ({
+            productId: item.id,
+            qty: item.quantity,
+            notes: item.notes || null,
+          })),
+        }),
+      });
+
+      const json = await res.json();
+      if (!json.success) throw new Error(json.message || "Gagal mengirim order.");
+
+      setOrderSuccess(json.data);
+      setCart([]);
+      setShowCart(false);
+      setCustomerName("");
+      setOrderNote("");
+    } catch (error) {
+      alert(error.message || "Gagal mengirim order.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const openWhatsApp = (product) => {
+    let phone = settings?.phone || "";
+    if (!phone) {
+      alert("Nomor WhatsApp toko belum diatur.");
+      return;
+    }
+    if (phone.startsWith("0")) phone = `62${phone.slice(1)}`;
+    phone = phone.replace(/\D/g, "");
+    const message = product
+      ? `Halo, saya ingin bertanya tentang produk *${product.name}* (Harga: ${formatRupiah(product.price)}).`
+      : "Halo, saya ingin bertanya tentang katalog toko Anda.";
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, "_blank");
+  };
+
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-stone-50 flex items-center justify-center px-6">
+        <div className="w-full max-w-sm space-y-4">
+          <div className="h-20 bg-white border border-stone-100 rounded-2xl animate-pulse" />
+          <div className="h-12 bg-white border border-stone-100 rounded-2xl animate-pulse" />
+          <div className="space-y-3">
+            {[1, 2, 3].map((item) => (
+              <div key={item} className="h-28 bg-white border border-stone-100 rounded-2xl animate-pulse" />
+            ))}
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <main className="min-h-screen bg-stone-50 flex items-center justify-center px-6 text-center">
+        <div className="w-full max-w-sm bg-white border border-stone-100 rounded-2xl p-6 shadow-sm">
+          <div className="w-12 h-12 rounded-full bg-red-50 text-red-500 flex items-center justify-center mx-auto mb-4">
+            <AlertCircle size={24} />
+          </div>
+          <h1 className="text-lg font-black text-gray-900">Katalog belum terbuka</h1>
+          <p className="text-sm text-gray-500 mt-2">{loadError}</p>
+          <button
+            type="button"
+            onClick={fetchCatalog}
+            className="mt-5 w-full h-11 rounded-xl bg-gray-900 text-white font-bold"
+          >
+            Muat Ulang
+          </button>
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="min-h-screen bg-stone-50 text-gray-900 pb-28">
+      <header className="bg-white border-b border-stone-200 sticky top-0 z-40">
+        <div className="max-w-3xl mx-auto px-4 py-4">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-stone-100 border border-stone-200 overflow-hidden flex items-center justify-center shrink-0">
+              {settings?.logoUrl ? (
+                <img src={getImageUrl(settings.logoUrl)} alt="Logo toko" className="w-full h-full object-cover" />
+              ) : (
+                <Utensils size={23} className="text-stone-500" />
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <h1 className="font-black text-gray-950 leading-tight truncate">
+                {settings?.storeName || "Menu"}
+              </h1>
+              <p className="text-xs text-gray-500 truncate">
+                {isTableMode ? "Pesanan meja" : settings?.address || "Katalog toko"}
+              </p>
+            </div>
+            {isTableMode && (
+              <div className="px-3 py-2 rounded-2xl bg-emerald-50 border border-emerald-100 text-emerald-800 text-sm font-black">
+                Meja {tableNumber}
+              </div>
+            )}
+          </div>
+
+          {isTableMode && (
+            <div className="mt-4 grid grid-cols-3 rounded-2xl bg-stone-100 border border-stone-200 p-1 text-[11px] font-black text-center">
+              <div className="py-2 rounded-xl bg-white shadow-sm text-gray-950">Pilih</div>
+              <div className="py-2 rounded-xl text-gray-500">Review</div>
+              <div className="py-2 rounded-xl text-gray-500">Kirim</div>
+            </div>
+          )}
+
+          {tableOrderRequested && settings && !settings.enableTableOrder && (
+            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
+              Order meja sedang tidak aktif. Katalog ditampilkan dalam mode publik biasa.
+            </div>
+          )}
+
+          <div className="mt-4 flex items-center gap-2 rounded-2xl bg-stone-100 border border-stone-200 px-3 h-12">
+            <Search size={18} className="text-gray-400 shrink-0" />
+            <input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Cari menu"
+              className="bg-transparent outline-none flex-1 text-sm font-semibold placeholder:text-gray-400"
+            />
+            {searchQuery && (
+              <button type="button" onClick={() => setSearchQuery("")} className="p-1 text-gray-400">
+                <X size={16} />
+              </button>
+            )}
+          </div>
+        </div>
+      </header>
+
+      <section className="max-w-3xl mx-auto px-4 pt-4">
+        <div className="flex gap-2 overflow-x-auto pb-2 -mx-4 px-4">
+          {[{ id: "All", name: "Semua" }, ...categories].map((category) => {
+            const id = String(category.id);
+            const active = selectedCategory === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setSelectedCategory(id)}
+                className={`shrink-0 h-10 px-4 rounded-full border text-sm font-bold ${
+                  active
+                    ? "bg-gray-950 text-white border-gray-950"
+                    : "bg-white text-gray-600 border-stone-200"
+                }`}
+              >
+                {category.name}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="max-w-3xl mx-auto px-4 pt-2">
+        {filteredProducts.length === 0 ? (
+          <div className="py-20 flex flex-col items-center text-gray-400">
+            <ShoppingBag size={46} className="mb-3 opacity-60" />
+            <p className="font-bold">Menu tidak ditemukan</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {filteredProducts.map((product) => {
+              const imageUrl = getImageUrl(product.imageUrl);
+              const qtyInCart = getProductCartQty(product.id);
+              const available = isProductAvailable(product);
+
+              return (
+                <article
+                  key={product.id}
+                  onClick={() => openProductDetail(product)}
+                  className="bg-white border border-stone-200 rounded-2xl p-3 flex gap-3 shadow-sm active:scale-[0.99] transition-transform cursor-pointer"
+                >
+                  <div className="w-24 h-24 rounded-2xl bg-stone-100 border border-stone-100 overflow-hidden flex items-center justify-center shrink-0">
+                    {imageUrl ? (
+                      <img src={imageUrl} alt={product.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <Package size={28} className="text-stone-300" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0 flex flex-col">
+                    <div className="flex-1">
+                      <p className="text-[11px] font-bold text-gray-400 truncate">
+                        {product.category?.name || "Menu"}
+                      </p>
+                      <h2 className="font-black text-gray-950 leading-snug mt-0.5 line-clamp-2">
+                        {product.name}
+                      </h2>
+                      <p className="text-xs font-bold text-gray-500 mt-1">{getStockLabel(product)}</p>
+                    </div>
+                    <div className="flex items-end justify-between gap-3 mt-2">
+                      <p className="font-black text-gray-950">{formatRupiah(product.price)}</p>
+                      {isTableMode ? (
+                        qtyInCart > 0 ? (
+                          <div
+                            className="h-10 flex items-center rounded-xl border border-emerald-700 overflow-hidden"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => decreaseProductQuantity(product.id)}
+                              className="w-10 h-10 flex items-center justify-center text-emerald-800 active:bg-emerald-50"
+                              aria-label={`Kurangi ${product.name}`}
+                            >
+                              <Minus size={17} />
+                            </button>
+                            <span className="w-8 text-center text-sm font-black text-gray-950">
+                              {qtyInCart}
+                            </span>
+                            <button
+                              type="button"
+                              disabled={!available || (!isUnlimitedStock(product) && qtyInCart >= Number(product.stock || 0))}
+                              onClick={() => addToCart(product)}
+                              className="w-10 h-10 flex items-center justify-center bg-emerald-700 text-white disabled:bg-gray-300"
+                              aria-label={`Tambah ${product.name}`}
+                            >
+                              <Plus size={17} />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={!available}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              addToCart(product);
+                            }}
+                            className="h-10 w-10 rounded-xl bg-emerald-700 text-white flex items-center justify-center disabled:bg-gray-300"
+                            aria-label={`Tambah ${product.name}`}
+                          >
+                            <Plus size={18} />
+                          </button>
+                        )
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openWhatsApp(product);
+                          }}
+                          className="h-10 w-10 rounded-xl bg-green-50 text-green-600 flex items-center justify-center"
+                        >
+                          <MessageCircle size={18} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {selectedProduct && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 flex items-end"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Detail menu"
+        >
+          <div className="w-full bg-white rounded-t-3xl max-h-[88vh] overflow-y-auto">
+            <div className="max-w-3xl mx-auto">
+              <div className="p-4 flex items-center justify-between border-b border-stone-100">
+                <button type="button" onClick={closeProductDetail} className="p-2 rounded-full bg-stone-100">
+                  <ChevronLeft size={20} />
+                </button>
+                <p className="font-black">Detail Menu</p>
+                <button type="button" onClick={closeProductDetail} className="p-2 rounded-full bg-stone-100">
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="p-4">
+                <div className="aspect-[4/3] rounded-3xl bg-stone-100 border border-stone-100 overflow-hidden flex items-center justify-center">
+                  {getImageUrl(selectedProduct.imageUrl) ? (
+                    <img
+                      src={getImageUrl(selectedProduct.imageUrl)}
+                      alt={selectedProduct.name}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <Package size={54} className="text-stone-300" />
+                  )}
+                </div>
+
+                <div className="pt-4">
+                  <p className="text-xs font-bold text-emerald-700">{selectedProduct.category?.name || "Menu"}</p>
+                  <h2 className="text-2xl font-black text-gray-950 mt-1">{selectedProduct.name}</h2>
+                  <div className="mt-3 flex items-center justify-between gap-4">
+                    <p className="text-xl font-black">{formatRupiah(selectedProduct.price)}</p>
+                    <span className="text-xs font-bold rounded-full bg-stone-100 px-3 py-1.5 text-gray-600">
+                      {getStockLabel(selectedProduct)}
+                    </span>
+                  </div>
+                </div>
+
+                {isTableMode ? (
+                  <div className="pt-5 space-y-3">
+                    <textarea
+                      value={detailNotes}
+                      onChange={(event) => setDetailNotes(event.target.value)}
+                      placeholder="Catatan item"
+                      rows={2}
+                      className="w-full rounded-2xl bg-stone-50 border border-stone-200 px-4 py-3 text-sm outline-none focus:border-emerald-600 resize-none"
+                    />
+
+                    <div className="flex items-center gap-3">
+                      <div className="h-12 flex items-center border border-stone-200 rounded-2xl overflow-hidden">
+                        <button
+                          type="button"
+                          onClick={() => setDetailQty((prev) => Math.max(0, prev - 1))}
+                          className="w-12 h-12 flex items-center justify-center text-gray-600"
+                          aria-label={`Kurangi ${selectedProduct.name}`}
+                        >
+                          <Minus size={18} />
+                        </button>
+                        <div className="w-12 text-center font-black">{detailQty}</div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDetailQty((prev) =>
+                              Math.min(isUnlimitedStock(selectedProduct) ? 999 : Number(selectedProduct.stock || 1), prev + 1)
+                            )
+                          }
+                          className="w-12 h-12 flex items-center justify-center text-gray-600"
+                          aria-label={`Tambah ${selectedProduct.name}`}
+                        >
+                          <Plus size={18} />
+                        </button>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={saveProductDetail}
+                        className={`h-12 flex-1 rounded-2xl text-white font-black flex items-center justify-center gap-2 ${
+                          detailQty === 0
+                            ? detailCartItemId
+                              ? "bg-red-600"
+                              : "bg-gray-700"
+                            : "bg-emerald-700"
+                        }`}
+                      >
+                        {detailQty === 0 ? (
+                          detailCartItemId ? <Trash2 size={18} /> : <X size={18} />
+                        ) : detailCartItemId ? (
+                          <CheckCircle2 size={18} />
+                        ) : (
+                          <Plus size={18} />
+                        )}
+                        {detailQty === 0
+                          ? detailCartItemId
+                            ? "Hapus dari pesanan"
+                            : "Tidak jadi pilih"
+                          : `${detailCartItemId ? "Simpan" : "Tambah"} ${formatRupiah(
+                              Number(selectedProduct.price) * detailQty
+                            )}`}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => openWhatsApp(selectedProduct)}
+                    className="mt-5 w-full h-12 rounded-2xl bg-green-600 text-white font-black flex items-center justify-center gap-2"
+                  >
+                    <MessageCircle size={18} />
+                    Pesan via WhatsApp
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isTableMode && cart.length > 0 && !showCart && (
+        <div className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-stone-200 px-4 py-3 shadow-2xl">
+          <div className="max-w-3xl mx-auto flex items-center gap-3">
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-bold text-gray-500">{cartItemCount} item dipilih</p>
+              <p className="font-black text-gray-950">{formatRupiah(cartTotal)}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowCart(true)}
+              className="h-12 px-5 rounded-2xl bg-gray-950 text-white font-black flex items-center gap-2"
+            >
+              Review
+              <ShoppingBag size={18} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isTableMode && showCart && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-end">
+          <div className="w-full bg-white rounded-t-3xl max-h-[92vh] flex flex-col">
+            <div className="max-w-3xl mx-auto w-full flex-1 flex flex-col min-h-0">
+              <div className="px-4 py-4 border-b border-stone-100 flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-black text-gray-950">Review Pesanan</h2>
+                  <p className="text-xs text-gray-500">Meja {tableNumber}</p>
+                </div>
+                <button type="button" onClick={() => setShowCart(false)} className="p-2 rounded-full bg-stone-100">
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="px-4 pt-4">
+                <div className="grid grid-cols-3 rounded-2xl bg-stone-100 border border-stone-200 p-1 text-[11px] font-black text-center">
+                  <div className="py-2 rounded-xl text-gray-500">Pilih</div>
+                  <div className="py-2 rounded-xl bg-white shadow-sm text-gray-950">Review</div>
+                  <div className="py-2 rounded-xl text-gray-500">Kirim</div>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-4 py-3">
+                {cart.map((item) => (
+                  <div key={item.cartItemId} className="py-3 border-b border-stone-100 flex gap-3">
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-black text-sm text-gray-950 truncate">{item.name}</h3>
+                      {item.notes && <p className="text-xs text-emerald-700 mt-0.5 truncate">{item.notes}</p>}
+                      <p className="text-xs font-bold text-gray-500 mt-1">{formatRupiah(item.price)}</p>
+                    </div>
+                    <div className="flex items-center h-10 border border-stone-200 rounded-xl overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => updateCartQuantity(item.cartItemId, item.quantity - 1)}
+                        className="w-9 h-10 flex items-center justify-center text-gray-600"
+                      >
+                        <Minus size={15} />
+                      </button>
+                      <span className="w-8 text-center font-black text-sm">{item.quantity}</span>
+                      <button
+                        type="button"
+                        onClick={() => updateCartQuantity(item.cartItemId, item.quantity + 1)}
+                        className="w-9 h-10 flex items-center justify-center text-gray-600"
+                      >
+                        <Plus size={15} />
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeCartItem(item.cartItemId)}
+                      className="h-10 w-10 rounded-xl bg-red-50 text-red-500 flex items-center justify-center"
+                    >
+                      <Trash2 size={17} />
+                    </button>
+                  </div>
+                ))}
+
+                <div className="pt-4 space-y-3">
+                  <input
+                    value={customerName}
+                    onChange={(event) => setCustomerName(event.target.value)}
+                    placeholder="Nama pelanggan"
+                    className="w-full h-12 rounded-2xl bg-stone-50 border border-stone-200 px-4 text-sm outline-none focus:border-emerald-600"
+                  />
+                  <textarea
+                    value={orderNote}
+                    onChange={(event) => setOrderNote(event.target.value)}
+                    placeholder="Catatan pesanan"
+                    rows={3}
+                    className="w-full rounded-2xl bg-stone-50 border border-stone-200 px-4 py-3 text-sm outline-none focus:border-emerald-600 resize-none"
+                  />
+                </div>
+              </div>
+
+              <div className="p-4 border-t border-stone-100 bg-white">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-sm font-bold text-gray-500">Total</span>
+                  <span className="text-xl font-black text-gray-950">{formatRupiah(cartTotal)}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={submitTableOrder}
+                  disabled={submitting || cart.length === 0}
+                  className="w-full h-14 rounded-2xl bg-emerald-700 disabled:bg-gray-300 text-white font-black flex items-center justify-center gap-2"
+                >
+                  <Send size={18} />
+                  {submitting ? "Mengirim..." : "Kirim ke Kasir"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {orderSuccess && (
+        <div className="fixed inset-0 z-50 bg-white flex items-center justify-center px-6">
+          <div className="w-full max-w-sm text-center">
+            <div className="w-20 h-20 rounded-full bg-emerald-50 text-emerald-700 flex items-center justify-center mx-auto mb-5">
+              <ClipboardCheck size={40} />
+            </div>
+            <h2 className="text-2xl font-black text-gray-950">Order Terkirim</h2>
+            <p className="text-sm text-gray-500 mt-2">Meja {orderSuccess.tableNumber}</p>
+            <div className="mt-5 rounded-3xl border border-stone-200 bg-stone-50 p-4">
+              <p className="text-xs font-bold text-gray-500">Nomor Antrean</p>
+              <p className="text-3xl font-black text-emerald-700 mt-1">{orderSuccess.queueLabel || "-"}</p>
+              <div className="h-px bg-stone-200 my-4" />
+              <p className="text-xs font-bold text-gray-500">Kode Order</p>
+              <p className="font-black text-gray-950 mt-1">{orderSuccess.orderCode}</p>
+              <div className="h-px bg-stone-200 my-4" />
+              <p className="text-xs font-bold text-gray-500">Total</p>
+              <p className="text-xl font-black text-gray-950 mt-1">{formatRupiah(orderSuccess.grandTotal)}</p>
+            </div>
+            <div className="mt-5 flex items-center justify-center gap-2 text-sm font-bold text-emerald-700">
+              <CheckCircle2 size={18} />
+              Masuk ke kasir
+            </div>
+            <button
+              type="button"
+              onClick={() => setOrderSuccess(null)}
+              className="mt-7 w-full h-12 rounded-2xl bg-gray-950 text-white font-black"
+            >
+              Tambah Pesanan
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!isTableMode && (
+        <button
+          type="button"
+          onClick={() => openWhatsApp(null)}
+          className="fixed bottom-6 right-6 w-14 h-14 bg-green-600 text-white rounded-full flex items-center justify-center shadow-xl z-40"
+        >
+          <MessageCircle size={28} />
+        </button>
+      )}
+    </main>
+  );
 }

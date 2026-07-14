@@ -222,6 +222,7 @@ model StoreSetting {
   enablePreOrder        Boolean  @default(false) @map("enable_pre_order")
   enableShift           Boolean  @default(true) @map("enable_shift")
   enableDineTable       Boolean  @default(false) @map("enable_dine_table")
+  enableTableOrder      Boolean  @default(false) @map("enable_table_order")
   takeawayOptions       String?  @map("takeaway_options") @db.Text
   allowNegativeStock    Boolean  @default(false) @map("allow_negative_stock")
   showImages            Boolean  @default(true) @map("show_images")
@@ -278,6 +279,15 @@ model SavedTransaction {
   user      User     @relation(fields: [userId], references: [id])
 
   @@map("saved_transactions")
+}
+
+model OrderQueueCounter {
+  queueDate  String   @id @map("queue_date") @db.VarChar(10)
+  lastNumber Int      @default(0) @map("last_number")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("order_queue_counters")
 }
 
 model StockReceipt {

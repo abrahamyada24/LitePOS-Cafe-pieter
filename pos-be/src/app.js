@@ -1,8 +1,23 @@
+const dotenv = require('dotenv');
+dotenv.config();
+
 const express = require('express');
 const cors = require('cors');
-const dotenv = require('dotenv');
-const path = require('path');
+const fs = require('fs');
 const { PrismaClient } = require('@prisma/client');
+const { uploadDir } = require('./config/storage');
+
+const isProduction = process.env.NODE_ENV === 'production';
+if (!isProduction && !process.env.JWT_SECRET) {
+  process.env.JWT_SECRET = 'litepos-development-only-secret';
+  console.warn('[ENV] JWT_SECRET kosong; memakai secret khusus development.');
+}
+
+const requiredEnvironment = ['DATABASE_URL', ...(isProduction ? ['JWT_SECRET'] : [])];
+const missingEnvironment = requiredEnvironment.filter((key) => !process.env[key]);
+if (missingEnvironment.length > 0) {
+  throw new Error(`Environment wajib belum diisi: ${missingEnvironment.join(', ')}`);
+}
 
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpecs = require('./config/swagger');
@@ -30,18 +45,55 @@ const supplierRoutes = require('./routes/supplierRoutes');
 const syncRoutes = require('./routes/syncRoutes');
 const catalogRoutes = require('./routes/catalogRoutes'); // Rute Katalog Publik
 
-dotenv.config();
-
 const app = express();
 const prisma = new PrismaClient();
+const HOST = process.env.HOST || '0.0.0.0';
 const PORT = process.env.PORT || 5000;
 
-app.use(cors());
-app.use(express.json());
+app.disable('x-powered-by');
+if (isProduction) app.set('trust proxy', 1);
 
-app.use('/uploads', express.static(path.join(__dirname, '../public/uploads')));
+const allowedOrigins = (process.env.CORS_ORIGINS || '')
+  .split(',')
+  .map((origin) => origin.trim().replace(/\/$/, ''))
+  .filter(Boolean);
 
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
+const matchesOrigin = (origin, rule) => {
+  if (rule === '*') return true;
+  if (!rule.includes('*')) return origin === rule;
+
+  const escapedRule = rule
+    .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*/g, '.*');
+  return new RegExp(`^${escapedRule}$`).test(origin);
+};
+
+const corsOptions = {
+  origin(origin, callback) {
+    // Aplikasi Android dan request server-to-server biasanya tidak mengirim Origin.
+    if (!origin) return callback(null, true);
+
+    const normalizedOrigin = origin.replace(/\/$/, '');
+    const allowUnconfiguredDevelopment = process.env.NODE_ENV !== 'production' && allowedOrigins.length === 0;
+    const isAllowed = allowUnconfiguredDevelopment || allowedOrigins.some((rule) => matchesOrigin(normalizedOrigin, rule));
+    return callback(null, isAllowed);
+  },
+};
+
+if (isProduction && allowedOrigins.length === 0) {
+  throw new Error('CORS_ORIGINS wajib diisi pada environment production.');
+}
+
+fs.mkdirSync(uploadDir, { recursive: true });
+
+app.use(cors(corsOptions));
+app.use(express.json({ limit: '2mb' }));
+
+app.use('/uploads', express.static(uploadDir, { maxAge: '7d' }));
+
+if (!isProduction || process.env.ENABLE_API_DOCS === 'true') {
+  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
+}
 
 // Existing API routes
 app.use('/api/auth', authRoutes);
@@ -75,11 +127,23 @@ app.get('/api/health', async (req, res) => {
     await prisma.$queryRaw`SELECT 1`;
     res.json({ database: "CONNECTED", server: "ONLINE" });
   } catch (error) {
-    res.status(500).json({ database: "DISCONNECTED", error: error.message });
+    console.error('[HEALTH] Database tidak terhubung:', error.message);
+    res.status(500).json({ database: "DISCONNECTED", server: "ONLINE" });
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`\n[OK] Server berjalan di: http://localhost:${PORT}`);
+const server = app.listen(PORT, HOST, () => {
+  console.log(`\n[OK] Server berjalan di: http://${HOST}:${PORT}`);
   console.log(`[DOCS] Dokumentasi API: http://localhost:${PORT}/api-docs\n`);
 });
+
+const shutdown = async (signal) => {
+  console.log(`[SHUTDOWN] Menerima ${signal}, menutup server...`);
+  server.close(async () => {
+    await prisma.$disconnect();
+    process.exit(0);
+  });
+};
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

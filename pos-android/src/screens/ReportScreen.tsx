@@ -1,18 +1,18 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     View, Text, FlatList, TouchableOpacity, ScrollView,
-    Modal, TextInput, Alert, PermissionsAndroid, Platform, Linking, KeyboardAvoidingView,
+    Modal, TextInput, Alert, PermissionsAndroid, Platform, KeyboardAvoidingView,
 } from 'react-native';
 import tw, { useAppColorScheme } from 'twrnc';
+import Share, { Social } from 'react-native-share';
 import { getDBConnection } from '../database/db';
 import { useStore } from '../store/useStore';
-// @ts-ignore
-import { BLEPrinter, USBPrinter } from 'react-native-thermal-receipt-printer-image-qr';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import RNFS from 'react-native-fs';
 import Svg, { Defs, LinearGradient, Stop, Path, Circle as SvgCircle, Text as SvgText, Line } from 'react-native-svg';
 import DatePickerDropdown from '../components/DatePickerDropdown';
-import { requestPrinterPermissions } from '../utils/permissions';
+import { getPaidAmount, getPaymentStatusLabel } from '../utils/preOrderPayment';
+import { connectConfiguredPrinter } from '../utils/printerConnection';
 
 const formatRp = (num: number) => 'Rp ' + (Math.round(num) || 0).toLocaleString('id-ID');
 
@@ -177,15 +177,22 @@ export default function ReportScreen({ navigation }: any) {
                 `SELECT s.*,
                     (
                         SELECT COUNT(*) FROM transactions t
-                        WHERE t.createdAt >= s.openedAt
-                        AND (s.closedAt IS NULL OR t.createdAt <= s.closedAt)
+                        WHERE COALESCE(t.paidAt, t.createdAt) >= s.openedAt
+                        AND (s.closedAt IS NULL OR COALESCE(t.paidAt, t.createdAt) <= s.closedAt)
                         AND t.status = 'COMPLETED'
+                        AND COALESCE(t.paymentStatus, 'PAID') = 'PAID'
                     ) as txCount,
                     (
-                        SELECT COALESCE(SUM(t.grandTotal),0) FROM transactions t
-                        WHERE t.createdAt >= s.openedAt
-                        AND (s.closedAt IS NULL OR t.createdAt <= s.closedAt)
+                        SELECT COALESCE(SUM(
+                            CASE
+                                WHEN COALESCE(t.paidAmount, 0) > 0 THEN t.paidAmount
+                                ELSE t.grandTotal
+                            END
+                        ),0) FROM transactions t
+                        WHERE COALESCE(t.paidAt, t.createdAt) >= s.openedAt
+                        AND (s.closedAt IS NULL OR COALESCE(t.paidAt, t.createdAt) <= s.closedAt)
                         AND t.status = 'COMPLETED'
+                        AND COALESCE(t.paymentStatus, 'PAID') = 'PAID'
                     ) as txTotal,
                     (
                         SELECT COALESCE(SUM(e.amount),0) FROM expenses e
@@ -205,22 +212,23 @@ export default function ReportScreen({ navigation }: any) {
             const db = await getDBConnection();
             let dateCondition = '';
             const today = new Date().toISOString().split('T')[0];
+            const reportDateExpr = `COALESCE(paidAt, createdAt)`;
 
             if (filter === 'Hari Ini') {
-                dateCondition = `WHERE createdAt LIKE '${today}%'`;
+                dateCondition = `WHERE ${reportDateExpr} LIKE '${today}%'`;
             } else if (filter === 'Minggu Ini') {
                 const lastWeek = new Date();
                 lastWeek.setDate(lastWeek.getDate() - 7);
-                dateCondition = `WHERE createdAt >= '${lastWeek.toISOString().split('T')[0]}'`;
+                dateCondition = `WHERE ${reportDateExpr} >= '${lastWeek.toISOString().split('T')[0]}'`;
             } else if (filter === 'Bulan Ini') {
                 const monthStr = today.substring(0, 7); // YYYY-MM
-                dateCondition = `WHERE createdAt LIKE '${monthStr}%'`;
+                dateCondition = `WHERE ${reportDateExpr} LIKE '${monthStr}%'`;
             } else if (filter === 'Custom') {
-                dateCondition = `WHERE createdAt >= '${startDate}T00:00:00' AND createdAt <= '${endDate}T23:59:59'`;
+                dateCondition = `WHERE ${reportDateExpr} >= '${startDate}T00:00:00' AND ${reportDateExpr} <= '${endDate}T23:59:59'`;
             }
 
             const [results] = await db.executeSql(
-                `SELECT t.*, (SELECT SUM(quantity * costPrice) FROM transaction_items WHERE transactionId = t.id) as totalCogs FROM transactions t ${dateCondition} ORDER BY createdAt DESC`
+                `SELECT t.*, (SELECT SUM(quantity * costPrice) FROM transaction_items WHERE transactionId = t.id) as totalCogs FROM transactions t ${dateCondition} ORDER BY COALESCE(paidAt, createdAt) DESC`
             );
 
             let bruto = 0, returns = 0, count = 0, cash = 0, qris = 0, transfer = 0, cashCount = 0, qrisCount = 0, transferCount = 0, discounts = 0, cogs = 0;
@@ -231,15 +239,17 @@ export default function ReportScreen({ navigation }: any) {
                 const item = results.rows.item(i);
                 arr.push(item);
                 if (item.status !== 'RETURNED') {
-                    bruto += item.grandTotal;
+                    if ((item.paymentStatus || 'PAID') !== 'PAID') continue;
+                    const paidValue = getPaidAmount(item);
+                    bruto += paidValue;
                     count++;
                     // Group for chart by date
-                    const day = item.createdAt.substring(0, 10);
-                    dailyMap[day] = (dailyMap[day] || 0) + item.grandTotal;
+                    const day = (item.paidAt || item.createdAt).substring(0, 10);
+                    dailyMap[day] = (dailyMap[day] || 0) + paidValue;
                     // Payment Breakdown
-                    if (item.paymentMethod === 'CASH') { cash += item.grandTotal; cashCount++; }
-                    else if (item.paymentMethod === 'QRIS') { qris += item.grandTotal; qrisCount++; }
-                    else if (item.paymentMethod === 'TRANSFER') { transfer += item.grandTotal; transferCount++; }
+                    if (item.paymentMethod === 'CASH') { cash += paidValue; cashCount++; }
+                    else if (item.paymentMethod === 'QRIS') { qris += paidValue; qrisCount++; }
+                    else if (item.paymentMethod === 'TRANSFER') { transfer += paidValue; transferCount++; }
 
                     if (item.discountAmount) {
                         discounts += item.discountAmount;
@@ -267,12 +277,17 @@ export default function ReportScreen({ navigation }: any) {
 
             // ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ Category stats ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬
             const [catRes] = await db.executeSql(`
-                SELECT c.name as catName, SUM(t.grandTotal) as total, COUNT(t.id) as cnt
+                SELECT c.name as catName,
+                    SUM(CASE
+                        WHEN COALESCE(t.paidAmount, 0) > 0 THEN t.paidAmount
+                        ELSE t.grandTotal
+                    END) as total,
+                    COUNT(t.id) as cnt
                 FROM transactions t
                 LEFT JOIN transaction_items ti ON ti.transactionId = t.id
                 LEFT JOIN products p ON p.id = ti.productId
                 LEFT JOIN categories c ON c.id = p.categoryId
-                ${dateCondition.replace('WHERE', 'WHERE t.status != \'RETURNED\' AND')}
+                ${dateCondition ? dateCondition.replace('WHERE', 'WHERE t.status != \'RETURNED\' AND COALESCE(t.paymentStatus, \'PAID\') = \'PAID\' AND') : 'WHERE t.status != \'RETURNED\' AND COALESCE(t.paymentStatus, \'PAID\') = \'PAID\''}
                 GROUP BY c.name ORDER BY total DESC
             `);
             const cats: { name: string; total: number; count: number }[] = [];
@@ -300,8 +315,13 @@ export default function ReportScreen({ navigation }: any) {
 
             // ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ Pelanggan CRM ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬
             const [custRes] = await db.executeSql(`
-                SELECT customerName as name, COUNT(id) as visitCount, SUM(grandTotal) as totalSpent
-                FROM transactions ${dateCondition.replace('WHERE', 'WHERE status != \'RETURNED\' AND ')} ${dateCondition.includes('WHERE') ? 'AND' : 'WHERE'} customerName IS NOT NULL AND customerName != ''
+                SELECT customerName as name,
+                    COUNT(id) as visitCount,
+                    SUM(CASE
+                        WHEN COALESCE(paidAmount, 0) > 0 THEN paidAmount
+                        ELSE grandTotal
+                    END) as totalSpent
+                FROM transactions ${dateCondition ? dateCondition.replace('WHERE', 'WHERE status != \'RETURNED\' AND COALESCE(paymentStatus, \'PAID\') = \'PAID\' AND') + ' AND' : 'WHERE status != \'RETURNED\' AND COALESCE(paymentStatus, \'PAID\') = \'PAID\' AND'} customerName IS NOT NULL AND customerName != ''
                 GROUP BY customerName ORDER BY visitCount DESC, totalSpent DESC
             `);
             const cs: { name: string; visitCount: number; totalSpent: number }[] = [];
@@ -468,22 +488,25 @@ export default function ReportScreen({ navigation }: any) {
         const db = await getDBConnection();
         const today = new Date().toISOString().split('T')[0];
         let dateCondition = '';
-        if (activeFilter === 'Hari Ini') dateCondition = `WHERE t.createdAt LIKE '${today}%'`;
+        const reportDateExpr = `COALESCE(t.paidAt, t.createdAt)`;
+        if (activeFilter === 'Hari Ini') dateCondition = `WHERE ${reportDateExpr} LIKE '${today}%'`;
         else if (activeFilter === 'Minggu Ini') {
             const w = new Date(); w.setDate(w.getDate() - 7);
-            dateCondition = `WHERE t.createdAt >= '${w.toISOString().split('T')[0]}'`;
-        } else if (activeFilter === 'Bulan Ini') dateCondition = `WHERE t.createdAt LIKE '${today.substring(0, 7)}%'`;
-        else if (activeFilter === 'Custom') dateCondition = `WHERE t.createdAt >= '${startDate}T00:00:00' AND t.createdAt <= '${endDate}T23:59:59'`;
+            dateCondition = `WHERE ${reportDateExpr} >= '${w.toISOString().split('T')[0]}'`;
+        } else if (activeFilter === 'Bulan Ini') dateCondition = `WHERE ${reportDateExpr} LIKE '${today.substring(0, 7)}%'`;
+        else if (activeFilter === 'Custom') dateCondition = `WHERE ${reportDateExpr} >= '${startDate}T00:00:00' AND ${reportDateExpr} <= '${endDate}T23:59:59'`;
 
         const [results] = await db.executeSql(`
             SELECT t.invoiceNumber, t.createdAt, t.grandTotal, t.discountAmount, t.paymentMethod, t.status,
-                t.customerName, t.preOrderDate,
+                t.customerName, c.phone as customerPhone, t.orderType, t.tableName,
+                t.preOrderDate, t.paymentStatus, t.paidAmount, t.remainingAmount, t.paidAt,
                 ti.quantity, ti.price, ti.notes as itemNotes, p.name as productName
             FROM transactions t
             LEFT JOIN transaction_items ti ON t.id = ti.transactionId
             LEFT JOIN products p ON ti.productId = p.id
+            LEFT JOIN customers c ON t.customerId = c.id
             ${dateCondition}
-            ORDER BY t.createdAt DESC
+            ORDER BY COALESCE(t.paidAt, t.createdAt) DESC
         `);
         const rows: any[] = [];
         for (let i = 0; i < results.rows.length; i++) rows.push(results.rows.item(i));
@@ -497,13 +520,13 @@ export default function ReportScreen({ navigation }: any) {
                 await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE);
             }
             const rows = await fetchExportData();
-            let csv = '\uFEFFInvoice,Tanggal,Pelanggan,Produk,Catatan,Harga,Qty,Subtotal,Diskon,Total Trx,Metode,Status,Pre-Order\n';
+            let csv = '\uFEFFInvoice,Tanggal,Pelanggan,Produk,Catatan,Harga,Qty,Subtotal,Diskon,Total Trx,Dibayar,Sisa,Metode,Status,Status Bayar,Pre-Order\n';
             for (const row of rows) {
                 const prod = `"${(row.productName || '').replace(/"/g, '""')}"`;
                 const notes = `"${(row.itemNotes || '').replace(/"/g, '""').replace(/\n/g, ' ')}"`;
                 const cust = `"${(row.customerName || '').replace(/"/g, '""')}"`;
                 const po = row.preOrderDate ? row.preOrderDate.substring(0, 10) : '';
-                csv += `${row.invoiceNumber},${row.createdAt?.substring(0, 16)},${cust},${prod},${notes},${row.price},${row.quantity},${(row.price || 0) * (row.quantity || 0)},${row.discountAmount || 0},${row.grandTotal},${row.paymentMethod},${row.status},${po}\n`;
+                csv += `${row.invoiceNumber},${(row.paidAt || row.createdAt)?.substring(0, 16)},${cust},${prod},${notes},${row.price},${row.quantity},${(row.price || 0) * (row.quantity || 0)},${row.discountAmount || 0},${row.grandTotal},${getPaidAmount(row)},${row.remainingAmount || 0},${row.paymentMethod},${row.status},${getPaymentStatusLabel(row.paymentStatus)},${po}\n`;
             }
             const dateStr = buildDateLabel() || 'All_Time';
             const dateLabel = dateStr.replace(/[\s\/]/g, '-');
@@ -529,10 +552,12 @@ export default function ReportScreen({ navigation }: any) {
             let csv = 'Tanggal,No. Bukti,Keterangan,Akun,Debit,Kredit\n';
             for (const row of rows) {
                 if (row.status === 'RETURNED') continue;
-                const date = row.createdAt?.substring(0, 10);
+                if ((row.paymentStatus || 'PAID') !== 'PAID') continue;
+                const date = (row.paidAt || row.createdAt)?.substring(0, 10);
                 const inv = row.invoiceNumber;
                 const desc = `Penjualan ${inv} - ${row.paymentMethod}`;
-                const total = row.grandTotal || 0;
+                const total = getPaidAmount(row);
+                if (total <= 0) continue;
                 csv += `${date},${inv},${desc},Kas/Bank,${total},0\n`;
                 csv += `${date},${inv},${desc},Pendapatan Penjualan,0,${total}\n`;
             }
@@ -571,20 +596,21 @@ export default function ReportScreen({ navigation }: any) {
                 }
             }
             const entries = Object.values(trxMap);
-            const totalBruto = entries.filter(t => t.status !== 'RETURNED').reduce((s, t) => s + Number(t.grandTotal || 0), 0);
+            const totalBruto = entries.filter(t => t.status !== 'RETURNED' && (t.paymentStatus || 'PAID') === 'PAID').reduce((s, t) => s + getPaidAmount(t), 0);
             const totalRetur = entries.filter(t => t.status === 'RETURNED').reduce((s, t) => s + Number(t.grandTotal || 0), 0);
 
             const toRp = (n: number) => 'Rp ' + (n || 0).toLocaleString('id-ID');
             const rowsHtml = entries.map(t => `
                 <tr class="${t.status === 'RETURNED' ? 'ret' : ''}">
                     <td>${t.invoiceNumber}</td>
-                    <td>${t.createdAt?.substring(0, 16).replace('T', ' ')}</td>
+                    <td>${(t.paidAt || t.createdAt)?.substring(0, 16).replace('T', ' ')}</td>
                     <td>${t.customerName || '-'}</td>
                     <td>${t.items.map((i: any) => `${i.name} x${i.qty}`).join('<br>')}</td>
                     <td style="text-align:right">${toRp(t.discountAmount || 0)}</td>
-                    <td style="text-align:right;font-weight:bold">${toRp(t.grandTotal)}</td>
+                    <td style="text-align:right;font-weight:bold">${toRp(getPaidAmount(t))}</td>
                     <td>${t.paymentMethod}</td>
                     <td><span class="badge ${t.status === 'RETURNED' ? 'ret-badge' : t.status === 'COMPLETED' ? 'ok-badge' : ''}">${t.status}</span></td>
+                    <td>${getPaymentStatusLabel(t.paymentStatus)}</td>
                 </tr>`).join('');
 
             const html = `<!DOCTYPE html>
@@ -612,7 +638,7 @@ tr.ret td{color:#dc2626;background:#fef2f2}
   <div class="card card-red"><div class="label">Retur</div><div class="value">${toRp(totalRetur)}</div></div>
   <div class="card card-green"><div class="label">Neto</div><div class="value">${toRp(totalBruto - totalRetur)}</div></div>
 </div>
-<table><thead><tr><th>Invoice</th><th>Tanggal</th><th>Pelanggan</th><th>Produk</th><th>Diskon</th><th>Total</th><th>Metode</th><th>Status</th></tr></thead>
+<table><thead><tr><th>Invoice</th><th>Tanggal</th><th>Pelanggan</th><th>Produk</th><th>Diskon</th><th>Dibayar</th><th>Metode</th><th>Status</th><th>Status Bayar</th></tr></thead>
 <tbody>${rowsHtml}</tbody></table>
 </body></html>`;
 
@@ -639,20 +665,42 @@ tr.ret td{color:#dc2626;background:#fef2f2}
         setIsExporting(true);
         try {
             const rows = await fetchExportData();
-            const formattedData = rows.map(row => ({
+            const periodLabel = buildDateLabel();
+            const syncedAt = new Date().toISOString();
+            const invoiceCount = new Set(rows.map(row => row.invoiceNumber).filter(Boolean)).size;
+            const formattedData = rows.map((row, index) => ({
+                no: index + 1,
+                periode: periodLabel,
+                tanggalSinkron: syncedAt.substring(0, 16),
                 invoice: row.invoiceNumber,
-                tanggal: row.createdAt?.substring(0, 16),
+                tanggalTransaksi: row.createdAt?.substring(0, 16) || '',
+                tanggalBayar: (row.paidAt || row.createdAt)?.substring(0, 16) || '',
                 pelanggan: row.customerName || '',
+                noHp: row.customerPhone || '',
+                tipeOrder: row.orderType === 'DINE_IN' ? 'DINE IN' : 'TAKE AWAY',
+                meja: row.tableName || '',
                 produk: row.productName || '',
                 catatan: row.itemNotes || '',
-                harga: row.price || 0,
+                hargaSatuan: row.price || 0,
                 qty: row.quantity || 0,
+                subtotalItem: (row.price || 0) * (row.quantity || 0),
+                diskonTransaksi: row.discountAmount || 0,
+                totalPesanan: row.grandTotal || 0,
+                dibayar: getPaidAmount(row),
+                sisa: row.remainingAmount || 0,
+                metodePembayaran: row.paymentMethod || '',
+                statusTransaksi: row.status || '',
+                statusBayar: getPaymentStatusLabel(row.paymentStatus),
+                preOrder: row.preOrderDate ? row.preOrderDate.substring(0, 10) : '',
+
+                // Kolom lama tetap dikirim supaya Apps Script lama tidak langsung rusak.
+                tanggal: (row.paidAt || row.createdAt)?.substring(0, 16) || '',
+                harga: row.price || 0,
                 subtotal: (row.price || 0) * (row.quantity || 0),
                 diskon: row.discountAmount || 0,
                 totalTrx: row.grandTotal || 0,
                 metode: row.paymentMethod || '',
                 status: row.status || '',
-                preOrder: row.preOrderDate ? row.preOrderDate.substring(0, 10) : ''
             }));
 
             const response = await fetch(settings.google_sheet_url, {
@@ -662,16 +710,52 @@ tr.ret td{color:#dc2626;background:#fef2f2}
             });
 
             if (!response.ok) throw new Error('Network error');
-            const result = await response.json();
+            const responseText = await response.text();
+            let result: any = {};
+            try {
+                result = responseText ? JSON.parse(responseText) : { status: 'success' };
+            } catch {
+                result = { status: 'success', message: responseText };
+            }
             
-            if (result.status === 'success') {
-                Alert.alert('Sukses', 'Data berhasil disinkronkan ke Google Sheets.');
+            if (!result.status || result.status === 'success' || result.success === true) {
+                Alert.alert('Sukses', `Data berhasil disinkronkan ke Google Sheets.\n${formattedData.length} baris / ${invoiceCount} invoice.`);
             } else {
                 throw new Error(result.message || 'Gagal sinkronisasi');
             }
         } catch (e) {
             Alert.alert('Error', 'Gagal sinkron ke Google Sheets. Pastikan internet aktif dan URL benar.');
         } finally { setIsExporting(false); setShowExportModal(false); }
+    };
+
+    const shareTextToWhatsApp = async (title: string, message: string) => {
+        try {
+            await Share.shareSingle({
+                title,
+                message,
+                social: Social.Whatsapp,
+            });
+        } catch (error: any) {
+            const msg = String(error?.message || '');
+            if (msg === 'User did not share') return;
+
+            try {
+                await Share.open({ title, message });
+            } catch (fallbackError: any) {
+                if (fallbackError?.message !== 'User did not share') {
+                    Alert.alert('Gagal', 'Tidak dapat membagikan laporan. Pastikan WhatsApp atau aplikasi berbagi tersedia.');
+                }
+            }
+        }
+    };
+
+    const getReportPrinter = async () => {
+        return connectConfiguredPrinter(settings);
+    };
+
+    const printReportText = async (text: string) => {
+        const printerClass = await getReportPrinter();
+        await printerClass.printText(text);
     };
 
     const shareDailyReportWA = async () => {
@@ -690,22 +774,11 @@ tr.ret td{color:#dc2626;background:#fef2f2}
         text += `Pengeluaran: ${formatRp(expenseTotal)}\n\n`;
         text += `*SALDO BERSIH: ${formatRp(summary.neto - expenseTotal)}*\n`;
         
-        const encodedText = encodeURIComponent(text);
-        const waUrl = `whatsapp://send?text=${encodedText}`;
-        
-        try {
-            await Linking.openURL(waUrl);
-        } catch (error) {
-            Alert.alert('Gagal', 'Aplikasi WhatsApp tidak ditemukan di perangkat ini.');
-        }
+        await shareTextToWhatsApp('Laporan Penjualan', text);
     };
 
     // ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ Print daily report ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬
     const printDailyReport = async () => {
-        if (!settings?.printerAddress || !settings?.printerType) {
-            Alert.alert('Info', 'Belum ada printer yang dikonfigurasi. Masuk ke Pengaturan untuk mengatur printer.');
-            return;
-        }
         try {
             const storeName = settings.storeName || 'LitePOS';
             const LINE = '--------------------------------\n';
@@ -733,21 +806,9 @@ tr.ret td{color:#dc2626;background:#fef2f2}
             text += LINE;
             text += center(`Dicetak: ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}`) + '\n\n\n';
 
-            const hasPerms = await requestPrinterPermissions();
-            if (!hasPerms && settings.printerType === 'BLE') {
-                Alert.alert('Izin Ditolak', 'Dibutuhkan izin Bluetooth untuk mencetak.');
-                return;
-            }
-
-            const printerClass = settings.printerType === 'USB' ? USBPrinter : BLEPrinter;
-            try { await printerClass.init(); } catch { };
-            try {
-                if (settings.printerType === 'BLE') await printerClass.connectPrinter(settings.printerAddress);
-                else { const [v, p] = settings.printerAddress.split('|'); await printerClass.connectPrinter(Number(v), Number(p)); }
-            } catch { }
-            await printerClass.printText(text);
-        } catch (e) {
-            Alert.alert('Error', 'Gagal mencetak. Pastikan printer tersambung.');
+            await printReportText(text);
+        } catch (e: any) {
+            Alert.alert('Error', e?.message || 'Gagal mencetak. Pastikan printer tersambung.');
         }
     };
 
@@ -772,23 +833,11 @@ tr.ret td{color:#dc2626;background:#fef2f2}
         text += `Jml Transaksi: ${shift.txCount || 0}\n`;
         if (shift.closingCash != null) text += `*Kas Akhir: ${formatRp(shift.closingCash)}*\n`;
         if (diff !== null) text += `*Selisih Kas: ${diff >= 0 ? '+' : ''}${formatRp(diff)}*\n`;
-        
-        const encodedText = encodeURIComponent(text);
-        const waUrl = `whatsapp://send?text=${encodedText}`;
-        
-        try {
-            await Linking.openURL(waUrl);
-        } catch (error) {
-            Alert.alert('Gagal', 'Aplikasi WhatsApp tidak ditemukan di perangkat ini.');
-        }
+        await shareTextToWhatsApp('Laporan Shift', text);
     };
 
     // ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ Print shift report ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬
     const printShiftReport = async (shift: any) => {
-        if (!settings?.printerAddress || !settings?.printerType) {
-            Alert.alert('Info', 'Belum ada printer yang dikonfigurasi.');
-            return;
-        }
         try {
             const storeName = settings.storeName || 'LitePOS';
             const LINE = '--------------------------------\n';
@@ -820,21 +869,9 @@ tr.ret td{color:#dc2626;background:#fef2f2}
             text += LINE;
             text += center(`Dicetak: ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}`) + '\n\n\n';
 
-            const hasPerms = await requestPrinterPermissions();
-            if (!hasPerms && settings.printerType === 'BLE') {
-                Alert.alert('Izin Ditolak', 'Dibutuhkan izin Bluetooth untuk mencetak.');
-                return;
-            }
-
-            const printerClass = settings.printerType === 'USB' ? USBPrinter : BLEPrinter;
-            try { await printerClass.init(); } catch { }
-            try {
-                if (settings.printerType === 'BLE') await printerClass.connectPrinter(settings.printerAddress);
-                else { const [v, p] = settings.printerAddress.split('|'); await printerClass.connectPrinter(Number(v), Number(p)); }
-            } catch { }
-            await printerClass.printText(text);
-        } catch (e) {
-            Alert.alert('Error', 'Gagal mencetak. Pastikan printer tersambung.');
+            await printReportText(text);
+        } catch (e: any) {
+            Alert.alert('Error', e?.message || 'Gagal mencetak. Pastikan printer tersambung.');
         }
     };
 
@@ -1026,12 +1063,17 @@ tr.ret td{color:#dc2626;background:#fef2f2}
         <FlatList
             contentContainerStyle={tw`p-4 pb-24`}
             ListHeaderComponent={(
-                <View style={tw`bg-indigo-600 p-4 rounded-2xl mb-4 flex-row items-center`}>
-                    <View style={tw`flex-1`}>
-                        <Text style={tw`text-indigo-100 font-bold text-xs uppercase mb-1`}>Laporan Shift</Text>
-                        <Text style={tw`text-white font-black text-lg`}>{shiftReports.length} Shift</Text>
+                <View style={tw`mb-5 flex-row items-center`}>
+                    <View style={tw`w-11 h-11 rounded-lg bg-blue-50 dark:bg-blue-900/30 items-center justify-center mr-3`}>
+                        <Icon name="briefcase-outline" size={22} color={tw.color('blue-600')} />
                     </View>
-                    <Icon name="briefcase-outline" size={32} color="rgba(255,255,255,0.4)" />
+                    <View style={tw`flex-1`}>
+                        <Text style={tw`text-gray-900 dark:text-white font-black text-base`}>Laporan per shift</Text>
+                        <Text style={tw`text-gray-500 dark:text-gray-400 text-xs mt-0.5`}>Rekap kasir dan pergerakan uang</Text>
+                    </View>
+                    <View style={tw`bg-gray-100 dark:bg-gray-800 px-3 py-1.5 rounded-full`}>
+                        <Text style={tw`text-gray-700 dark:text-gray-200 font-black text-xs`}>{shiftReports.length} shift</Text>
+                    </View>
                 </View>
             )}
             data={shiftReports}
@@ -1051,18 +1093,18 @@ tr.ret td{color:#dc2626;background:#fef2f2}
                 const durationM = Math.floor((durationMs % 3600000) / 60000);
                 const diff = item.closingCash != null ? item.closingCash - (item.openingCash + (item.txTotal || 0) - (item.expensesTotal || 0)) : null;
                 return (
-                    <View style={tw`bg-white dark:bg-gray-800 rounded-2xl p-4 mb-3 border border-gray-100 dark:border-gray-800`}>
+                    <View style={tw`bg-white dark:bg-gray-800 rounded-lg p-4 mb-3 border border-gray-200 dark:border-gray-700`}>
                         <View style={tw`flex-row justify-between items-center mb-2`}>
                             <View style={tw`flex-row items-center`}>
                                 <View style={[tw`flex-row items-center px-2 py-0.5 rounded-full mr-2`, isOpen ? tw`bg-green-100 dark:bg-green-900` : tw`bg-gray-100 dark:bg-gray-700`]}>
-                                    <Icon name="circle-outline" size={8} color={isOpen ? tw.color('green-500') : tw.color('gray-400')} style={tw`mr-1`} fill={isOpen ? tw.color('green-500') : tw.color('gray-400')} />
+                                    <Icon name="circle" size={8} color={isOpen ? tw.color('green-500') : tw.color('gray-400')} style={tw`mr-1`} />
                                     <Text style={[tw`text-xs font-black`, isOpen ? tw`text-green-600` : tw`text-gray-500`]}>{isOpen ? 'BUKA' : 'TUTUP'}</Text>
                                 </View>
                                 <Text style={tw`font-bold text-gray-800 dark:text-gray-100 text-sm`}>{item.userName || 'Kasir'}</Text>
                             </View>
                             <Text style={tw`text-xs text-gray-400`}>{`${durationH}j ${durationM}m`}</Text>
                         </View>
-                        <View style={tw`flex-row justify-between mt-1`}>
+                        <View style={tw`hidden`}>
                             <View>
                                 <Text style={tw`text-[10px] text-gray-400 uppercase font-bold`}>Buka</Text>
                                 <Text style={tw`text-xs font-bold text-gray-700 dark:text-gray-200`}>{openTime.toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</Text>
@@ -1076,18 +1118,40 @@ tr.ret td{color:#dc2626;background:#fef2f2}
                                 <Text style={tw`text-xs font-bold ${item.closingCash != null ? 'text-gray-700 dark:text-gray-200' : 'text-gray-300'}`}>{item.closingCash != null ? formatRp(item.closingCash) : 'ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â'}</Text>
                             </View>
                         </View>
+                        <View style={tw`flex-row items-center mt-1 mb-3`}>
+                            <Icon name="clock-outline" size={14} color={tw.color('gray-400')} style={tw`mr-2`} />
+                            <Text style={tw`text-xs text-gray-500 dark:text-gray-400 flex-1`}>
+                                {openTime.toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                                {closeTime ? ` - ${closeTime.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}` : ''}
+                            </Text>
+                        </View>
+                        <View style={tw`border-t border-gray-100 dark:border-gray-700 pt-3`}>
+                            <View style={tw`flex-row justify-between mb-1.5`}>
+                                <Text style={tw`text-xs text-gray-500`}>Kas awal</Text>
+                                <Text style={tw`text-xs font-black text-gray-800 dark:text-gray-100`}>{formatRp(item.openingCash || 0)}</Text>
+                            </View>
+                            <View style={tw`flex-row justify-between mb-1.5`}>
+                                <Text style={tw`text-xs text-gray-500`}>Penjualan ({item.txCount || 0} transaksi)</Text>
+                                <Text style={tw`text-xs font-black text-green-600`}>+{formatRp(item.txTotal || 0)}</Text>
+                            </View>
+                            <View style={tw`flex-row justify-between mb-1.5`}>
+                                <Text style={tw`text-xs text-gray-500`}>Pengeluaran</Text>
+                                <Text style={tw`text-xs font-black text-red-500`}>-{formatRp(item.expensesTotal || 0)}</Text>
+                            </View>
+                            <View style={tw`flex-row justify-between pt-2 mt-1 border-t border-gray-100 dark:border-gray-700`}>
+                                <Text style={tw`text-xs font-bold text-gray-700 dark:text-gray-200`}>Kas akhir</Text>
+                                <Text style={tw`text-sm font-black ${item.closingCash != null ? 'text-blue-600' : 'text-gray-300'}`}>
+                                    {item.closingCash != null ? formatRp(item.closingCash) : 'Belum ditutup'}
+                                </Text>
+                            </View>
+                        </View>
                         {diff !== null && (
                             <View style={tw`mt-2 flex-row items-center`}>
                                 <Text style={tw`text-[10px] text-gray-400 uppercase font-bold mr-2`}>Selisih Kas</Text>
                                 <Text style={[tw`text-sm font-black`, diff >= 0 ? tw`text-green-600` : tw`text-red-500`]}>{diff >= 0 ? '+' : ''}{formatRp(diff)}</Text>
                             </View>
                         )}
-                        <View style={tw`mt-2 border-t border-gray-100 dark:border-gray-700 pt-2 flex-row items-center`}>
-                            <View style={tw`flex-1 mr-2`}>
-                                <Text style={tw`text-xs text-gray-500`}>{item.txCount || 0} Transaksi</Text>
-                                <Text style={tw`text-xs text-gray-500 mt-0.5`}>Pendapatan: <Text style={tw`font-black text-green-600`}>{formatRp(item.txTotal || 0)}</Text></Text>
-                                <Text style={tw`text-xs text-gray-500 mt-0.5`}>Pengeluaran: <Text style={tw`font-black text-red-600`}>{formatRp(item.expensesTotal || 0)}</Text></Text>
-                            </View>
+                        <View style={tw`mt-3 border-t border-gray-100 dark:border-gray-700 pt-3 flex-row items-center justify-end`}>
                             <View style={tw`flex-row`}>
                                 <TouchableOpacity
                                     onPress={() => shareShiftReportWA(item)}
@@ -1235,14 +1299,19 @@ tr.ret td{color:#dc2626;background:#fef2f2}
                                 </View>
                             )}
                         </View>
-                        <Text style={tw`text-xs text-gray-500 dark:text-gray-400`}>{new Date(item.createdAt).toLocaleString('id-ID')}</Text>
+                        <Text style={tw`text-xs text-gray-500 dark:text-gray-400`}>{new Date(item.paidAt || item.createdAt).toLocaleString('id-ID')}</Text>
                         <View style={tw`bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded mt-1 self-start`}>
                             <Text style={tw`text-[10px] uppercase font-bold text-gray-600 dark:text-gray-300`}>{item.paymentMethod}</Text>
                         </View>
+                        {item.preOrderDate ? (
+                            <View style={tw`bg-purple-50 dark:bg-purple-900 px-2 py-0.5 rounded mt-1 self-start`}>
+                                <Text style={tw`text-[10px] uppercase font-bold text-purple-600 dark:text-purple-300`}>{getPaymentStatusLabel(item.paymentStatus)}</Text>
+                            </View>
+                        ) : null}
                     </View>
                     <View style={tw`flex-row items-center`}>
                         <Text style={tw`font-black ${item.status === 'RETURNED' ? 'text-gray-400 line-through' : 'text-blue-600'} text-base mr-1`}>
-                            {formatRp(item.grandTotal)}
+                            {formatRp(getPaidAmount(item))}
                         </Text>
                         <Icon name="chevron-right" size={18} color={tw.color('gray-400')} />
                     </View>
@@ -1687,7 +1756,7 @@ tr.ret td{color:#dc2626;background:#fef2f2}
                                 </View>
                                 <View style={tw`mb-3`}>
                                     <Text style={tw`text-gray-500 dark:text-gray-400 text-xs`}>Waktu</Text>
-                                    <Text style={tw`font-bold text-gray-800 dark:text-gray-100`}>{new Date(selectedTrx.createdAt).toLocaleString('id-ID')}</Text>
+                                        <Text style={tw`font-bold text-gray-800 dark:text-gray-100`}>{new Date(selectedTrx.paidAt || selectedTrx.createdAt).toLocaleString('id-ID')}</Text>
                                 </View>
                                 <View style={tw`mb-3`}>
                                     <Text style={tw`text-gray-500 dark:text-gray-400 text-xs`}>Pelanggan</Text>
@@ -1716,9 +1785,23 @@ tr.ret td{color:#dc2626;background:#fef2f2}
                                         </View>
                                     )}
                                     <View style={tw`flex-row justify-between mb-1`}>
-                                        <Text style={tw`text-gray-600 dark:text-gray-300 font-bold`}>Total Bayar</Text>
+                                        <Text style={tw`text-gray-600 dark:text-gray-300 font-bold`}>Total Pesanan</Text>
                                         <Text style={tw`font-black text-gray-800 dark:text-gray-100`}>{formatRp(selectedTrx.grandTotal)}</Text>
                                     </View>
+                                    <View style={tw`flex-row justify-between mb-1`}>
+                                        <Text style={tw`text-gray-500 dark:text-gray-400 text-sm`}>Status Bayar</Text>
+                                        <Text style={tw`font-bold text-gray-800 dark:text-gray-100 text-sm`}>{getPaymentStatusLabel(selectedTrx.paymentStatus)}</Text>
+                                    </View>
+                                    <View style={tw`flex-row justify-between mb-1`}>
+                                        <Text style={tw`text-gray-500 dark:text-gray-400 text-sm`}>Dibayar</Text>
+                                        <Text style={tw`font-bold text-gray-800 dark:text-gray-100 text-sm`}>{formatRp(getPaidAmount(selectedTrx))}</Text>
+                                    </View>
+                                    {(selectedTrx.remainingAmount || 0) > 0 ? (
+                                        <View style={tw`flex-row justify-between mb-1`}>
+                                            <Text style={tw`text-gray-500 dark:text-gray-400 text-sm`}>Sisa</Text>
+                                            <Text style={tw`font-bold text-red-600 text-sm`}>{formatRp(selectedTrx.remainingAmount || 0)}</Text>
+                                        </View>
+                                    ) : null}
                                     <View style={tw`flex-row justify-between mb-1`}>
                                         <Text style={tw`text-gray-500 dark:text-gray-400 text-sm`}>Bayar ({selectedTrx.paymentMethod})</Text>
                                         <Text style={tw`font-bold text-gray-800 dark:text-gray-100 text-sm`}>{formatRp(selectedTrx.cashAmount)}</Text>

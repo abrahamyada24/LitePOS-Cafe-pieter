@@ -23,6 +23,7 @@ pos-fe/.env
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+*.log
 
 # OS metadata
 .DS_Store
@@ -33,3 +34,14 @@ pos-android/android/app/build/
 pos-android/android/.gradle/
 pos-android/android/local.properties
 pos-android/android/app/src/main/assets/
+pos-android/.bundle/
+
+# Desktop build artifacts
+pos-desktop/dist/
+pos-desktop/release/
+
+# Credentials and local database exports
+*.pem
+*.key
+*.p12
+*.sql

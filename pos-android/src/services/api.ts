@@ -1,22 +1,72 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// URL Backend - Lokal (10.0.2.2 adalah IP untuk Android Emulator mengakses localhost PC)
-// Jika menggunakan Device fisik (HP), ganti dengan IP IPv4 laptop Anda (contoh: http://192.168.1.10:5000)
-export const API_URL = 'http://103.175.221.2:5000'; 
+export const DEFAULT_API_URL = 'http://103.175.221.2:5000';
+export const API_BASE_URL_STORAGE_KEY = '@litepos_api_base_url';
+export const API_URL = DEFAULT_API_URL;
+
+const stripApiSuffix = (url: string) => url.replace(/\/api\/?$/i, '');
+
+export const normalizeApiBaseUrl = (value?: string | null) => {
+    const trimmed = (value || '').trim();
+    if (!trimmed) return DEFAULT_API_URL;
+
+    const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+    return stripApiSuffix(withProtocol).replace(/\/+$/, '');
+};
+
+export const buildApiBaseUrl = (baseUrl: string) => `${normalizeApiBaseUrl(baseUrl)}/api`;
+
+export const isDeviceAssetUrl = (value?: string | null) => {
+    if (!value) return false;
+    return /^(file|content|ph|assets-library):\/\//i.test(value);
+};
+
+export const resolveApiAssetUrl = (value?: string | null, baseUrl?: string | null) => {
+    const assetUrl = (value || '').trim();
+    if (!assetUrl) return null;
+
+    if (/^(https?:|data:|file:|content:|ph:|assets-library:)/i.test(assetUrl)) {
+        return assetUrl;
+    }
+
+    const normalizedBaseUrl = normalizeApiBaseUrl(baseUrl);
+    return `${normalizedBaseUrl}/${assetUrl.replace(/^\/+/, '')}`;
+};
+
+export const getApiBaseUrl = async () => {
+    const savedUrl = await AsyncStorage.getItem(API_BASE_URL_STORAGE_KEY);
+    return normalizeApiBaseUrl(savedUrl);
+};
 
 const api = axios.create({
-    baseURL: `${API_URL}/api`,
+    baseURL: buildApiBaseUrl(DEFAULT_API_URL),
     timeout: 10000, // 10 detik timeout
     headers: {
         'Content-Type': 'application/json',
     }
 });
 
+export const setApiBaseUrl = async (value: string) => {
+    const normalized = normalizeApiBaseUrl(value);
+    await AsyncStorage.setItem(API_BASE_URL_STORAGE_KEY, normalized);
+    api.defaults.baseURL = buildApiBaseUrl(normalized);
+    return normalized;
+};
+
+export const hydrateApiBaseUrl = async () => {
+    const normalized = await getApiBaseUrl();
+    api.defaults.baseURL = buildApiBaseUrl(normalized);
+    return normalized;
+};
+
 // Interceptor untuk menyisipkan token JWT ke setiap request
 api.interceptors.request.use(
     async (config) => {
         try {
+            const baseUrl = await getApiBaseUrl();
+            config.baseURL = buildApiBaseUrl(baseUrl);
+
             const token = await AsyncStorage.getItem('@auth_token');
             if (token) {
                 config.headers.Authorization = `Bearer ${token}`;

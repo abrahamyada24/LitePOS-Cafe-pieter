@@ -4,7 +4,7 @@ const jwt = require('jsonwebtoken');
 const { sendOTP } = require('../utils/emailService');
 
 const prisma = new PrismaClient();
-const JWT_SECRET = process.env.JWT_SECRET || "rahasia_super_negara";
+const JWT_SECRET = process.env.JWT_SECRET;
 
 exports.register = async (req, res) => {
     try {

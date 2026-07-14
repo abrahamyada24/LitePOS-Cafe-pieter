@@ -1,0 +1,27 @@
+{
+  "name": "pos-desktop",
+  "version": "1.0.0",
+  "description": "LitePOS Desktop Application",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win"
+  },
+  "build": {
+    "appId": "com.warnawarni.litepos",
+    "productName": "LitePOS Desktop",
+    "win": {
+      "target": "nsis",
+      "icon": "icon.png"
+    }
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "electron": "^42.4.1",
+    "electron-builder": "^26.15.3",
+    "electron-pos-printer": "^1.4.0"
+  }
+}

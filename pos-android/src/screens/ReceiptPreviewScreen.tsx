@@ -5,12 +5,10 @@ import { View, Text, TouchableOpacity, ScrollView, Alert, Image, Linking } from 
 import tw, { useAppColorScheme } from 'twrnc';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useStore } from '../store/useStore';
-// @ts-ignore
-import { BLEPrinter, USBPrinter } from 'react-native-thermal-receipt-printer-image-qr';
-import { requestPrinterPermissions } from '../utils/permissions';
 import { RECEIPT_LOGO_BASE64 } from '../assets/receiptLogoBase64';
 import RNFS from 'react-native-fs';
-import { API_URL } from '../services/api';
+import { getPaidAmount, getPaymentStatusLabel, getPaymentStatusMessage, getRemainingAmount } from '../utils/preOrderPayment';
+import { connectConfiguredPrinter } from '../utils/printerConnection';
 
 // Logo LitePOS permanen - tidak perlu setting
 const LITEPOS_LOGO = require('../assets/logo.png');
@@ -22,8 +20,13 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
     const user = useStore(state => state.user);
     const settings = useStore(state => state.settings);
     const viewShotRef = useRef<any>(null);
+    const logoShotRef = useRef<any>(null);
 
     const formatRp = (num: number) => 'Rp ' + (Math.round(num) || 0).toLocaleString('id-ID');
+    const paymentStatusLabel = getPaymentStatusLabel(receiptData.paymentStatus);
+    const paidAmount = getPaidAmount(receiptData);
+    const remainingAmount = getRemainingAmount(receiptData);
+    const paymentMethodLabel = receiptData.paymentMethod === 'PENDING' ? 'BELUM BAYAR' : receiptData.paymentMethod;
 
     const padEnd = (str: string, len: number) => {
         while (str.length < len) str += ' ';
@@ -40,6 +43,46 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
         return ' '.repeat(pad) + str;
     };
 
+    const wrapText = (text: string, width: number): string[] => {
+        const result: string[] = [];
+        // Split by explicit newlines first
+        const paragraphs = text.split('\n');
+        for (const paragraph of paragraphs) {
+            if (paragraph.length <= width) {
+                result.push(paragraph);
+                continue;
+            }
+            const words = paragraph.split(' ');
+            let currentLine = '';
+            for (const word of words) {
+                if (currentLine.length === 0) {
+                    // Word longer than width: force break it
+                    if (word.length > width) {
+                        for (let i = 0; i < word.length; i += width) {
+                            result.push(word.substring(i, i + width));
+                        }
+                    } else {
+                        currentLine = word;
+                    }
+                } else if ((currentLine + ' ' + word).length <= width) {
+                    currentLine += ' ' + word;
+                } else {
+                    result.push(currentLine);
+                    if (word.length > width) {
+                        for (let i = 0; i < word.length; i += width) {
+                            result.push(word.substring(i, i + width));
+                        }
+                        currentLine = '';
+                    } else {
+                        currentLine = word;
+                    }
+                }
+            }
+            if (currentLine) result.push(currentLine);
+        }
+        return result;
+    };
+
     const buildReceiptText = (): string => {
         const LINE = '--------------------------------\n';
         const WIDTH = 32;
@@ -49,7 +92,10 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
         const storeName = settings.storeName || 'LitePOS';
         text += center(storeName, WIDTH) + '\n';
         if (settings.storeAddress) {
-            text += center(settings.storeAddress.substring(0, WIDTH), WIDTH) + '\n';
+            const addressLines = wrapText(settings.storeAddress, WIDTH);
+            for (const line of addressLines) {
+                text += center(line, WIDTH) + '\n';
+            }
         }
         if (settings.storePhone) {
             text += center(`Telp: ${settings.storePhone} `, WIDTH) + '\n';
@@ -65,6 +111,7 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
         if (receiptData.preOrderDate) {
             const dateStr = receiptData.preOrderDate.length >= 10 ? `${receiptData.preOrderDate.substring(8, 10)}-${receiptData.preOrderDate.substring(5, 7)}-${receiptData.preOrderDate.substring(0, 4)}${receiptData.preOrderDate.length === 16 ? ' ' + receiptData.preOrderDate.substring(11) : ''}` : receiptData.preOrderDate;
             text += `** AMBIL: ${dateStr} **\n`;
+            text += `STATUS BAYAR: ${paymentStatusLabel}\n`;
         }
 
         // Order Type
@@ -103,22 +150,50 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
         const totalStr = `TOTAL: Rp ${receiptData.total.toLocaleString('id-ID')} `;
         text += padStart(totalStr, WIDTH) + '\n';
 
-        const bayarLabel = `BAYAR(${receiptData.paymentMethod}): `;
-        const bayarValue = `Rp ${receiptData.cashAmount.toLocaleString('id-ID')} `;
-        text += padEnd(bayarLabel, WIDTH - bayarValue.length) + bayarValue + '\n';
+        if (receiptData.paymentStatus === 'UNPAID') {
+            const paidStr = `DIBAYAR: Rp 0 `;
+            text += padStart(paidStr, WIDTH) + '\n';
+        } else {
+            const bayarLabel = `BAYAR(${paymentMethodLabel}): `;
+            const bayarValue = `Rp ${(receiptData.cashAmount || paidAmount).toLocaleString('id-ID')} `;
+            text += padEnd(bayarLabel, WIDTH - bayarValue.length) + bayarValue + '\n';
 
-        const kembaliStr = `KEMBALI: Rp ${receiptData.changeAmount.toLocaleString('id-ID')} `;
-        text += padStart(kembaliStr, WIDTH) + '\n';
+            if ((receiptData.changeAmount || 0) > 0) {
+                const kembaliStr = `KEMBALI: Rp ${receiptData.changeAmount.toLocaleString('id-ID')} `;
+                text += padStart(kembaliStr, WIDTH) + '\n';
+            }
+        }
+
+        if (remainingAmount > 0) {
+            const remainingStr = `SISA: Rp ${remainingAmount.toLocaleString('id-ID')} `;
+            text += padStart(remainingStr, WIDTH) + '\n';
+        }
 
         text += LINE;
         if (settings.receiptFooter) {
-            text += center(settings.receiptFooter.substring(0, WIDTH), WIDTH) + '\n';
+            const footerLines = wrapText(settings.receiptFooter, WIDTH);
+            for (const line of footerLines) {
+                text += center(line, WIDTH) + '\n';
+            }
         } else {
             text += center('Terima Kasih!', WIDTH) + '\n';
         }
         text += center('Simpan struk ini sebagai bukti', WIDTH) + '\n\n\n';
 
         return text;
+    };
+
+    const getPrintableLogoBase64 = async (): Promise<string> => {
+        if (settings.storeLogo && logoShotRef.current?.capture) {
+            try {
+                const uri = await logoShotRef.current.capture();
+                return await RNFS.readFile(uri.replace('file://', ''), 'base64');
+            } catch (logoErr) {
+                console.log('Logo capture failed, using default logo:', logoErr);
+            }
+        }
+
+        return RECEIPT_LOGO_BASE64;
     };
 
     const shareReceiptWA = async () => {
@@ -134,7 +209,7 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
 
             const shareOptions: any = {
                 title: 'Struk Transaksi',
-                message: `Struk Transaksi ${settings.storeName || 'LitePOS'}\nNo: ${receiptData.invoiceNumber}`,
+                message: `Struk Transaksi ${settings.storeName || 'LitePOS'}\nNo: ${receiptData.invoiceNumber}\n${getPaymentStatusMessage(receiptData, formatRp)}`,
                 url: uri,
             };
 
@@ -171,36 +246,13 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
             return;
         }
 
-        const hasPerms = await requestPrinterPermissions();
-        if (!hasPerms && settings.printerType === 'BLE') {
-            Alert.alert('Izin Ditolak', 'Dibutuhkan izin Bluetooth untuk mencetak.');
-            return;
-        }
-
         setIsPrinting(true);
         try {
-            const printerClass = settings.printerType === 'USB' ? USBPrinter : BLEPrinter;
-            try { await printerClass.init(); } catch { /* Already initialized */ }
-            try {
-                if (settings.printerType === 'BLE') {
-                    await printerClass.connectPrinter(settings.printerAddress);
-                } else {
-                    const [vendorStr, productStr] = settings.printerAddress.split('|');
-                    await printerClass.connectPrinter(Number(vendorStr), Number(productStr));
-                }
-            } catch { /* Already connected */ }
+            const printerClass = await connectConfiguredPrinter(settings);
 
             if (settings.showLogoOnReceipt === true || String(settings.showLogoOnReceipt) === 'true') {
                 try {
-                    let logoToPrint = RECEIPT_LOGO_BASE64;
-                    if (settings.storeLogo) {
-                        const logoUrl = settings.storeLogo.startsWith('http') ? settings.storeLogo : `${API_URL}${settings.storeLogo}`;
-                        const tempFile = `${RNFS.CachesDirectoryPath}/temp_print_logo.png`;
-                        const res = await RNFS.downloadFile({ fromUrl: logoUrl, toFile: tempFile }).promise;
-                        if (res.statusCode === 200) {
-                            logoToPrint = await RNFS.readFile(tempFile, 'base64');
-                        }
-                    }
+                    const logoToPrint = await getPrintableLogoBase64();
                     await printerClass.printImageBase64(logoToPrint, { imageWidth: 180 });
                     await new Promise<void>(resolve => setTimeout(() => resolve(), 500));
                 } catch (logoErr) {
@@ -209,7 +261,7 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
             }
             await printerClass.printText(buildReceiptText());
         } catch (e: any) {
-            Alert.alert('Gagal Mencetak', e?.message || 'Error saat mencetak. Pastikan printer menyala dan sudah di-pair via Bluetooth.');
+            Alert.alert('Gagal Mencetak', e?.message || 'Error saat mencetak. Pastikan printer menyala dan tersambung.');
         } finally {
             setIsPrinting(false);
         }
@@ -225,6 +277,29 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
                 <Text style={tw`text-xl font-bold text-gray-800 dark:text-gray-100 flex-1`}>Printer dan Struk</Text>
             </View>
 
+            {settings.storeLogo && settings.showLogoOnReceipt !== false ? (
+                <View pointerEvents="none" style={{ position: 'absolute', left: -10000, top: -10000, width: 220, height: 120 }}>
+                    <ViewShot
+                        ref={logoShotRef}
+                        options={{ format: 'jpg', quality: 0.95 }}
+                        style={{
+                            width: 220,
+                            height: 120,
+                            padding: 10,
+                            backgroundColor: '#FFFFFF',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                        }}
+                    >
+                        <Image
+                            source={{ uri: settings.storeLogo }}
+                            style={{ width: 200, height: 100 }}
+                            resizeMode="contain"
+                        />
+                    </ViewShot>
+                </View>
+            ) : null}
+
             <ScrollView contentContainerStyle={tw`p-2 items-center`} showsVerticalScrollIndicator={false}>
                 
                 {/* The Paper Receipt inside ViewShot */}
@@ -235,7 +310,8 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
                             <View style={tw`items-center mb-4`}>
                                 <Image 
                                     source={{ uri: settings.storeLogo }} 
-                                    style={{ width: 80, height: 80, resizeMode: 'contain' }} 
+                                    style={{ width: 120, height: 72, backgroundColor: '#FFFFFF' }}
+                                    resizeMode="contain"
                                 />
                             </View>
                         ) : null}
@@ -250,11 +326,31 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
                             <View>
                                 <Text style={tw`font-mono text-[10px] text-black`}>{new Date(receiptData.createdAt).toLocaleString('id-ID')}</Text>
                                 <Text style={tw`font-mono text-[10px] text-black`}>{receiptData.invoiceNumber}</Text>
+                                {receiptData.customerName && receiptData.customerName !== 'Umum' ? (
+                                    <Text style={tw`font-mono text-[10px] text-black`}>Pelanggan: {receiptData.customerName}</Text>
+                                ) : null}
                             </View>
                             <View>
                                 <Text style={tw`font-mono text-[10px] text-black text-right`}>{user?.name || 'Kasir'}</Text>
                             </View>
                         </View>
+
+                        {receiptData.preOrderDate ? (
+                            <>
+                                <Text style={tw`text-center font-mono text-[11px] font-bold text-black mt-2`}>
+                                    ** AMBIL: {receiptData.preOrderDate.length >= 10 ? `${receiptData.preOrderDate.substring(8, 10)}-${receiptData.preOrderDate.substring(5, 7)}-${receiptData.preOrderDate.substring(0, 4)}${receiptData.preOrderDate.length === 16 ? ' ' + receiptData.preOrderDate.substring(11) : ''}` : receiptData.preOrderDate} **
+                                </Text>
+                                <Text style={tw`text-center font-mono text-[10px] font-bold text-black mt-1`}>
+                                    STATUS BAYAR: {paymentStatusLabel}
+                                </Text>
+                            </>
+                        ) : null}
+
+                        {receiptData.orderType && settings.enableDineTable ? (
+                            <Text style={tw`text-center font-mono text-[11px] font-bold text-black ${receiptData.preOrderDate ? 'mt-1' : 'mt-2'}`}>
+                                === {receiptData.orderType === 'DINE_IN' ? 'DINE IN' : 'TAKE AWAY'}{receiptData.orderType === 'DINE_IN' && receiptData.tableName ? ` (Meja ${receiptData.tableName})` : ''} ===
+                            </Text>
+                        ) : null}
 
                         <View style={tw`w-full border-t border-dashed border-gray-400 my-2`} />
 
@@ -290,14 +386,31 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
                             <Text style={tw`font-mono text-[12px] font-bold text-black`}>Total</Text>
                             <Text style={tw`font-mono text-[12px] font-bold text-black`}>{receiptData.total.toLocaleString('id-ID')}</Text>
                         </View>
-                        <View style={tw`flex-row justify-between mb-1`}>
-                            <Text style={tw`font-mono text-[11px] text-black`}>Bayar ({receiptData.paymentMethod})</Text>
-                            <Text style={tw`font-mono text-[11px] text-black`}>{receiptData.cashAmount.toLocaleString('id-ID')}</Text>
-                        </View>
-                        <View style={tw`flex-row justify-between`}>
-                            <Text style={tw`font-mono text-[11px] text-black`}>Kembali</Text>
-                            <Text style={tw`font-mono text-[11px] text-black`}>{receiptData.changeAmount.toLocaleString('id-ID')}</Text>
-                        </View>
+                        {receiptData.paymentStatus === 'UNPAID' ? (
+                            <View style={tw`flex-row justify-between mb-1`}>
+                                <Text style={tw`font-mono text-[11px] text-black`}>Dibayar</Text>
+                                <Text style={tw`font-mono text-[11px] text-black`}>0</Text>
+                            </View>
+                        ) : (
+                            <>
+                                <View style={tw`flex-row justify-between mb-1`}>
+                                    <Text style={tw`font-mono text-[11px] text-black`}>Bayar ({paymentMethodLabel})</Text>
+                                    <Text style={tw`font-mono text-[11px] text-black`}>{(receiptData.cashAmount || paidAmount).toLocaleString('id-ID')}</Text>
+                                </View>
+                                {(receiptData.changeAmount || 0) > 0 ? (
+                                    <View style={tw`flex-row justify-between`}>
+                                        <Text style={tw`font-mono text-[11px] text-black`}>Kembali</Text>
+                                        <Text style={tw`font-mono text-[11px] text-black`}>{receiptData.changeAmount.toLocaleString('id-ID')}</Text>
+                                    </View>
+                                ) : null}
+                            </>
+                        )}
+                        {remainingAmount > 0 ? (
+                            <View style={tw`flex-row justify-between mt-1`}>
+                                <Text style={tw`font-mono text-[11px] font-bold text-black`}>Sisa</Text>
+                                <Text style={tw`font-mono text-[11px] font-bold text-black`}>{remainingAmount.toLocaleString('id-ID')}</Text>
+                            </View>
+                        ) : null}
 
                         <View style={tw`w-full border-t border-dashed border-gray-400 my-4`} />
                         

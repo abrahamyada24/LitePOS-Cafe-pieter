@@ -3,13 +3,15 @@ import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { View, Text, TouchableOpacity, Modal, Alert, TextInput, StatusBar } from 'react-native';
+import { View, Text, TouchableOpacity, Modal, Alert, TextInput, StatusBar, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getDBConnection, createTables, seedInitialData } from './database/db';
 import tw, { useAppColorScheme } from 'twrnc';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useStore } from './store/useStore';
 import { syncService } from './services/syncService';
+import { hydrateApiBaseUrl, setApiBaseUrl as persistApiBaseUrl } from './services/api';
+import { openCashierShift } from './services/shiftService';
 
 import LoginScreen from './screens/LoginScreen';
 import DashboardScreen from './screens/DashboardScreen';
@@ -24,44 +26,105 @@ import StockReceivingScreen from './screens/StockReceivingScreen';
 import StockOpnameScreen from './screens/StockOpnameScreen';
 import StockHistoryScreen from './screens/StockHistoryScreen';
 import TableManagementScreen from './screens/TableManagementScreen';
+import TableOrdersScreen from './screens/TableOrdersScreen';
 import InventoryScreen from './screens/InventoryScreen';
 import ContactScreen from './screens/ContactScreen';
 import PackageScreen from './screens/PackageScreen';
 import ProductListScreen from './screens/ProductListScreen';
 import CategoryListScreen from './screens/CategoryListScreen';
 import LockScreen from './screens/LockScreen';
+import AppDialogProvider from './components/AppDialogProvider';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ Guard: block POS when shift not open Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-function ShiftGuardedPOS({ navigation }: any) {
+function ShiftGuardedPOS({ navigation, route }: any) {
     useAppColorScheme(tw);
     const activeShift = useStore((state) => state.activeShift);
     const settings = useStore((state) => state.settings);
+    const user = useStore((state) => state.user);
+    const setActiveShift = useStore((state) => state.setActiveShift);
+    const [openingCashInput, setOpeningCashInput] = useState('');
+    const [isOpeningShift, setIsOpeningShift] = useState(false);
+
+    const handleOpenShift = async () => {
+        if (isOpeningShift) return;
+        const openingCash = Number(openingCashInput.replace(/[^0-9]/g, '') || '0');
+        setIsOpeningShift(true);
+        try {
+            const shift = await openCashierShift(user, openingCash);
+            setActiveShift(shift);
+        } catch (error) {
+            console.error('Open shift from POS failed:', error);
+            Alert.alert('Gagal Membuka Shift', 'Shift belum dapat dibuka. Silakan coba lagi.');
+        } finally {
+            setIsOpeningShift(false);
+        }
+    };
+
     // If shift feature is disabled in settings, or shift is active Ã¢â€ â€™ open POS
-    if (!settings.enableShift || activeShift) return <POSScreen navigation={navigation} />;
+    if (!settings.enableShift || activeShift) return <POSScreen navigation={navigation} route={route} />;
+
     return (
-        <View style={tw`flex-1 bg-gray-100 dark:bg-gray-950 items-center justify-center px-8`}>
-            <View style={tw`bg-white dark:bg-gray-800 rounded-3xl p-8 w-full items-center shadow-sm border border-gray-100 dark:border-gray-700`}>
-                <View style={tw`w-14 h-14 bg-orange-50 dark:bg-orange-900/30 rounded-2xl items-center justify-center mb-4`}>
-                    <Icon name="briefcase-outline" size={28} color={tw.color('orange-500')} />
+        <KeyboardAvoidingView
+            style={tw`flex-1 bg-gray-50 dark:bg-gray-950`}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+            <ScrollView
+                contentContainerStyle={tw`flex-grow justify-center px-6 py-10`}
+                keyboardShouldPersistTaps="handled"
+            >
+                <View style={tw`w-full max-w-lg self-center`}>
+                    <View style={tw`flex-row items-center mb-6`}>
+                        <View style={tw`w-11 h-11 bg-blue-50 dark:bg-blue-900/30 rounded-xl items-center justify-center mr-3`}>
+                            <Icon name="briefcase-outline" size={22} color={tw.color('blue-600')} />
+                        </View>
+                        <View>
+                            <Text style={tw`text-[10px] font-black text-blue-600 uppercase`}>Shift Kasir</Text>
+                            <Text style={tw`text-sm font-bold text-gray-500 dark:text-gray-400`}>{user?.name || 'Kasir'}</Text>
+                        </View>
+                    </View>
+
+                    <Text style={tw`text-2xl font-black text-gray-900 dark:text-white mb-2`}>
+                        Buka shift untuk mulai berjualan
+                    </Text>
+                    <Text style={tw`text-sm text-gray-500 dark:text-gray-400 leading-5 mb-7`}>
+                        Masukkan uang tunai yang tersedia di laci kasir saat ini.
+                    </Text>
+
+                    <View style={tw`bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-5`}>
+                        <Text style={tw`text-xs font-black text-gray-700 dark:text-gray-200 mb-2`}>Kas awal</Text>
+                        <View style={tw`h-14 flex-row items-center border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-900 px-4 mb-3`}>
+                            <Text style={tw`font-black text-gray-500 mr-3`}>Rp</Text>
+                            <TextInput
+                                style={tw`flex-1 text-lg font-black text-gray-900 dark:text-white py-0`}
+                                keyboardType="numeric"
+                                placeholder="0"
+                                placeholderTextColor={tw.color('gray-400')}
+                                value={openingCashInput ? Number(openingCashInput).toLocaleString('id-ID') : ''}
+                                onChangeText={value => setOpeningCashInput(value.replace(/[^0-9]/g, ''))}
+                                returnKeyType="done"
+                                onSubmitEditing={handleOpenShift}
+                            />
+                        </View>
+                        <View style={tw`flex-row items-center mb-5`}>
+                            <Icon name="information-outline" size={15} color={tw.color('gray-400')} />
+                            <Text style={tw`text-[11px] text-gray-400 ml-1.5`}>Boleh diisi Rp0 jika laci kasir kosong.</Text>
+                        </View>
+
+                        <TouchableOpacity
+                            style={tw`h-14 bg-blue-600 rounded-lg flex-row items-center justify-center ${isOpeningShift ? 'opacity-60' : ''}`}
+                            disabled={isOpeningShift}
+                            onPress={handleOpenShift}
+                        >
+                            <Icon name="play" size={17} color="white" style={tw`mr-2`} />
+                            <Text style={tw`text-white font-black`}>{isOpeningShift ? 'Membuka Shift...' : 'Buka Shift dan Masuk POS'}</Text>
+                        </TouchableOpacity>
+                    </View>
                 </View>
-                <Text style={tw`text-xl font-black text-gray-800 dark:text-gray-100 text-center mb-2`}>
-                    Belum Ada Shift Aktif
-                </Text>
-                <Text style={tw`text-gray-400 dark:text-gray-500 text-sm text-center mb-6 leading-5`}>
-                    Buka shift dari halaman Beranda terlebih dahulu sebelum memulai transaksi.
-                </Text>
-                <TouchableOpacity
-                    style={tw`bg-orange-500 w-full py-3.5 rounded-2xl flex-row items-center justify-center`}
-                    onPress={() => navigation.navigate('Beranda')}
-                >
-                    <Icon name="play" size={16} color="white" style={tw`mr-2`} />
-                    <Text style={tw`text-white font-black text-sm`}>Buka Shift di Beranda</Text>
-                </TouchableOpacity>
-            </View>
-        </View>
+            </ScrollView>
+        </KeyboardAvoidingView>
     );
 }
 
@@ -188,17 +251,22 @@ function App(): React.JSX.Element {
                 const rowCount = settingsRes.rows.length;
                 let loadedSettings: any = {
                     storeName: 'LitePOS', storeAddress: '', storePhone: '',
-                    storeLogo: null, enablePreOrder: false, enableShift: true, enableDineTable: false,
+                    storeLogo: null, enablePreOrder: false, enableShift: true, enableDineTable: false, enableTableOrder: false, enableKitchenPrint: false,
                     showImages: true, printerAddress: null, printerType: null, theme: 'light',
+                    apiBaseUrl: '',
                 };
                 for (let i = 0; i < rowCount; i++) {
                     const row = settingsRes.rows.item(i);
-                    if (row.key === 'showImages' || row.key === 'enablePreOrder' || row.key === 'enableShift' || row.key === 'enableDineTable') {
+                    if (row.key === 'showImages' || row.key === 'enablePreOrder' || row.key === 'enableShift' || row.key === 'enableDineTable' || row.key === 'enableTableOrder' || row.key === 'enableKitchenPrint') {
                         loadedSettings[row.key] = row.value === 'true';
                     } else {
                         loadedSettings[row.key] = row.value || null;
                     }
                 }
+                loadedSettings.apiBaseUrl = loadedSettings.apiBaseUrl
+                    ? await persistApiBaseUrl(loadedSettings.apiBaseUrl)
+                    : await hydrateApiBaseUrl();
+                await db.executeSql(`INSERT OR REPLACE INTO settings (key, value) VALUES ('apiBaseUrl', ?)`, [loadedSettings.apiBaseUrl]);
                 setSettings(loadedSettings);
                 setColorScheme(loadedSettings.theme);
                 console.log('DB and Settings initialized');
@@ -250,15 +318,16 @@ function App(): React.JSX.Element {
                         const rowCount = settingsRes.rows.length;
                         let reloadedSettings: any = {
                             storeName: 'LitePOS', storeAddress: '', storePhone: '',
-                            storeLogo: null, enablePreOrder: false, enableShift: true, enableDineTable: false,
+                            storeLogo: null, enablePreOrder: false, enableShift: true, enableDineTable: false, enableTableOrder: false, enableKitchenPrint: false,
                             showImages: true, printerAddress: null, printerType: null, theme: 'light',
                             allowNegativeStock: false, receiptFooter: '',
                             loyalty_active: false, loyalty_multiplier: 1, loyalty_multiplier_amount: 1000,
                             loyalty_point_value: 0, loyalty_min_points: 0,
+                            apiBaseUrl: '',
                         };
                         for (let i = 0; i < rowCount; i++) {
                             const row = settingsRes.rows.item(i);
-                            if (['showImages', 'enablePreOrder', 'enableShift', 'enableDineTable', 'allowNegativeStock', 'loyalty_active'].includes(row.key)) {
+                            if (['showImages', 'enablePreOrder', 'enableShift', 'enableDineTable', 'enableTableOrder', 'allowNegativeStock', 'loyalty_active', 'enableKitchenPrint'].includes(row.key)) {
                                 reloadedSettings[row.key] = row.value === 'true';
                             } else if (['loyalty_multiplier', 'loyalty_multiplier_amount', 'loyalty_point_value', 'loyalty_min_points'].includes(row.key)) {
                                 reloadedSettings[row.key] = Number(row.value || 0);
@@ -266,6 +335,9 @@ function App(): React.JSX.Element {
                                 reloadedSettings[row.key] = row.value || null;
                             }
                         }
+                        reloadedSettings.apiBaseUrl = reloadedSettings.apiBaseUrl
+                            ? await persistApiBaseUrl(reloadedSettings.apiBaseUrl)
+                            : await hydrateApiBaseUrl();
                         setSettings(reloadedSettings);
                     } catch (reloadErr) {
                         console.error('Failed to reload settings after sync:', reloadErr);
@@ -330,32 +402,34 @@ function App(): React.JSX.Element {
 
     return (
         <SafeAreaProvider>
-            <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={colorScheme === 'dark' ? tw.color('gray-900') : tw.color('white')} />
-            <SafeAreaView style={tw`flex-1 bg-white dark:bg-gray-900`}>
-                <NavigationContainer theme={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-                    <Stack.Navigator screenOptions={{ headerShown: false }}>
-                        {isExpired ? (
-                            <Stack.Screen name="Lock" component={LockScreen} />
-                        ) : (
-                            <>
-                                <Stack.Screen name="Login" component={LoginScreen} />
-                                <Stack.Screen name="Main" component={MainTabNavigator} />
-                                <Stack.Screen name="POS" component={ShiftGuardedPOS} />
-                                <Stack.Screen name="Checkout" component={CheckoutScreen} />
-                                <Stack.Screen name="ReceiptPreview" component={ReceiptPreviewScreen} />
-                                <Stack.Screen name="UserManagement" component={UserManagementScreen} />
-                                <Stack.Screen name="StockReceiving" component={StockReceivingScreen} />
-                                <Stack.Screen name="StockOpname" component={StockOpnameScreen} />
-                                <Stack.Screen name="TableManagement" component={TableManagementScreen} />
-                                <Stack.Screen name="Management" component={ManagementScreen} />
-                                <Stack.Screen name="PackageList" component={PackageScreen} />
-                                <Stack.Screen name="ProductList" component={ProductListScreen} />
-                                <Stack.Screen name="CategoryList" component={CategoryListScreen} />
-                                <Stack.Screen name="StockHistory" component={StockHistoryScreen} />
-                            </>
-                        )}
-                    </Stack.Navigator>
-                </NavigationContainer>
+            <AppDialogProvider>
+                <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={colorScheme === 'dark' ? tw.color('gray-900') : tw.color('white')} />
+                <SafeAreaView style={tw`flex-1 bg-white dark:bg-gray-900`}>
+                    <NavigationContainer theme={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+                        <Stack.Navigator screenOptions={{ headerShown: false }}>
+                            {isExpired ? (
+                                <Stack.Screen name="Lock" component={LockScreen} />
+                            ) : (
+                                <>
+                                    <Stack.Screen name="Login" component={LoginScreen} />
+                                    <Stack.Screen name="Main" component={MainTabNavigator} />
+                                    <Stack.Screen name="POS" component={ShiftGuardedPOS} />
+                                    <Stack.Screen name="TableOrders" component={TableOrdersScreen} />
+                                    <Stack.Screen name="Checkout" component={CheckoutScreen} />
+                                    <Stack.Screen name="ReceiptPreview" component={ReceiptPreviewScreen} />
+                                    <Stack.Screen name="UserManagement" component={UserManagementScreen} />
+                                    <Stack.Screen name="StockReceiving" component={StockReceivingScreen} />
+                                    <Stack.Screen name="StockOpname" component={StockOpnameScreen} />
+                                    <Stack.Screen name="TableManagement" component={TableManagementScreen} />
+                                    <Stack.Screen name="Management" component={ManagementScreen} />
+                                    <Stack.Screen name="PackageList" component={PackageScreen} />
+                                    <Stack.Screen name="ProductList" component={ProductListScreen} />
+                                    <Stack.Screen name="CategoryList" component={CategoryListScreen} />
+                                    <Stack.Screen name="StockHistory" component={StockHistoryScreen} />
+                                </>
+                            )}
+                        </Stack.Navigator>
+                    </NavigationContainer>
                 
                 {/* Trial Watermark */}
                 {settings.license_type === 'TRIAL' && !isExpired && (
@@ -404,7 +478,8 @@ function App(): React.JSX.Element {
                         </View>
                     </View>
                 </Modal>
-            </SafeAreaView>
+                </SafeAreaView>
+            </AppDialogProvider>
         </SafeAreaProvider>
     );
 }

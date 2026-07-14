@@ -10,6 +10,7 @@ pnpm-debug.log*
 .env.test
 .env.production
 .env.local
+!.env.example
 
 # Prisma
 # Keep schema.prisma and migrations in version control

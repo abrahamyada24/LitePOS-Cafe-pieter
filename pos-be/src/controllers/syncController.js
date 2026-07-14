@@ -43,6 +43,7 @@ exports.getMasterData = async (req, res) => {
       { key: 'enablePreOrder', value: settings.enablePreOrder ? 'true' : 'false' },
       { key: 'enableShift', value: settings.enableShift ? 'true' : 'false' },
       { key: 'enableDineTable', value: settings.enableDineTable ? 'true' : 'false' },
+      { key: 'enableTableOrder', value: settings.enableTableOrder ? 'true' : 'false' },
       { key: 'receiptFooter', value: settings.receiptFooter || '' },
       { key: 'taxRate', value: settings.taxRate.toString() },
       { key: 'serviceCharge', value: settings.serviceCharge.toString() },
@@ -124,6 +125,9 @@ exports.pushLocalData = async (req, res) => {
         if (settingsMap.enablePreOrder !== undefined) storeSettingData.enablePreOrder = settingsMap.enablePreOrder === 'true';
         if (settingsMap.enableShift !== undefined) storeSettingData.enableShift = settingsMap.enableShift === 'true';
         if (settingsMap.enableDineTable !== undefined) storeSettingData.enableDineTable = settingsMap.enableDineTable === 'true';
+        if (settingsMap.enableTableOrder !== undefined) storeSettingData.enableTableOrder = settingsMap.enableTableOrder === 'true';
+        if (storeSettingData.enableTableOrder === true) storeSettingData.enableDineTable = true;
+        if (storeSettingData.enableTableOrder !== true && storeSettingData.enableDineTable === false) storeSettingData.enableTableOrder = false;
         if (settingsMap.allowNegativeStock !== undefined) storeSettingData.allowNegativeStock = settingsMap.allowNegativeStock === 'true';
         if (settingsMap.showImages !== undefined) storeSettingData.showImages = settingsMap.showImages === 'true';
         if (settingsMap.theme && settingsMap.theme.trim()) storeSettingData.theme = settingsMap.theme;

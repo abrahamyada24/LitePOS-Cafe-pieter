@@ -6,7 +6,7 @@ import {
   Utensils, Calendar, ArrowRight, Package, Eye, Loader2,
   Sun, Moon, Sunset, CloudSun,
   Clock, PlayCircle, StopCircle, X,
-  BarChart3, Users, LayoutGrid,
+  BarChart3, Users, LayoutGrid, QrCode,
   CheckCircle2, AlertCircle, Timer
 } from 'lucide-react';
 import Link from 'next/link';
@@ -488,8 +488,9 @@ export default function Dashboard() {
 
       {/* ── Quick Actions (ADMIN/OWNER only) ── */}
       {isAdminOrOwner && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
           <QuickActionCard icon={ShoppingCart} label="Buka Kasir" href="/pos" gradient="from-blue-500 to-indigo-600" />
+          <QuickActionCard icon={QrCode} label="Order Meja" href="/order-meja" gradient="from-cyan-500 to-emerald-600" />
           <QuickActionCard icon={BarChart3} label="Laporan" href="/reports" gradient="from-emerald-500 to-teal-600" />
           <QuickActionCard icon={Package} label="Kelola Data" href="/products" gradient="from-violet-500 to-purple-600" />
           <QuickActionCard icon={Users} label="Kontak" href="/customers" gradient="from-rose-500 to-pink-600" />

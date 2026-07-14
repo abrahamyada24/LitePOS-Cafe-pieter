@@ -5,11 +5,13 @@ import { useStore } from '../store/useStore';
 import { getDBConnection } from '../database/db';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import DatePickerDropdown from '../components/DatePickerDropdown';
+import { PreOrderPaymentStatus, getPaymentStatusLabel } from '../utils/preOrderPayment';
 
 export default function CheckoutScreen({ navigation }: any) {
     useAppColorScheme(tw);
     const { cart, cartTotal, cartSubtotal, updateCartQuantity, clearCart, discount, discountType, setDiscount } = useStore();
     const settings = useStore(state => state.settings);
+    const pendingOrderContext = useStore(state => state.pendingOrderContext);
     const [paymentMethod, setPaymentMethod] = useState('CASH');
     const [cashAmount, setCashAmount] = useState('');
 
@@ -34,6 +36,8 @@ export default function CheckoutScreen({ navigation }: any) {
     // Pre-order
     const [preOrderDate, setPreOrderDate] = useState('');
     const [showPreOrderInput, setShowPreOrderInput] = useState(false);
+    const [preOrderPaymentStatus, setPreOrderPaymentStatus] = useState<PreOrderPaymentStatus>('PAID');
+    const [dpAmount, setDpAmount] = useState('');
 
     // Save pending
     const [showSaveModal, setShowSaveModal] = useState(false);
@@ -55,13 +59,44 @@ export default function CheckoutScreen({ navigation }: any) {
     const total = Math.max(0, totalBeforePoints - pointsValue);
     const discountAmount = subtotal - total;
     const rawCash = parseInt(cashAmount.replace(/\D/g, '') || '0', 10);
-    const changeAmount = rawCash - total;
+    const rawDpAmount = parseInt(dpAmount.replace(/\D/g, '') || '0', 10);
+    const isPreOrder = !!preOrderDate;
+    const paidAmount = isPreOrder
+        ? preOrderPaymentStatus === 'UNPAID'
+            ? 0
+            : preOrderPaymentStatus === 'PARTIAL'
+                ? Math.min(rawDpAmount, total)
+                : total
+        : total;
+    const paymentStatus: PreOrderPaymentStatus = !isPreOrder || paidAmount >= total ? 'PAID' : paidAmount > 0 ? 'PARTIAL' : 'UNPAID';
+    const remainingAmount = Math.max(0, total - paidAmount);
+    const amountDueNow = isPreOrder ? paidAmount : total;
+    const effectivePaymentMethod = paymentStatus === 'UNPAID' ? 'PENDING' : paymentMethod;
+    const changeAmount = paymentMethod === 'CASH' ? rawCash - amountDueNow : 0;
+    const cashPaymentInvalid = amountDueNow > 0 && paymentMethod === 'CASH' && rawCash < amountDueNow;
 
     const formatRp = (num: number) => 'Rp ' + (Math.round(num) || 0).toLocaleString('id-ID');
 
     useEffect(() => {
         loadData();
     }, []);
+
+    useEffect(() => {
+        if (!pendingOrderContext) return;
+
+        if (pendingOrderContext.customerName) {
+            setGuestName(pendingOrderContext.customerName);
+        }
+
+        if (pendingOrderContext.tableNumber) {
+            setOrderType('DINE_IN');
+            setSelectedTable({
+                id: `remote-${pendingOrderContext.tableNumber}`,
+                number: pendingOrderContext.tableNumber,
+                name: 'Order QR',
+            });
+        }
+    }, [pendingOrderContext]);
 
     const loadData = async () => {
         try {
@@ -153,6 +188,16 @@ export default function CheckoutScreen({ navigation }: any) {
         else setSelectedTable(null);
     }, [orderType]);
 
+    useEffect(() => {
+        if (!pendingOrderContext?.tableNumber || orderType !== 'DINE_IN') return;
+        const existingTable = availableTables.find(table => table.number === pendingOrderContext.tableNumber);
+        setSelectedTable(existingTable || {
+            id: `remote-${pendingOrderContext.tableNumber}`,
+            number: pendingOrderContext.tableNumber,
+            name: 'Order QR',
+        });
+    }, [availableTables, orderType, pendingOrderContext]);
+
     const selectCustomer = (customer: any) => {
         setSelectedCustomer(customer);
         setShowCustomerModal(false);
@@ -194,7 +239,7 @@ export default function CheckoutScreen({ navigation }: any) {
 
     const handlePresetCash = (amount: number | 'PAS' | 'RESET') => {
         if (amount === 'RESET') { setCashAmount(''); }
-        else if (amount === 'PAS') { setCashAmount(total.toString()); }
+        else if (amount === 'PAS') { setCashAmount(amountDueNow.toString()); }
         else { setCashAmount((rawCash + amount).toString()); }
     };
 
@@ -223,8 +268,12 @@ export default function CheckoutScreen({ navigation }: any) {
     };
 
     const handleCheckout = async () => {
-        if (paymentMethod === 'CASH' && rawCash < total) {
-            Alert.alert('Uang Kurang', `Uang tunai tidak cukup.\nKurang: ${formatRp(total - rawCash)}`);
+        if (isPreOrder && preOrderPaymentStatus === 'PARTIAL' && (rawDpAmount <= 0 || rawDpAmount >= total)) {
+            Alert.alert('Validasi DP', 'Nominal DP harus lebih dari 0 dan lebih kecil dari total pesanan.');
+            return;
+        }
+        if (cashPaymentInvalid) {
+            Alert.alert('Uang Kurang', `Uang tunai tidak cukup.\nKurang: ${formatRp(amountDueNow - rawCash)}`);
             return;
         }
         // Meja dine-in bersifat opsional — tidak wajib dipilih
@@ -237,13 +286,17 @@ export default function CheckoutScreen({ navigation }: any) {
             const custNameFinal = orderType === 'TAKE_AWAY' && takeAwayOption ? `${custNameBase} (${takeAwayOption})` : custNameBase;
 
             await db.executeSql(
-                `INSERT INTO transactions (id, invoiceNumber, grandTotal, discountAmount, paymentMethod, cashAmount, changeAmount, customerId, customerName, createdAt, preOrderDate, orderType, tableName) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [trxId, invoiceNumber, total, discountAmount, paymentMethod,
-                    paymentMethod === 'CASH' ? rawCash : total,
+                `INSERT INTO transactions (id, invoiceNumber, grandTotal, discountAmount, paymentMethod, cashAmount, changeAmount, customerId, customerName, createdAt, preOrderDate, paymentStatus, paidAmount, remainingAmount, paidAt, orderType, tableName) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [trxId, invoiceNumber, total, discountAmount, effectivePaymentMethod,
+                    paymentMethod === 'CASH' ? rawCash : amountDueNow,
                     paymentMethod === 'CASH' ? Math.max(0, changeAmount) : 0,
                     selectedCustomer?.id || null, custNameFinal,
                     createdAt,
                     preOrderDate ? (preOrderDate.length === 16 ? preOrderDate.replace(' ', 'T') + ':00.000Z' : preOrderDate + 'T00:00:00.000Z') : null,
+                    paymentStatus,
+                    paidAmount,
+                    remainingAmount,
+                    paidAmount > 0 ? createdAt : null,
                     orderType, selectedTable?.number || null]
             );
 
@@ -278,10 +331,14 @@ export default function CheckoutScreen({ navigation }: any) {
                 invoiceNumber, createdAt, items: cart,
                 customerName: custNameFinal,
                 customerPhone: selectedCustomer?.phone || null,
-                subtotal, discountAmount, total, paymentMethod,
-                cashAmount: paymentMethod === 'CASH' ? rawCash : total,
+                subtotal, discountAmount, total, paymentMethod: effectivePaymentMethod,
+                cashAmount: paymentMethod === 'CASH' ? rawCash : amountDueNow,
                 changeAmount: Math.max(0, changeAmount),
                 preOrderDate: preOrderDate || null,
+                paymentStatus,
+                paidAmount,
+                remainingAmount,
+                paidAt: paidAmount > 0 ? createdAt : null,
                 orderType,
                 tableName: selectedTable?.number || null
             };
@@ -476,17 +533,80 @@ export default function CheckoutScreen({ navigation }: any) {
                                     <View style={tw`flex-1`}>
                                         <DatePickerDropdown
                                             value={preOrderDate}
-                                            onChange={setPreOrderDate}
+                                            onChange={(value) => {
+                                                setPreOrderDate(value);
+                                                if (!value) {
+                                                    setPreOrderPaymentStatus('PAID');
+                                                    setDpAmount('');
+                                                }
+                                            }}
                                             placeholder="Pilih tanggal pre-order"
                                             withTime={true}
                                         />
                                     </View>
                                     {preOrderDate ? (
-                                        <TouchableOpacity style={tw`p-3 bg-red-50 rounded-xl`} onPress={() => setPreOrderDate('')}>
+                                        <TouchableOpacity style={tw`p-3 bg-red-50 rounded-xl`} onPress={() => {
+                                            setPreOrderDate('');
+                                            setPreOrderPaymentStatus('PAID');
+                                            setDpAmount('');
+                                        }}>
                                             <Icon name="close" size={16} color={tw.color('red-400')} />
                                         </TouchableOpacity>
                                     ) : null}
                                 </View>
+
+                                {preOrderDate ? (
+                                    <View style={tw`mt-4`}>
+                                        <Text style={tw`text-xs text-gray-500 mb-2`}>Status pembayaran</Text>
+                                        <View style={tw`flex-row gap-2`}>
+                                            {([
+                                                { value: 'PAID', label: 'Lunas' },
+                                                { value: 'UNPAID', label: 'Belum Bayar' },
+                                                { value: 'PARTIAL', label: 'DP' },
+                                            ] as { value: PreOrderPaymentStatus; label: string }[]).map(opt => {
+                                                const active = preOrderPaymentStatus === opt.value;
+                                                return (
+                                                    <TouchableOpacity
+                                                        key={opt.value}
+                                                        style={tw`flex-1 py-3 rounded-xl border items-center ${active ? 'bg-purple-50 border-purple-600' : 'bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700'}`}
+                                                        onPress={() => {
+                                                            setPreOrderPaymentStatus(opt.value);
+                                                            if (opt.value !== 'PARTIAL') setDpAmount('');
+                                                        }}
+                                                    >
+                                                        <Text style={tw`text-[11px] font-black ${active ? 'text-purple-600' : 'text-gray-500 dark:text-gray-300'}`}>
+                                                            {opt.label}
+                                                        </Text>
+                                                    </TouchableOpacity>
+                                                );
+                                            })}
+                                        </View>
+
+                                        {preOrderPaymentStatus === 'PARTIAL' ? (
+                                            <View style={tw`mt-3`}>
+                                                <Text style={tw`text-xs text-gray-500 mb-2`}>Nominal DP</Text>
+                                                <TextInput
+                                                    style={tw`bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3 text-lg font-bold text-gray-800 dark:text-gray-100`}
+                                                    keyboardType="numeric"
+                                                    placeholder="0"
+                                                    value={dpAmount ? parseInt(dpAmount).toLocaleString('id-ID') : ''}
+                                                    onChangeText={(text) => setDpAmount(text.replace(/[^0-9]/g, ''))}
+                                                />
+                                            </View>
+                                        ) : null}
+
+                                        <View style={tw`mt-3 bg-purple-50 dark:bg-gray-900 rounded-xl p-3`}>
+                                            <View style={tw`flex-row justify-between mb-1`}>
+                                                <Text style={tw`text-xs text-gray-500`}>Dibayar sekarang</Text>
+                                                <Text style={tw`text-xs font-black text-purple-700`}>{formatRp(amountDueNow)}</Text>
+                                            </View>
+                                            <View style={tw`flex-row justify-between`}>
+                                                <Text style={tw`text-xs text-gray-500`}>Sisa saat ambil</Text>
+                                                <Text style={tw`text-xs font-black text-purple-700`}>{formatRp(remainingAmount)}</Text>
+                                            </View>
+                                        </View>
+                                    </View>
+                                ) : null}
                             </View>
                         )}
                     </View>
@@ -569,74 +689,90 @@ export default function CheckoutScreen({ navigation }: any) {
                 </View>
 
                 {/* Payment Method */}
-                <Text style={tw`font-bold text-gray-800 dark:text-gray-100 mb-3 ml-1`}>Metode Pembayaran</Text>
-                <View style={tw`flex-row gap-3 mb-5`}>
-                    {[{ label: 'TUNAI', method: 'CASH', icon: <Icon name="cash" size={20} color={paymentMethod === 'CASH' ? tw.color('blue-600') : tw.color('gray-400')} /> },
-                    { label: 'QRIS', method: 'QRIS', icon: <Icon name="credit-card-outline" size={20} color={paymentMethod === 'QRIS' ? tw.color('blue-600') : tw.color('gray-400')} /> },
-                    { label: 'TRANSFER', method: 'TRANSFER', icon: <Icon name="bank" size={20} color={paymentMethod === 'TRANSFER' ? tw.color('blue-600') : tw.color('gray-400')} /> }
-                    ].map(opt => (
-                        <TouchableOpacity key={opt.method} style={tw`flex-1 p-4 rounded-xl border flex-row items-center justify-center ${paymentMethod === opt.method ? 'bg-blue-50 dark:bg-blue-900 border-blue-600' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'}`} onPress={() => setPaymentMethod(opt.method)}>
-                            <View style={tw`mr-2`}>{opt.icon}</View>
-                            <Text style={tw`font-bold ${paymentMethod === opt.method ? 'text-blue-600' : 'text-gray-500 dark:text-gray-400'}`}>{opt.label}</Text>
-                        </TouchableOpacity>
-                    ))}
-                </View>
-
-                {paymentMethod === 'CASH' ? (
-                    <View style={tw`bg-white dark:bg-gray-800 p-4 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-800 mb-6`}>
-                        <Text style={tw`text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-3`}>Pilih Nominal Uang (Bisa Dijumlahkan)</Text>
-                        <TextInput
-                            style={tw`bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3 text-2xl font-bold text-gray-800 dark:text-gray-100 mb-4`}
-                            keyboardType="numeric"
-                            placeholder="Ketik total tunai di sini"
-                            value={cashAmount ? parseInt(cashAmount).toLocaleString('id-ID') : ''}
-                            onChangeText={(text) => setCashAmount(text.replace(/[^0-9]/g, ''))}
-                        />
-                        <View style={tw`flex-row flex-wrap gap-2 mb-4`}>
-                            {[
-                                { label: 'Uang Pas', value: 'PAS' },
-                                { label: 'Reset', value: 'RESET' },
-                                { label: '100', value: 100 },
-                                { label: '200', value: 200 },
-                                { label: '500', value: 500 },
-                                { label: '1k', value: 1000 },
-                                { label: '2k', value: 2000 },
-                                { label: '5k', value: 5000 },
-                                { label: '10k', value: 10000 },
-                                { label: '20k', value: 20000 },
-                                { label: '50k', value: 50000 },
-                                { label: '100k', value: 100000 }
-                            ].map((preset, idx) => {
-                                const isPas = preset.value === 'PAS' && rawCash === total && total > 0;
-                                return (
-                                    <TouchableOpacity
-                                        key={idx}
-                                        style={tw`w-[23%] py-3 rounded-xl border flex items-center justify-center ${isPas ? 'bg-blue-600 border-blue-600' : preset.value === 'RESET' ? 'bg-red-50 border-red-200 dark:bg-red-900 dark:border-red-700' : 'bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700'}`}
-                                        onPress={() => handlePresetCash(preset.value as any)}
-                                    >
-                                        <Text style={tw`font-bold text-[11px] ${isPas ? 'text-white' : preset.value === 'RESET' ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-200'}`}>{preset.label}</Text>
-                                    </TouchableOpacity>
-                                );
-                            })}
+                {amountDueNow > 0 ? (
+                    <>
+                        <Text style={tw`font-bold text-gray-800 dark:text-gray-100 mb-3 ml-1`}>Metode Pembayaran</Text>
+                        <View style={tw`flex-row gap-3 mb-5`}>
+                            {[{ label: 'TUNAI', method: 'CASH', icon: <Icon name="cash" size={20} color={paymentMethod === 'CASH' ? tw.color('blue-600') : tw.color('gray-400')} /> },
+                            { label: 'QRIS', method: 'QRIS', icon: <Icon name="credit-card-outline" size={20} color={paymentMethod === 'QRIS' ? tw.color('blue-600') : tw.color('gray-400')} /> },
+                            { label: 'TRANSFER', method: 'TRANSFER', icon: <Icon name="bank" size={20} color={paymentMethod === 'TRANSFER' ? tw.color('blue-600') : tw.color('gray-400')} /> }
+                            ].map(opt => (
+                                <TouchableOpacity key={opt.method} style={tw`flex-1 p-4 rounded-xl border flex-row items-center justify-center ${paymentMethod === opt.method ? 'bg-blue-50 dark:bg-blue-900 border-blue-600' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'}`} onPress={() => setPaymentMethod(opt.method)}>
+                                    <View style={tw`mr-2`}>{opt.icon}</View>
+                                    <Text style={tw`font-bold ${paymentMethod === opt.method ? 'text-blue-600' : 'text-gray-500 dark:text-gray-400'}`}>{opt.label}</Text>
+                                </TouchableOpacity>
+                            ))}
                         </View>
-                        {rawCash >= total && (
-                            <View style={tw`flex-row justify-between items-center py-2 border-t border-dashed border-gray-200 dark:border-gray-700`}>
-                                <Text style={tw`font-bold text-gray-500 dark:text-gray-400`}>Kembalian</Text>
-                                <Text style={tw`text-xl font-black text-green-600`}>{formatRp(changeAmount)}</Text>
+
+                        {paymentMethod === 'CASH' ? (
+                            <View style={tw`bg-white dark:bg-gray-800 p-4 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-800 mb-6`}>
+                                <Text style={tw`text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-3`}>Pilih Nominal Uang (Bisa Dijumlahkan)</Text>
+                                <TextInput
+                                    style={tw`bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3 text-2xl font-bold text-gray-800 dark:text-gray-100 mb-4`}
+                                    keyboardType="numeric"
+                                    placeholder="Ketik total tunai di sini"
+                                    value={cashAmount ? parseInt(cashAmount).toLocaleString('id-ID') : ''}
+                                    onChangeText={(text) => setCashAmount(text.replace(/[^0-9]/g, ''))}
+                                />
+                                <View style={tw`flex-row flex-wrap gap-2 mb-4`}>
+                                    {[
+                                        { label: 'Uang Pas', value: 'PAS' },
+                                        { label: 'Reset', value: 'RESET' },
+                                        { label: '100', value: 100 },
+                                        { label: '200', value: 200 },
+                                        { label: '500', value: 500 },
+                                        { label: '1k', value: 1000 },
+                                        { label: '2k', value: 2000 },
+                                        { label: '5k', value: 5000 },
+                                        { label: '10k', value: 10000 },
+                                        { label: '20k', value: 20000 },
+                                        { label: '50k', value: 50000 },
+                                        { label: '100k', value: 100000 }
+                                    ].map((preset, idx) => {
+                                        const isPas = preset.value === 'PAS' && rawCash === amountDueNow && amountDueNow > 0;
+                                        return (
+                                            <TouchableOpacity
+                                                key={idx}
+                                                style={tw`w-[23%] py-3 rounded-xl border flex items-center justify-center ${isPas ? 'bg-blue-600 border-blue-600' : preset.value === 'RESET' ? 'bg-red-50 border-red-200 dark:bg-red-900 dark:border-red-700' : 'bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700'}`}
+                                                onPress={() => handlePresetCash(preset.value as any)}
+                                            >
+                                                <Text style={tw`font-bold text-[11px] ${isPas ? 'text-white' : preset.value === 'RESET' ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-200'}`}>{preset.label}</Text>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+                                {rawCash >= amountDueNow && (
+                                    <View style={tw`flex-row justify-between items-center py-2 border-t border-dashed border-gray-200 dark:border-gray-700`}>
+                                        <Text style={tw`font-bold text-gray-500 dark:text-gray-400`}>Kembalian</Text>
+                                        <Text style={tw`text-xl font-black text-green-600`}>{formatRp(changeAmount)}</Text>
+                                    </View>
+                                )}
+                            </View>
+                        ) : (
+                            <View style={tw`bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-800 items-center mb-6`}>
+                                <Text style={tw`text-sm font-medium text-gray-500 dark:text-gray-400 text-center`}>Arahkan pelanggan scan QRIS di layar atau dari print out stand Anda.</Text>
                             </View>
                         )}
-                    </View>
+                    </>
                 ) : (
-                    <View style={tw`bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-800 items-center mb-6`}>
-                        <Text style={tw`text-sm font-medium text-gray-500 dark:text-gray-400 text-center`}>Arahkan pelanggan scan QRIS di layar atau dari print out stand Anda.</Text>
+                    <View style={tw`bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-purple-100 dark:border-gray-800 mb-6`}>
+                        <View style={tw`flex-row items-center`}>
+                            <View style={tw`w-10 h-10 rounded-full bg-purple-50 items-center justify-center mr-3`}>
+                                <Icon name="clock-outline" size={18} color={tw.color('purple-600')} />
+                            </View>
+                            <View style={tw`flex-1`}>
+                                <Text style={tw`font-black text-gray-800 dark:text-gray-100`}>Belum ada pembayaran</Text>
+                                <Text style={tw`text-xs text-gray-500 dark:text-gray-400 mt-1`}>Total akan dibayar saat pesanan diambil.</Text>
+                            </View>
+                        </View>
                     </View>
                 )}
             </ScrollView>
 
             <View style={tw`bg-white dark:bg-gray-800 p-4 border-t border-gray-200 dark:border-gray-700`}>
-                <TouchableOpacity style={tw`bg-blue-600 py-4 rounded-xl items-center shadow-md ${(paymentMethod === 'CASH' && rawCash < total) ? 'opacity-50' : 'opacity-100'}`} onPress={handleCheckout} disabled={paymentMethod === 'CASH' && rawCash < total}>
+                <TouchableOpacity style={tw`bg-blue-600 py-4 rounded-xl items-center shadow-md ${cashPaymentInvalid ? 'opacity-50' : 'opacity-100'}`} onPress={handleCheckout} disabled={cashPaymentInvalid}>
                     <Text style={tw`text-white font-black text-lg tracking-wide uppercase`}>
-                        {preOrderDate ? `Pre-Order ${preOrderDate.length >= 10 ? `${preOrderDate.substring(8, 10)}-${preOrderDate.substring(5, 7)}-${preOrderDate.substring(0, 4)}${preOrderDate.length === 16 ? ` ${preOrderDate.substring(11)}` : ''}` : preOrderDate}` : `Proses Bayar`} {formatRp(total)}
+                        {preOrderDate ? `Simpan Pre-Order ${getPaymentStatusLabel(paymentStatus)}` : `Proses Bayar`} {formatRp(amountDueNow)}
                     </Text>
                 </TouchableOpacity>
             </View>

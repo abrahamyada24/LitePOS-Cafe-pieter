@@ -16,7 +16,7 @@
     <!-- Camera for barcode scanner -->
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- USB Host for OTG Printers -->
-    <uses-feature android:name="android.hardware.usb.host" />
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
     <application
       android:name=".MainApplication"
       android:label="@string/app_name"
