@@ -332,11 +332,11 @@ export const syncService = {
 
         } catch (error: any) {
             console.error('Sync Master Error:', error);
-            let errMsg = 'Unknown error';
-            if (error && error.message) errMsg = error.message;
+            const status = error?.response?.status;
+            let errMsg = error?.response?.data?.message || error?.response?.data?.error || 'Unknown error';
+            if (errMsg === 'Unknown error' && error && error.message) errMsg = error.message;
             else if (typeof error === 'string') errMsg = error;
-            else errMsg = JSON.stringify(error);
-            return { success: false, error: errMsg };
+            return { success: false, error: errMsg, status };
         }
     },
 

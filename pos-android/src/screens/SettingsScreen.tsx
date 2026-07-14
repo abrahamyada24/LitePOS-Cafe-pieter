@@ -16,6 +16,7 @@ import { pick, types } from '@react-native-documents/picker';
 import { requestPrinterPermissions } from '../utils/permissions';
 import { RECEIPT_LOGO_BASE64 } from '../assets/receiptLogoBase64';
 import ViewShot from 'react-native-view-shot';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import api, { DEFAULT_API_URL, getApiBaseUrl, setApiBaseUrl as persistApiBaseUrl } from '../services/api';
 import { connectConfiguredPrinter } from '../utils/printerConnection';
 
@@ -232,13 +233,36 @@ export default function SettingsScreen({ navigation }: any) {
         return normalized;
     };
 
+    const redirectToServerLogin = async () => {
+        await AsyncStorage.multiRemove(['@auth_token', '@auth_user']);
+        useStore.getState().setUser(null);
+        const rootNavigation = navigation.getParent?.();
+        if (rootNavigation) rootNavigation.replace('Login');
+        else navigation.replace('Login');
+    };
+
+    const showServerLoginRequired = (serverUrl: string) => {
+        Alert.alert(
+            'Login Server Diperlukan',
+            `Backend aktif di ${serverUrl}, tetapi sesi saat ini berasal dari server lain atau mode offline. Login ulang agar sinkronisasi aman.`,
+            [
+                { text: 'Nanti', style: 'cancel' },
+                { text: 'Login Ulang', onPress: redirectToServerLogin },
+            ]
+        );
+    };
+
     const handleTestApiConnection = async () => {
         try {
             const normalized = await persistBackendUrl();
             const res = await api.get('/health', { timeout: 5000 });
+            const token = await AsyncStorage.getItem('@auth_token');
+            const sessionNote = !token || token === 'offline-mode-token'
+                ? '\nSesi server: login ulang diperlukan sebelum sinkronisasi.'
+                : '\nSesi server: siap digunakan.';
             Alert.alert(
                 'Koneksi Berhasil',
-                `Backend aktif: ${normalized}\nDatabase: ${res.data?.database || 'UNKNOWN'}`
+                `Backend aktif: ${normalized}\nDatabase: ${res.data?.database || 'UNKNOWN'}${sessionNote}`
             );
         } catch (e: any) {
             const message = e?.response?.data?.error || e?.message || 'Tidak bisa menghubungi backend.';
@@ -1005,6 +1029,11 @@ export default function SettingsScreen({ navigation }: any) {
                             style={tw`bg-blue-600 py-3.5 rounded-xl flex-row justify-center items-center mb-2`}
                             onPress={async () => {
                                 const normalizedApiBaseUrl = await persistBackendUrl();
+                                const serverToken = await AsyncStorage.getItem('@auth_token');
+                                if (!serverToken || serverToken === 'offline-mode-token') {
+                                    showServerLoginRequired(normalizedApiBaseUrl);
+                                    return;
+                                }
                                 Alert.alert('Sinkronisasi', `Mulai sinkronisasi data dengan server?\n\nServer: ${normalizedApiBaseUrl}`, [
                                     { text: 'Batal', style: 'cancel' },
                                     {
@@ -1017,6 +1046,10 @@ export default function SettingsScreen({ navigation }: any) {
                                                 const masterRes = await syncService.syncMasterData();
                                                 console.log('[SYNC] syncMasterData result:', masterRes);
                                                 if (!masterRes.success) {
+                                                    if (masterRes.status === 401 || masterRes.status === 403) {
+                                                        showServerLoginRequired(normalizedApiBaseUrl);
+                                                        return;
+                                                    }
                                                     Alert.alert('Gagal', 'Gagal sinkron data master dari server: ' + JSON.stringify(masterRes.error || 'Unknown error'));
                                                     return;
                                                 }

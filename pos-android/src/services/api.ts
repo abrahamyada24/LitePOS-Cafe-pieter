@@ -49,6 +49,17 @@ const api = axios.create({
 
 export const setApiBaseUrl = async (value: string) => {
     const normalized = normalizeApiBaseUrl(value);
+    const previous = normalizeApiBaseUrl(await AsyncStorage.getItem(API_BASE_URL_STORAGE_KEY));
+
+    // JWT hanya valid untuk backend yang menerbitkannya. Saat server diganti,
+    // buang sesi online lama agar token tidak terkirim ke instalasi lain.
+    if (previous !== normalized) {
+        const token = await AsyncStorage.getItem('@auth_token');
+        if (token && token !== 'offline-mode-token') {
+            await AsyncStorage.multiRemove(['@auth_token', '@auth_user']);
+        }
+    }
+
     await AsyncStorage.setItem(API_BASE_URL_STORAGE_KEY, normalized);
     api.defaults.baseURL = buildApiBaseUrl(normalized);
     return normalized;
@@ -68,7 +79,7 @@ api.interceptors.request.use(
             config.baseURL = buildApiBaseUrl(baseUrl);
 
             const token = await AsyncStorage.getItem('@auth_token');
-            if (token) {
+            if (token && token !== 'offline-mode-token') {
                 config.headers.Authorization = `Bearer ${token}`;
             }
         } catch (error) {
