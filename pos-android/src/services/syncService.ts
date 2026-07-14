@@ -550,7 +550,9 @@ export const syncService = {
                 return productWithoutLocalImage;
             });
             const payload = { transactions, expenses, shifts, categories, products: productsForPush, customers, settings, stockReceipts, suppliers, packages, dineTables, addons };
-            const res = await api.post('/sync/push', payload);
+            const res = await api.post('/sync/push', payload, {
+                headers: { 'X-LitePOS-Sync-Version': '2' },
+            });
             
             if (res.data.success) {
                 const idMap = res.data.idMap || {};

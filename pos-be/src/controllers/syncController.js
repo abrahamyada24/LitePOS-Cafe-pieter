@@ -66,6 +66,15 @@ exports.getMasterData = async (req, res) => {
 
     console.log(`[SYNC] getMasterData → settings: ${formattedSettings.length}, categories: ${categories.length}, products: ${products.length}, users: ${users.length}, customers: ${customers.length}, suppliers: ${suppliers.length}, packages: ${packages.length}, addons: ${addons.length}`);
 
+    const supportsPartialSync = req.get('X-LitePOS-Sync-Version') === '2';
+    if (syncWarnings.length > 0 && !supportsPartialSync) {
+      return res.status(409).json({
+        success: false,
+        error: 'Sebagian data lokal belum dapat diproses. Perbarui aplikasi Android lalu ulangi sinkronisasi.',
+        warnings: syncWarnings
+      });
+    }
+
     res.json({
       success: true,
       data: {
