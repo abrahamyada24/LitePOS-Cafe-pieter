@@ -10,6 +10,7 @@ import { useStore } from '../store/useStore';
 import RNFS from 'react-native-fs';
 import { resolveApiAssetUrl } from '../services/api';
 import { closeConfiguredPrinter, connectConfiguredPrinter } from '../utils/printerConnection';
+import ProductDiscountFields from '../components/ProductDiscountFields';
 
 const formatRp = (num: number) => 'Rp ' + (Math.round(num) || 0).toLocaleString('id-ID');
 
@@ -35,6 +36,7 @@ export default function ProductListScreen({ navigation }: any) {
     const [productAddons, setProductAddons] = useState<any[]>([]);
     const [newAddonName, setNewAddonName] = useState('');
     const [newAddonPrice, setNewAddonPrice] = useState('');
+    const [productDiscount, setProductDiscount] = useState<any>({ active: false, type: 'PERCENT', value: '', label: '', startAt: '', endAt: '', startTime: '', endTime: '', days: '' });
 
     const loadData = useCallback(async () => {
         try {
@@ -66,6 +68,7 @@ export default function ProductListScreen({ navigation }: any) {
         setEnableCostPrice(false); setProductStock(''); setProductCategoryId('');
         setProductImageUrl(''); setIsUnlimitedStock(false); setProductBarcode('');
         setProductAddons([]); setNewAddonName(''); setNewAddonPrice('');
+        setProductDiscount({ active: false, type: 'PERCENT', value: '', label: '', startAt: '', endAt: '', startTime: '', endTime: '', days: '' });
     };
 
     const openAdd = () => { resetForm(); setShowModal(true); };
@@ -81,6 +84,7 @@ export default function ProductListScreen({ navigation }: any) {
         setProductImageUrl(prod.imageUrl || '');
         setIsUnlimitedStock(prod.isUnlimitedStock === 1);
         setProductBarcode(prod.barcode || '');
+        setProductDiscount({ active: prod.discountActive === 1, type: prod.discountType || 'PERCENT', value: (prod.discountValue || '').toString(), label: prod.discountLabel || '', startAt: prod.discountStartAt ? String(prod.discountStartAt).slice(0, 10) : '', endAt: prod.discountEndAt ? String(prod.discountEndAt).slice(0, 10) : '', startTime: prod.discountStartTime || '', endTime: prod.discountEndTime || '', days: prod.discountDays || '' });
         try {
             const db = await getDBConnection();
             const [aRes] = await db.executeSql('SELECT * FROM product_addons WHERE productId = ? ORDER BY id', [prod.id]);
@@ -117,16 +121,17 @@ export default function ProductListScreen({ navigation }: any) {
                             const isUnlimited = isUnlimitedStock ? 1 : 0;
                             const enableCost = enableCostPrice ? 1 : 0;
                             const barcode = productBarcode.trim() || null;
+                            const discountValues = [productDiscount.active ? 1 : 0, productDiscount.type, parseFloat(productDiscount.value || '0'), productDiscount.startAt || null, productDiscount.endAt || null, productDiscount.startTime || null, productDiscount.endTime || null, productDiscount.days || null, productDiscount.label || null];
 
                             if (editing) {
                                 await db.executeSql(
-                                    'UPDATE products SET name=?, price=?, costPrice=?, enableCostPrice=?, stock=?, categoryId=?, imageUrl=?, isUnlimitedStock=?, barcode=?, isSynced=0 WHERE id=?',
-                                    [productName, price, costPrice, enableCost, stock, catId, img, isUnlimited, barcode, editing.id]
+                                    'UPDATE products SET name=?, price=?, costPrice=?, enableCostPrice=?, stock=?, categoryId=?, imageUrl=?, isUnlimitedStock=?, barcode=?, discountActive=?, discountType=?, discountValue=?, discountStartAt=?, discountEndAt=?, discountStartTime=?, discountEndTime=?, discountDays=?, discountLabel=?, isSynced=0 WHERE id=?',
+                                    [productName, price, costPrice, enableCost, stock, catId, img, isUnlimited, barcode, ...discountValues, editing.id]
                                 );
                             } else {
                                 const [insertRes] = await db.executeSql(
-                                    'INSERT INTO products (name, price, costPrice, enableCostPrice, stock, categoryId, imageUrl, isUnlimitedStock, barcode) VALUES (?,?,?,?,?,?,?,?,?)',
-                                    [productName, price, costPrice, enableCost, stock, catId, img, isUnlimited, barcode]
+                                    'INSERT INTO products (name, price, costPrice, enableCostPrice, stock, categoryId, imageUrl, isUnlimitedStock, barcode, discountActive, discountType, discountValue, discountStartAt, discountEndAt, discountStartTime, discountEndTime, discountDays, discountLabel) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                                    [productName, price, costPrice, enableCost, stock, catId, img, isUnlimited, barcode, ...discountValues]
                                 );
                                 // Save buffered addons
                                 for (const a of productAddons.filter(x => x.local)) {
@@ -389,6 +394,8 @@ export default function ProductListScreen({ navigation }: any) {
                                     </View>
                                 )}
                             </View>
+
+                            <ProductDiscountFields values={productDiscount} onChange={setProductDiscount} />
 
                             {/* Stock */}
                             <View style={tw`bg-gray-50 dark:bg-gray-900 rounded-xl p-4 mb-4`}>

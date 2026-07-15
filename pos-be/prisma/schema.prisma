@@ -87,21 +87,30 @@ model Category {
 }
 
 model Product {
-  id               Int     @id @default(autoincrement())
-  androidId        Int?    @unique @map("android_id")
-  categoryId       Int     @map("category_id")
-  sku              String  @unique @db.VarChar(50)
-  name             String  @db.VarChar(255)
-  imageUrl         String? @map("image_url") @db.Text
-  barcode          String? @db.VarChar(100)
-  displayType      String  @default("normal") @map("display_type")
-  price            Decimal @db.Decimal(15, 2)
-  costPrice        Decimal @default(0) @map("cost_price") @db.Decimal(15, 2)
-  stock            Int     @default(0)
-  minStock         Int     @default(0) @map("min_stock")
-  isActive         Boolean @default(true) @map("is_active")
-  isUnlimitedStock Boolean @default(false) @map("is_unlimited_stock")
-  enableCostPrice  Boolean @default(false) @map("enable_cost_price")
+  id                Int       @id @default(autoincrement())
+  androidId         Int?      @unique @map("android_id")
+  categoryId        Int       @map("category_id")
+  sku               String    @unique @db.VarChar(50)
+  name              String    @db.VarChar(255)
+  imageUrl          String?   @map("image_url") @db.Text
+  barcode           String?   @db.VarChar(100)
+  displayType       String    @default("normal") @map("display_type")
+  price             Decimal   @db.Decimal(15, 2)
+  costPrice         Decimal   @default(0) @map("cost_price") @db.Decimal(15, 2)
+  stock             Int       @default(0)
+  minStock          Int       @default(0) @map("min_stock")
+  isActive          Boolean   @default(true) @map("is_active")
+  isUnlimitedStock  Boolean   @default(false) @map("is_unlimited_stock")
+  enableCostPrice   Boolean   @default(false) @map("enable_cost_price")
+  discountActive    Boolean   @default(false) @map("discount_active")
+  discountType      String?   @map("discount_type") @db.VarChar(20)
+  discountValue     Decimal   @default(0) @map("discount_value") @db.Decimal(15, 2)
+  discountStartAt   DateTime? @map("discount_start_at")
+  discountEndAt     DateTime? @map("discount_end_at")
+  discountStartTime String?   @map("discount_start_time") @db.VarChar(5)
+  discountEndTime   String?   @map("discount_end_time") @db.VarChar(5)
+  discountDays      String?   @map("discount_days") @db.VarChar(30)
+  discountLabel     String?   @map("discount_label") @db.VarChar(100)
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -164,16 +173,18 @@ model Transaction {
 }
 
 model TransactionItem {
-  id            Int         @id @default(autoincrement())
-  transactionId Int         @map("transaction_id")
-  productId     Int         @map("product_id")
-  qty           Int
-  price         Decimal     @db.Decimal(15, 2)
-  costPrice     Decimal     @default(0) @map("cost_price") @db.Decimal(15, 2)
-  notes         String?     @db.Text
-  createdAt     DateTime    @default(now()) @map("created_at")
-  transaction   Transaction @relation(fields: [transactionId], references: [id])
-  product       Product     @relation(fields: [productId], references: [id])
+  id             Int         @id @default(autoincrement())
+  transactionId  Int         @map("transaction_id")
+  productId      Int         @map("product_id")
+  qty            Int
+  price          Decimal     @db.Decimal(15, 2)
+  originalPrice  Decimal     @default(0) @map("original_price") @db.Decimal(15, 2)
+  discountAmount Decimal     @default(0) @map("discount_amount") @db.Decimal(15, 2)
+  costPrice      Decimal     @default(0) @map("cost_price") @db.Decimal(15, 2)
+  notes          String?     @db.Text
+  createdAt      DateTime    @default(now()) @map("created_at")
+  transaction    Transaction @relation(fields: [transactionId], references: [id])
+  product        Product     @relation(fields: [productId], references: [id])
 
   @@map("transaction_items")
 }
@@ -205,29 +216,29 @@ model StockMovement {
 }
 
 model StoreSetting {
-  id                    Int      @id @default(autoincrement())
-  storeName             String   @default("My POS Store") @map("store_name")
-  logoUrl               String?  @map("logo_url") @db.Text
-  address               String?  @db.Text
-  phone                 String?  @db.VarChar(20)
-  email                 String?  @db.VarChar(255)
-  website               String?  @db.VarChar(255)
-  enableCash            Boolean  @default(true) @map("enable_cash")
-  enableQris            Boolean  @default(false) @map("enable_qris")
-  enableDebit           Boolean  @default(false) @map("enable_debit")
-  taxRate               Decimal  @default(0) @map("tax_rate") @db.Decimal(5, 2)
-  serviceCharge         Decimal  @default(0) @map("service_charge") @db.Decimal(5, 2)
-  autoPrintReceipt      Boolean  @default(true) @map("auto_print_receipt")
-  receiptFooter         String?  @map("receipt_footer") @db.Text
-  enablePreOrder        Boolean  @default(false) @map("enable_pre_order")
-  enableShift           Boolean  @default(true) @map("enable_shift")
-  enableDineTable       Boolean  @default(false) @map("enable_dine_table")
-  enableTableOrder      Boolean  @default(false) @map("enable_table_order")
-  takeawayOptions       String?  @map("takeaway_options") @db.Text
-  allowNegativeStock    Boolean  @default(false) @map("allow_negative_stock")
-  showImages            Boolean  @default(true) @map("show_images")
-  theme                 String   @default("light") @db.VarChar(20)
-  updatedAt             DateTime @updatedAt @map("updated_at")
+  id                 Int      @id @default(autoincrement())
+  storeName          String   @default("My POS Store") @map("store_name")
+  logoUrl            String?  @map("logo_url") @db.Text
+  address            String?  @db.Text
+  phone              String?  @db.VarChar(20)
+  email              String?  @db.VarChar(255)
+  website            String?  @db.VarChar(255)
+  enableCash         Boolean  @default(true) @map("enable_cash")
+  enableQris         Boolean  @default(false) @map("enable_qris")
+  enableDebit        Boolean  @default(false) @map("enable_debit")
+  taxRate            Decimal  @default(0) @map("tax_rate") @db.Decimal(5, 2)
+  serviceCharge      Decimal  @default(0) @map("service_charge") @db.Decimal(5, 2)
+  autoPrintReceipt   Boolean  @default(true) @map("auto_print_receipt")
+  receiptFooter      String?  @map("receipt_footer") @db.Text
+  enablePreOrder     Boolean  @default(false) @map("enable_pre_order")
+  enableShift        Boolean  @default(true) @map("enable_shift")
+  enableDineTable    Boolean  @default(false) @map("enable_dine_table")
+  enableTableOrder   Boolean  @default(false) @map("enable_table_order")
+  takeawayOptions    String?  @map("takeaway_options") @db.Text
+  allowNegativeStock Boolean  @default(false) @map("allow_negative_stock")
+  showImages         Boolean  @default(true) @map("show_images")
+  theme              String   @default("light") @db.VarChar(20)
+  updatedAt          DateTime @updatedAt @map("updated_at")
 
   @@map("store_settings")
 }
@@ -315,27 +326,55 @@ model StockReceiptItem {
 }
 
 model ProductAddon {
-  id         Int     @id @default(autoincrement())
-  androidId  Int?    @unique @map("android_id")
-  productId  Int     @map("product_id")
-  name       String  @db.VarChar(255)
-  price      Decimal @default(0) @db.Decimal(15, 2)
-  product    Product @relation(fields: [productId], references: [id])
+  id        Int     @id @default(autoincrement())
+  androidId Int?    @unique @map("android_id")
+  productId Int     @map("product_id")
+  name      String  @db.VarChar(255)
+  price     Decimal @default(0) @db.Decimal(15, 2)
+  product   Product @relation(fields: [productId], references: [id])
 
   @@map("product_addons")
 }
 
 model DineTable {
-  id         Int      @id @default(autoincrement())
-  androidId  Int?     @unique @map("android_id")
-  number     String   @unique @db.VarChar(20)
-  name       String?  @db.VarChar(100)
-  capacity   Int      @default(4)
-  status     String   @default("AVAILABLE") @db.VarChar(20)
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  id              Int       @id @default(autoincrement())
+  androidId       Int?      @unique @map("android_id")
+  number          String    @unique @db.VarChar(20)
+  name            String?   @db.VarChar(100)
+  capacity        Int       @default(4)
+  status          String    @default("AVAILABLE") @db.VarChar(20)
+  occupiedAt      DateTime? @map("occupied_at")
+  statusUpdatedAt DateTime  @default(now()) @map("status_updated_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
 
   @@map("dine_tables")
+}
+
+model KitchenOrder {
+  id            String    @id @default(uuid())
+  source        String    @default("POS") @db.VarChar(20)
+  orderCode     String    @unique @map("order_code") @db.VarChar(100)
+  queueDate     String    @map("queue_date") @db.VarChar(10)
+  queueNumber   Int       @map("queue_number")
+  queueLabel    String    @map("queue_label") @db.VarChar(20)
+  tableNumber   String?   @map("table_number") @db.VarChar(20)
+  customerName  String?   @map("customer_name") @db.VarChar(255)
+  note          String?   @db.Text
+  total         Decimal   @default(0) @db.Decimal(15, 2)
+  itemsJson     String    @map("items_json") @db.LongText
+  status        String    @default("NEW") @db.VarChar(20)
+  transactionId Int?      @map("transaction_id")
+  savedOrderId  String?   @map("saved_order_id") @db.VarChar(191)
+  createdAt     DateTime  @default(now()) @map("created_at")
+  startedAt     DateTime? @map("started_at")
+  readyAt       DateTime? @map("ready_at")
+  completedAt   DateTime? @map("completed_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@index([queueDate, queueNumber])
+  @@index([status, createdAt])
+  @@map("kitchen_orders")
 }
 
 model Package {
@@ -353,26 +392,26 @@ model Package {
 }
 
 model PackageItem {
-  id        Int     @id @default(autoincrement())
-  packageId Int     @map("package_id")
-  productId Int     @map("product_id")
-  qty       Int     @default(1)
-  
-  package   Package @relation(fields: [packageId], references: [id])
-  product   Product @relation(fields: [productId], references: [id])
+  id        Int @id @default(autoincrement())
+  packageId Int @map("package_id")
+  productId Int @map("product_id")
+  qty       Int @default(1)
+
+  package Package @relation(fields: [packageId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
 
   @@map("package_items")
 }
 
 model Supplier {
-  id         Int      @id @default(autoincrement())
-  androidId  Int?     @unique @map("android_id")
-  name       String   @db.VarChar(255)
-  phone      String?  @db.VarChar(20)
-  address    String?  @db.Text
-  notes      String?  @db.Text
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  id        Int      @id @default(autoincrement())
+  androidId Int?     @unique @map("android_id")
+  name      String   @db.VarChar(255)
+  phone     String?  @db.VarChar(20)
+  address   String?  @db.Text
+  notes     String?  @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("suppliers")
 }

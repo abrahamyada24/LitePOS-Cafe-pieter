@@ -309,8 +309,8 @@ export default function CheckoutScreen({ navigation }: any) {
 
             for (const item of cart) {
                 await db.executeSql(
-                    `INSERT INTO transaction_items (transactionId, productId, quantity, price, costPrice, notes) VALUES (?, ?, ?, ?, ?, ?)`,
-                    [trxId, item.id, item.quantity, item.price, item.costPrice || 0, item.notes || null]
+                    `INSERT INTO transaction_items (transactionId, productId, quantity, price, originalPrice, discountAmount, costPrice, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [trxId, item.id, item.quantity, item.price, item.originalPrice || item.price, item.discountAmount || 0, item.costPrice || 0, item.notes || null]
                 );
                 if (item.isUnlimitedStock !== 1) {
                     await db.executeSql(`UPDATE products SET stock = stock - ? WHERE id = ?`, [item.quantity, item.id]);

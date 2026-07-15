@@ -3,6 +3,7 @@
 import { Search, Utensils, LogOut } from 'lucide-react';
 import { showAlert } from '@/utils/swal';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 
 export default function Header({ search, setSearch, currentUser }) {
     const router = useRouter();
@@ -24,13 +25,13 @@ export default function Header({ search, setSearch, currentUser }) {
     return (
         <header className="h-16 lg:h-20 px-4 lg:px-6 flex items-center justify-between flex-shrink-0 bg-white border-b border-gray-100 shadow-sm z-20">
             <div className="flex items-center gap-3 lg:gap-4 w-full">
-                <div className="w-8 h-8 lg:w-10 lg:h-10 flex items-center justify-center flex-shrink-0">
+                <Link href="/" className="w-8 h-8 lg:w-10 lg:h-10 flex items-center justify-center flex-shrink-0" title="Kembali ke dashboard">
                     <img src="/logo.png" alt="Logo" className="w-full h-full object-contain" />
-                </div>
-                <div className="hidden lg:block">
+                </Link>
+                <Link href="/" className="hidden lg:block" title="Kembali ke dashboard">
                     <h1 className="text-xl font-bold leading-none tracking-tight">POS System</h1>
                     <p className="text-xs text-gray-400 font-medium mt-1">LitePOS</p>
-                </div>
+                </Link>
 
                 <div className="relative group flex-1 max-w-[200px] lg:max-w-xs ml-auto">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />

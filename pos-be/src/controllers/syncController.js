@@ -285,7 +285,16 @@ exports.pushLocalData = async (req, res) => {
                             costPrice: Number(prod.costPrice || 0),
                             stock: Number(prod.stock || 0),
                             isActive: true,
-                            isUnlimitedStock: Boolean(prod.isUnlimitedStock)
+                            isUnlimitedStock: Boolean(prod.isUnlimitedStock),
+                            discountActive: prod.discountActive === true || Number(prod.discountActive) === 1,
+                            discountType: prod.discountType || null,
+                            discountValue: Number(prod.discountValue || 0),
+                            discountStartAt: prod.discountStartAt ? new Date(prod.discountStartAt) : null,
+                            discountEndAt: prod.discountEndAt ? new Date(prod.discountEndAt) : null,
+                            discountStartTime: prod.discountStartTime || null,
+                            discountEndTime: prod.discountEndTime || null,
+                            discountDays: prod.discountDays || null,
+                            discountLabel: prod.discountLabel || null
                         }
                     });
                     savedProducts++;
@@ -303,7 +312,16 @@ exports.pushLocalData = async (req, res) => {
                             stock: Number(prod.stock ?? serverProd.stock),
                             isUnlimitedStock: prod.isUnlimitedStock !== undefined ? Boolean(prod.isUnlimitedStock) : serverProd.isUnlimitedStock,
                             barcode: prod.barcode || serverProd.barcode,
-                            minStock: prod.minStock !== undefined ? Number(prod.minStock) : serverProd.minStock
+                            minStock: prod.minStock !== undefined ? Number(prod.minStock) : serverProd.minStock,
+                            discountActive: prod.discountActive !== undefined ? (prod.discountActive === true || Number(prod.discountActive) === 1) : serverProd.discountActive,
+                            discountType: prod.discountType !== undefined ? (prod.discountType || null) : serverProd.discountType,
+                            discountValue: prod.discountValue !== undefined ? Number(prod.discountValue || 0) : serverProd.discountValue,
+                            discountStartAt: prod.discountStartAt !== undefined ? (prod.discountStartAt ? new Date(prod.discountStartAt) : null) : serverProd.discountStartAt,
+                            discountEndAt: prod.discountEndAt !== undefined ? (prod.discountEndAt ? new Date(prod.discountEndAt) : null) : serverProd.discountEndAt,
+                            discountStartTime: prod.discountStartTime !== undefined ? (prod.discountStartTime || null) : serverProd.discountStartTime,
+                            discountEndTime: prod.discountEndTime !== undefined ? (prod.discountEndTime || null) : serverProd.discountEndTime,
+                            discountDays: prod.discountDays !== undefined ? (prod.discountDays || null) : serverProd.discountDays,
+                            discountLabel: prod.discountLabel !== undefined ? (prod.discountLabel || null) : serverProd.discountLabel
                         }
                     });
                     savedProducts++;
@@ -388,6 +406,8 @@ exports.pushLocalData = async (req, res) => {
                   productId: serverProductId,
                   qty: parseInt(item.quantity) || 1,
                   price: Number(item.price),
+                  originalPrice: Number(item.originalPrice || item.price || 0),
+                  discountAmount: Number(item.discountAmount || 0),
                   costPrice: 0,
                   notes: item.notes || null,
               };
@@ -649,6 +669,12 @@ exports.pushLocalData = async (req, res) => {
         for (const pkg of pushPackages) {
             try {
                 let serverPkg = await prisma.package.findUnique({ where: { androidId: pkg.id }});
+                if (!serverPkg && pkg.serverId) {
+                    serverPkg = await prisma.package.findUnique({ where: { id: parseInt(pkg.serverId) } });
+                    if (serverPkg && serverPkg.androidId === null) {
+                        serverPkg = await prisma.package.update({ where: { id: serverPkg.id }, data: { androidId: pkg.id } });
+                    }
+                }
                 if (!serverPkg) {
                     serverPkg = await prisma.package.create({
                         data: {
@@ -656,7 +682,7 @@ exports.pushLocalData = async (req, res) => {
                             name: pkg.name,
                             description: pkg.description || null,
                             price: Number(pkg.price),
-                            isActive: Boolean(pkg.isActive)
+                            isActive: pkg.isActive === true || Number(pkg.isActive) === 1
                         }
                     });
                     savedPackages++;
@@ -667,12 +693,13 @@ exports.pushLocalData = async (req, res) => {
                             name: pkg.name || serverPkg.name,
                             description: pkg.description || serverPkg.description,
                             price: Number(pkg.price),
-                            isActive: Boolean(pkg.isActive)
+                            isActive: pkg.isActive === true || Number(pkg.isActive) === 1
                         }
                     });
                 }
-                // Process package items
+                // Samakan isi paket agar item yang dihapus di Android ikut hilang di web.
                 if (pkg.items && Array.isArray(pkg.items)) {
+                    const mappedItems = [];
                     for (const item of pkg.items) {
                         let serverProductId = item.serverProductId ? parseInt(item.serverProductId) : null;
                         if (!serverProductId) {
@@ -683,24 +710,16 @@ exports.pushLocalData = async (req, res) => {
                                 serverProductId = product ? product.id : parsedProdId;
                             }
                         }
-                        const existingItem = await prisma.packageItem.findFirst({
-                            where: { packageId: serverPkg.id, productId: serverProductId }
-                        });
-                        if (!existingItem) {
-                            await prisma.packageItem.create({
-                                data: {
-                                    packageId: serverPkg.id,
-                                    productId: serverProductId,
-                                    qty: parseInt(item.quantity) || 1
-                                }
-                            });
-                        } else {
-                            await prisma.packageItem.update({
-                                where: { id: existingItem.id },
-                                data: { qty: parseInt(item.quantity) || 1 }
-                            });
-                        }
+                        const productExists = serverProductId
+                            ? await prisma.product.findUnique({ where: { id: serverProductId }, select: { id: true } })
+                            : null;
+                        if (!productExists) throw new Error(`Produk paket ${item.productId} tidak ditemukan di server.`);
+                        mappedItems.push({ packageId: serverPkg.id, productId: serverProductId, qty: parseInt(item.quantity) || 1 });
                     }
+                    await prisma.$transaction([
+                        prisma.packageItem.deleteMany({ where: { packageId: serverPkg.id } }),
+                        ...mappedItems.map(data => prisma.packageItem.create({ data }))
+                    ]);
                 }
                 packageIdMap.push({ androidId: pkg.id, serverId: serverPkg.id });
             } catch(e) { addSyncWarning('package', pkg.id, e); }

@@ -1,6 +1,6 @@
 "use client";
 import React, { useEffect, useState } from 'react';
-import { UtensilsCrossed, Plus, Trash2, Loader2, Edit2, QrCode } from 'lucide-react';
+import { UtensilsCrossed, Plus, Trash2, Loader2, Edit2, QrCode, Clock3, UserRoundCheck, Sparkles } from 'lucide-react';
 import { useStore } from '../../../store/useStore';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
@@ -10,6 +10,13 @@ const STATUS_COLORS = {
     OCCUPIED: 'bg-red-100 text-red-700 border-red-200',
     RESERVED: 'bg-yellow-100 text-yellow-700 border-yellow-200',
     CLEANING: 'bg-blue-100 text-blue-700 border-blue-200'
+};
+
+const STATUS_LABELS = {
+    AVAILABLE: 'Tersedia',
+    OCCUPIED: 'Terisi',
+    RESERVED: 'Reservasi',
+    CLEANING: 'Dibersihkan'
 };
 
 export default function TablesPage() {
@@ -23,17 +30,21 @@ export default function TablesPage() {
     const getToken = () => typeof window !== 'undefined' ? localStorage.getItem('token') : '';
     const headers = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` });
 
-    const loadTables = async () => {
-        setLoading(true);
+    const loadTables = async (silent = false) => {
+        if (!silent) setLoading(true);
         try {
             const res = await fetch(`${API_URL}/api/tables`, { headers: headers() });
             const data = await res.json();
             if (data.success) setTables(data.data);
         } catch (e) { console.error(e); }
-        setLoading(false);
+        if (!silent) setLoading(false);
     };
 
-    useEffect(() => { loadTables(); }, []);
+    useEffect(() => {
+        loadTables();
+        const interval = setInterval(() => loadTables(true), 15000);
+        return () => clearInterval(interval);
+    }, []);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -55,11 +66,30 @@ export default function TablesPage() {
         } catch (e) { console.error(e); }
     };
 
-    const handleStatusChange = async (id, status) => {
+    const handleStatusChange = async (id, status, currentStatus) => {
+        if (currentStatus === 'OCCUPIED' && status === 'AVAILABLE') {
+            const confirmed = window.confirm('Meja masih terisi. Yakin tandai langsung Tersedia tanpa proses dibersihkan?');
+            if (!confirmed) return;
+        }
         try {
             await fetch(`${API_URL}/api/tables/${id}/status`, { method: 'PATCH', headers: headers(), body: JSON.stringify({ status }) });
             loadTables();
         } catch (e) { console.error(e); }
+    };
+
+    const formatElapsed = (value) => {
+        if (!value) return null;
+        const minutes = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60000));
+        if (minutes < 60) return `${minutes} menit`;
+        const hours = Math.floor(minutes / 60);
+        return `${hours} jam ${minutes % 60} menit`;
+    };
+
+    const getPrimaryAction = (table) => {
+        if (table.status === 'OCCUPIED') return { label: 'Pelanggan selesai', status: 'CLEANING', icon: UserRoundCheck };
+        if (table.status === 'CLEANING') return { label: 'Selesai dibersihkan', status: 'AVAILABLE', icon: Sparkles };
+        if (table.status === 'RESERVED') return { label: 'Tamu datang', status: 'OCCUPIED', icon: UserRoundCheck };
+        return null;
     };
 
     const openEdit = (table) => {
@@ -95,7 +125,7 @@ export default function TablesPage() {
                 {['AVAILABLE', 'OCCUPIED', 'RESERVED', 'CLEANING'].map(s => (
                     <div key={s} className="flex items-center gap-2">
                         <span className={`w-3 h-3 rounded-full ${s === 'AVAILABLE' ? 'bg-green-500' : s === 'OCCUPIED' ? 'bg-red-500' : s === 'RESERVED' ? 'bg-yellow-500' : 'bg-blue-500'}`}></span>
-                        <span className="text-xs font-medium text-gray-600">{s} ({tables.filter(t => t.status === s).length})</span>
+                        <span className="text-xs font-medium text-gray-600">{STATUS_LABELS[s]} ({tables.filter(t => t.status === s).length})</span>
                     </div>
                 ))}
             </div>
@@ -120,9 +150,13 @@ export default function TablesPage() {
             ) : tables.length === 0 ? (
                 <div className="text-center py-20 text-gray-400 bg-white rounded-2xl border border-gray-100"><UtensilsCrossed size={48} className="mx-auto mb-3 opacity-50" /><p className="font-medium">Belum ada meja. Klik "Tambah Meja" untuk memulai.</p></div>
             ) : (
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                    {tables.map(t => (
-                        <div key={t.id} className={`rounded-2xl border-2 p-5 transition-all hover:shadow-lg ${STATUS_COLORS[t.status] || 'bg-gray-50 border-gray-200'}`}>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    {tables.map(t => {
+                        const primaryAction = getPrimaryAction(t);
+                        const PrimaryIcon = primaryAction?.icon;
+                        const elapsed = formatElapsed(t.occupiedAt || t.statusUpdatedAt);
+                        return (
+                        <div key={t.id} className={`rounded-lg border-2 p-5 transition-all hover:shadow-lg ${STATUS_COLORS[t.status] || 'bg-gray-50 border-gray-200'}`}>
                             <div className="flex items-center justify-between mb-3">
                                 <span className="text-2xl font-black">{t.number}</span>
                                 <div className="flex gap-1">
@@ -131,13 +165,26 @@ export default function TablesPage() {
                                 </div>
                             </div>
                             {t.name && <p className="text-xs font-medium mb-2 opacity-80">{t.name}</p>}
-                            <p className="text-xs opacity-70 mb-3">{t.capacity} kursi</p>
-                            <select value={t.status} onChange={e => handleStatusChange(t.id, e.target.value)} className="w-full text-xs font-bold rounded-lg px-2 py-1.5 bg-white/60 border-none outline-none cursor-pointer">
-                                <option value="AVAILABLE">Available</option>
-                                <option value="OCCUPIED">Occupied</option>
-                                <option value="RESERVED">Reserved</option>
-                                <option value="CLEANING">Cleaning</option>
+                            <div className="flex items-center justify-between gap-2 mb-3">
+                                <p className="text-xs opacity-70">{t.capacity} kursi</p>
+                                {t.status !== 'AVAILABLE' && elapsed && (
+                                    <span className="flex items-center gap-1 text-[10px] font-bold opacity-75"><Clock3 size={12} /> {elapsed}</span>
+                                )}
+                            </div>
+                            <select value={t.status} onChange={e => handleStatusChange(t.id, e.target.value, t.status)} className="w-full text-xs font-bold rounded-lg px-3 py-2 bg-white/70 border-none outline-none cursor-pointer">
+                                <option value="AVAILABLE">Tersedia</option>
+                                <option value="OCCUPIED">Terisi</option>
+                                <option value="RESERVED">Reservasi</option>
+                                <option value="CLEANING">Dibersihkan</option>
                             </select>
+                            {primaryAction && (
+                                <button
+                                    onClick={() => handleStatusChange(t.id, primaryAction.status, t.status)}
+                                    className="mt-2 w-full h-10 rounded-lg bg-gray-950 text-white text-xs font-black flex items-center justify-center gap-2 hover:bg-gray-800"
+                                >
+                                    <PrimaryIcon size={15} /> {primaryAction.label}
+                                </button>
+                            )}
                             {enableTableOrder && (
                                 <button
                                     onClick={() => copyTableOrderLink(t.number)}
@@ -147,7 +194,7 @@ export default function TablesPage() {
                                 </button>
                             )}
                         </div>
-                    ))}
+                    );})}
                 </div>
             )}
         </div>

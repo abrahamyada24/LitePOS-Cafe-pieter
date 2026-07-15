@@ -1,9 +1,14 @@
 import { create } from 'zustand';
 
 export interface CartItem {
-    id: number;
+    id: number | string;
     name: string;
     price: number;
+    originalPrice?: number;
+    discountAmount?: number;
+    discountLabel?: string;
+    isDiscountActive?: boolean;
+    packageId?: number;
     costPrice?: number;
     quantity: number;
     notes?: string;

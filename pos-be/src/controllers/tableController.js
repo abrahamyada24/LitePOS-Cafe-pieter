@@ -1,6 +1,16 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
+const getStatusUpdate = (status, currentTable) => ({
+    status,
+    statusUpdatedAt: new Date(),
+    occupiedAt: status === 'OCCUPIED'
+        ? (currentTable?.occupiedAt || new Date())
+        : status === 'AVAILABLE' || status === 'RESERVED'
+            ? null
+            : currentTable?.occupiedAt || null
+});
+
 // 1. GET ALL TABLES
 exports.getAllTables = async (req, res) => {
     try {
@@ -52,7 +62,10 @@ exports.updateTable = async (req, res) => {
         if (number) updateData.number = number;
         if (name !== undefined) updateData.name = name;
         if (capacity) updateData.capacity = parseInt(capacity);
-        if (status) updateData.status = status;
+        if (status) {
+            const currentTable = await prisma.dineTable.findUnique({ where: { id: parseInt(id) } });
+            Object.assign(updateData, getStatusUpdate(status, currentTable));
+        }
 
         const table = await prisma.dineTable.update({
             where: { id: parseInt(id) },
@@ -90,9 +103,14 @@ exports.updateTableStatus = async (req, res) => {
             });
         }
 
+        const currentTable = await prisma.dineTable.findUnique({ where: { id: parseInt(id) } });
+        if (!currentTable) {
+            return res.status(404).json({ success: false, message: 'Meja tidak ditemukan' });
+        }
+
         const table = await prisma.dineTable.update({
             where: { id: parseInt(id) },
-            data: { status }
+            data: getStatusUpdate(status, currentTable)
         });
 
         res.json({ success: true, message: "Status meja berhasil diperbarui", data: table });

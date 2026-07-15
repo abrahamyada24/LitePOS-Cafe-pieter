@@ -127,6 +127,15 @@ export default function ProductsPage() {
         data.append('isActive', formData.status === 'active');
         data.append('isUnlimitedStock', formData.isUnlimitedStock === true);
         data.append('displayType', formData.displayType);
+        data.append('discountActive', formData.discountActive === true);
+        data.append('discountType', formData.discountType || 'PERCENT');
+        data.append('discountValue', formData.discountValue || 0);
+        data.append('discountStartAt', formData.discountStartAt || '');
+        data.append('discountEndAt', formData.discountEndAt || '');
+        data.append('discountStartTime', formData.discountStartTime || '');
+        data.append('discountEndTime', formData.discountEndTime || '');
+        data.append('discountDays', Array.isArray(formData.discountDays) ? formData.discountDays.join(',') : '');
+        data.append('discountLabel', formData.discountLabel || '');
 
         if (formData.imageFile) {
             data.append('image', formData.imageFile);
@@ -224,6 +233,11 @@ export default function ProductsPage() {
                             <span className="px-2 py-1 bg-white/20 backdrop-blur-md text-white text-[10px] font-bold rounded-lg border border-white/20 uppercase tracking-wider">
                                 {item.category ? item.category.name : 'Umum'}
                             </span>
+                            {item.isDiscountActive && (
+                                <span className="px-2 py-1 bg-red-600 text-white text-[10px] font-bold rounded-lg uppercase">
+                                    {item.discountLabel || 'Promo'}
+                                </span>
+                            )}
                         </div>
 
                         {/* Hover Actions (Top Right) */}
@@ -236,7 +250,8 @@ export default function ProductsPage() {
                         <div className="absolute bottom-0 p-5 text-white w-full">
                             <h3 className="font-bold text-lg leading-tight truncate">{item.name}</h3>
                             <p className="text-gray-300 text-[10px] font-mono mb-2 opacity-80 uppercase">{item.sku}</p>
-                            <p className="text-blue-400 font-black text-xl">{formatRp(item.price)}</p>
+                            {item.isDiscountActive && <p className="text-gray-300 line-through text-xs">{formatRp(item.originalPrice || item.price)}</p>}
+                            <p className={`${item.isDiscountActive ? 'text-red-300' : 'text-blue-400'} font-black text-xl`}>{formatRp(item.effectivePrice ?? item.price)}</p>
                             <div className={`mt-2 inline-block px-2 py-0.5 rounded text-[10px] font-bold shadow-sm whitespace-nowrap ${getStockStatus(item).color}`}>
                                 {getStockStatus(item).label}
                             </div>

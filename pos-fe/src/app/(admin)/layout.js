@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Sidebar from "@/components/Sidebar";
 import AuthGuard from "@/components/AuthGuard";
+import Link from "next/link";
 
 export default function AdminLayout({ children }) {
   const [isMobileOpen, setIsMobileOpen] = useState(false);
@@ -17,7 +18,10 @@ export default function AdminLayout({ children }) {
 
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
           <div className="lg:hidden p-4 bg-white border-b border-gray-200 flex items-center justify-between">
-             <span className="font-bold text-gray-800">Menu</span>
+             <Link href="/" className="flex items-center gap-2 font-bold text-gray-800">
+               <img src="/logo.png" alt="LitePOS" className="w-8 h-8 object-contain" />
+               LitePOS
+             </Link>
              <button 
                 onClick={() => setIsMobileOpen(true)}
                 className="p-2 bg-gray-100 rounded-lg text-gray-600"

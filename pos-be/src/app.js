@@ -44,6 +44,7 @@ const packageRoutes = require('./routes/packageRoutes');
 const supplierRoutes = require('./routes/supplierRoutes');
 const syncRoutes = require('./routes/syncRoutes');
 const catalogRoutes = require('./routes/catalogRoutes'); // Rute Katalog Publik
+const kitchenOrderRoutes = require('./routes/kitchenOrderRoutes');
 
 const app = express();
 const prisma = new PrismaClient();
@@ -117,6 +118,7 @@ app.use('/api/packages', packageRoutes);
 app.use('/api/suppliers', supplierRoutes);
 app.use('/api/sync', syncRoutes);
 app.use('/api/catalog', catalogRoutes); // Akses publik tanpa token
+app.use('/api/kitchen-orders', kitchenOrderRoutes);
 
 app.get('/', (req, res) => {
   res.json({ message: "LitePOS Backend Service is Running!", timestamp: new Date() });

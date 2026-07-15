@@ -52,6 +52,11 @@ const ProductCard = ({ product, addToCart, getImageUrl }) => {
                         <span className="text-white font-bold text-sm bg-red-500 px-2 py-1 rounded">HABIS</span>
                     </div>
                 )}
+                {product.isDiscountActive && (
+                    <span className="absolute top-2 right-2 px-2 py-1 rounded-md bg-red-600 text-white text-[9px] font-black uppercase">
+                        {product.discountLabel || 'Promo'}
+                    </span>
+                )}
             </div>
             <div className="flex-1 flex flex-col">
                 <p className="text-[9px] lg:text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-0.5 lg:mb-1">
@@ -59,9 +64,14 @@ const ProductCard = ({ product, addToCart, getImageUrl }) => {
                 </p>
                 <h3 className="font-bold text-gray-800 text-xs lg:text-sm leading-snug mb-1 lg:mb-2 line-clamp-2">{product.name}</h3>
                 <div className="mt-auto flex justify-between items-end">
-                    <p className="text-blue-600 font-bold text-sm lg:text-base">
-                        Rp {Number(product.price).toLocaleString('id-ID')}
-                    </p>
+                    <div>
+                        {product.isDiscountActive && (
+                            <p className="text-gray-400 line-through text-[9px]">Rp {Number(product.originalPrice).toLocaleString('id-ID')}</p>
+                        )}
+                        <p className={`${product.isDiscountActive ? 'text-red-600' : 'text-blue-600'} font-bold text-sm lg:text-base`}>
+                            Rp {Number(product.price).toLocaleString('id-ID')}
+                        </p>
+                    </div>
                     <span className={`text-[10px] font-medium ${product.stock < 5 && !product.isUnlimitedStock ? 'text-red-500' : 'text-gray-400'}`}>
                         Stok: {product.isUnlimitedStock ? '∞' : product.stock}
                     </span>

@@ -1,5 +1,21 @@
 const { PrismaClient } = require('@prisma/client');
+const { serializeProductPrice } = require('../utils/productDiscount');
 const prisma = new PrismaClient();
+
+const optionalDate = (value) => value ? new Date(value) : null;
+const parseDiscountData = (body) => ({
+  discountActive: body.discountActive === 'true' || body.discountActive === true || body.discountActive === 1,
+  discountType: ['PERCENT', 'NOMINAL'].includes(String(body.discountType || '').toUpperCase())
+    ? String(body.discountType).toUpperCase()
+    : null,
+  discountValue: Math.max(0, parseFloat(body.discountValue) || 0),
+  discountStartAt: optionalDate(body.discountStartAt),
+  discountEndAt: optionalDate(body.discountEndAt),
+  discountStartTime: body.discountStartTime || null,
+  discountEndTime: body.discountEndTime || null,
+  discountDays: Array.isArray(body.discountDays) ? body.discountDays.join(',') : (body.discountDays || null),
+  discountLabel: body.discountLabel || null
+});
 
 // Helper: Generate SKU Otomatis (Format: PROD-0001)
 const generateAutoSKU = async () => {
@@ -22,7 +38,7 @@ exports.getAllProducts = async (req, res) => {
       include: { category: true, addons: true },
       orderBy: { createdAt: 'desc' }
     });
-    res.json({ success: true, data: products });
+    res.json({ success: true, data: products.map(product => serializeProductPrice(product)) });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -61,7 +77,8 @@ exports.createProduct = async (req, res) => {
         barcode: barcode || null,
         isUnlimitedStock: isUnlimitedStock === 'true' || isUnlimitedStock === true,
         enableCostPrice: enableCostPrice === 'true' || enableCostPrice === true,
-        minStock: parseInt(minStock) || 0
+        minStock: parseInt(minStock) || 0,
+        ...parseDiscountData(req.body)
       }
     });
 
@@ -79,7 +96,7 @@ exports.createProduct = async (req, res) => {
       }
     }
 
-    res.status(201).json({ success: true, message: "Produk berhasil dibuat", data: product });
+    res.status(201).json({ success: true, message: "Produk berhasil dibuat", data: serializeProductPrice(product) });
   } catch (error) {
     console.error("CREATE ERROR:", error.message);
     res.status(500).json({ success: false, message: error.message });
@@ -111,6 +128,7 @@ exports.updateProduct = async (req, res) => {
     if (isUnlimitedStock !== undefined) updateData.isUnlimitedStock = isUnlimitedStock === 'true' || isUnlimitedStock === true;
     if (enableCostPrice !== undefined) updateData.enableCostPrice = enableCostPrice === 'true' || enableCostPrice === true;
     if (minStock !== undefined) updateData.minStock = parseInt(minStock) || 0;
+    if (req.body.discountActive !== undefined) Object.assign(updateData, parseDiscountData(req.body));
 
     // Handle upload gambar jika ada
     if (req.file) {
@@ -143,7 +161,7 @@ exports.updateProduct = async (req, res) => {
       }
     }
 
-    res.json({ success: true, message: "Produk berhasil diupdate", data: product });
+    res.json({ success: true, message: "Produk berhasil diupdate", data: serializeProductPrice(product) });
   } catch (error) {
     console.error("UPDATE ERROR:", error.message);
     res.status(500).json({ success: false, message: error.message });
@@ -182,7 +200,7 @@ exports.getProductByBarcode = async (req, res) => {
       return res.status(404).json({ success: false, message: "Produk tidak ditemukan dengan barcode tersebut" });
     }
 
-    res.json({ success: true, data: product });
+    res.json({ success: true, data: serializeProductPrice(product) });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -201,7 +219,7 @@ exports.getProductById = async (req, res) => {
       return res.status(404).json({ success: false, message: "Produk tidak ditemukan" });
     }
 
-    res.json({ success: true, data: product });
+    res.json({ success: true, data: serializeProductPrice(product) });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

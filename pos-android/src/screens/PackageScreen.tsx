@@ -112,7 +112,7 @@ export default function PackageScreen({ navigation }: any) {
 
             if (editing) {
                 await db.executeSql(
-                    'UPDATE packages SET name = ?, description = ?, price = ?, isActive = ? WHERE id = ?',
+                    'UPDATE packages SET name = ?, description = ?, price = ?, isActive = ?, isSynced = 0 WHERE id = ?',
                     [pkgName.trim(), pkgDesc.trim(), price, pkgActive ? 1 : 0, editing.id]
                 );
                 packageId = editing.id;

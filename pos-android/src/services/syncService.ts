@@ -119,14 +119,14 @@ export const syncService = {
                                 );
                             } else {
                                 await tx.executeSql(
-                                    'UPDATE products SET categoryId = ?, name = ?, price = ?, costPrice = ?, enableCostPrice = ?, stock = ?, imageUrl = ?, isUnlimitedStock = ?, barcode = ?, minStock = ?, serverId = ?, isSynced = 1 WHERE id = ?',
-                                    [localCategoryId, p.name, p.price, p.costPrice || 0, p.enableCostPrice ? 1 : 0, p.stock || 0, p.imageUrl, p.isUnlimitedStock ? 1 : 0, p.barcode, p.minStock || 0, p.id, localId]
+                                    'UPDATE products SET categoryId = ?, name = ?, price = ?, costPrice = ?, enableCostPrice = ?, stock = ?, imageUrl = ?, isUnlimitedStock = ?, barcode = ?, minStock = ?, discountActive = ?, discountType = ?, discountValue = ?, discountStartAt = ?, discountEndAt = ?, discountStartTime = ?, discountEndTime = ?, discountDays = ?, discountLabel = ?, serverId = ?, isSynced = 1 WHERE id = ?',
+                                    [localCategoryId, p.name, p.price, p.costPrice || 0, p.enableCostPrice ? 1 : 0, p.stock || 0, p.imageUrl, p.isUnlimitedStock ? 1 : 0, p.barcode, p.minStock || 0, p.discountActive ? 1 : 0, p.discountType || null, p.discountValue || 0, p.discountStartAt || null, p.discountEndAt || null, p.discountStartTime || null, p.discountEndTime || null, p.discountDays || null, p.discountLabel || null, p.id, localId]
                                 );
                             }
                         } else {
                             await tx.executeSql(
-                                'INSERT INTO products (categoryId, name, price, costPrice, enableCostPrice, stock, imageUrl, isUnlimitedStock, barcode, minStock, serverId, isSynced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)',
-                                [localCategoryId, p.name, p.price, p.costPrice || 0, p.enableCostPrice ? 1 : 0, p.stock || 0, p.imageUrl, p.isUnlimitedStock ? 1 : 0, p.barcode, p.minStock || 0, p.id]
+                                'INSERT INTO products (categoryId, name, price, costPrice, enableCostPrice, stock, imageUrl, isUnlimitedStock, barcode, minStock, discountActive, discountType, discountValue, discountStartAt, discountEndAt, discountStartTime, discountEndTime, discountDays, discountLabel, serverId, isSynced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)',
+                                [localCategoryId, p.name, p.price, p.costPrice || 0, p.enableCostPrice ? 1 : 0, p.stock || 0, p.imageUrl, p.isUnlimitedStock ? 1 : 0, p.barcode, p.minStock || 0, p.discountActive ? 1 : 0, p.discountType || null, p.discountValue || 0, p.discountStartAt || null, p.discountEndAt || null, p.discountStartTime || null, p.discountEndTime || null, p.discountDays || null, p.discountLabel || null, p.id]
                             );
                         }
                     }
@@ -183,10 +183,16 @@ export const syncService = {
                 // Packages — upsert by serverId
                 if (data.packages) {
                     for (const pk of data.packages) {
-                        const [checkRes] = await tx.executeSql('SELECT id FROM packages WHERE serverId = ? OR id = ?', [pk.id, pk.id]);
+                        const [checkRes] = await tx.executeSql('SELECT id, isSynced FROM packages WHERE serverId = ? OR id = ?', [pk.id, pk.androidId]);
                         if (checkRes.rows.length > 0) {
-                            const localId = checkRes.rows.item(0).id;
-                            await tx.executeSql('UPDATE packages SET name = ?, description = ?, price = ?, isActive = ?, serverId = ?, isSynced = 1 WHERE id = ?', [pk.name, pk.description, pk.price, pk.isActive ? 1 : 0, pk.id, localId]);
+                            const localPackage = checkRes.rows.item(0);
+                            if (Number(localPackage.isSynced) === 0) {
+                                if (Number(pk.androidId) === Number(localPackage.id)) {
+                                    await tx.executeSql('UPDATE packages SET serverId = COALESCE(serverId, ?) WHERE id = ?', [pk.id, localPackage.id]);
+                                }
+                            } else {
+                                await tx.executeSql('UPDATE packages SET name = ?, description = ?, price = ?, isActive = ?, serverId = ?, isSynced = 1 WHERE id = ?', [pk.name, pk.description, pk.price, pk.isActive ? 1 : 0, pk.id, localPackage.id]);
+                            }
                         } else {
                             await tx.executeSql('INSERT INTO packages (name, description, price, isActive, createdAt, serverId, isSynced) VALUES (?, ?, ?, ?, ?, ?, 1)', [pk.name, pk.description, pk.price, pk.isActive ? 1 : 0, new Date().toISOString(), pk.id]);
                         }
@@ -197,7 +203,8 @@ export const syncService = {
                 if (data.package_items) {
                     for (const pki of data.package_items) {
                         // Resolve packageId and productId to local IDs
-                        const [pkCheck] = await tx.executeSql('SELECT id FROM packages WHERE serverId = ? OR id = ?', [pki.packageId, pki.packageId]);
+                        const [pkCheck] = await tx.executeSql('SELECT id, isSynced FROM packages WHERE serverId = ?', [pki.packageId]);
+                        if (pkCheck.rows.length > 0 && Number(pkCheck.rows.item(0).isSynced) === 0) continue;
                         const localPackageId = pkCheck.rows.length > 0 ? pkCheck.rows.item(0).id : pki.packageId;
                         const [prodCheck] = await tx.executeSql('SELECT id FROM products WHERE serverId = ? OR id = ?', [pki.productId, pki.productId]);
                         const localProductId = prodCheck.rows.length > 0 ? prodCheck.rows.item(0).id : pki.productId;
@@ -474,7 +481,7 @@ export const syncService = {
             // Ambil packages + items
             let packages: any[] = [];
             try {
-                const [pkgRes] = await db.executeSql('SELECT * FROM packages WHERE isSynced = 0');
+                const [pkgRes] = await db.executeSql('SELECT * FROM packages');
                 for (let i = 0; i < pkgRes.rows.length; i++) {
                     const pkg = pkgRes.rows.item(i);
                     const [itemsRes] = await db.executeSql(`

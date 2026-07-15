@@ -1,5 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const midtransClient = require('midtrans-client');
+const { getProductPrice } = require('../utils/productDiscount');
+const { reserveQueue } = require('../utils/orderQueue');
 const prisma = new PrismaClient();
 
 // Inisialisasi Midtrans Snap
@@ -57,36 +59,99 @@ exports.createTransaction = async (req, res) => {
             let subTotal = 0;
             const transactionItemsData = [];
             const itemDetailsForMidtrans = [];
+            const kitchenItems = [];
+            const stockDeductions = new Map();
+            const addStockDeduction = (product, qty) => {
+                const current = stockDeductions.get(product.id);
+                stockDeductions.set(product.id, { product, qty: (current?.qty || 0) + qty });
+            };
 
             // Validasi produk dan hitung total
             for (const item of items) {
-                const product = await tx.product.findUnique({ where: { id: item.productId } });
+                const requestedQty = Math.max(1, parseInt(item.qty) || 1);
+                const packageId = parseInt(item.packageId) || (String(item.productId || '').startsWith('pkg-') ? parseInt(String(item.productId).replace('pkg-', '')) : null);
+
+                if (packageId) {
+                    const pkg = await tx.package.findUnique({
+                        where: { id: packageId },
+                        include: { items: { include: { product: true } } }
+                    });
+                    if (!pkg || !pkg.isActive || pkg.items.length === 0) throw new Error('Paket produk tidak tersedia.');
+
+                    const packagePrice = Number(pkg.price);
+                    subTotal += packagePrice * requestedQty;
+                    pkg.items.forEach((packageItem, index) => {
+                        const componentQty = packageItem.qty * requestedQty;
+                        addStockDeduction(packageItem.product, componentQty);
+                        transactionItemsData.push({
+                            productId: packageItem.productId,
+                            qty: componentQty,
+                            price: index === 0 ? packagePrice / packageItem.qty : 0,
+                            originalPrice: index === 0 ? packagePrice / packageItem.qty : 0,
+                            discountAmount: 0,
+                            costPrice: packageItem.product.costPrice,
+                            notes: `[Paket ${pkg.name}] ${item.notes || ''}`.trim()
+                        });
+                    });
+                    kitchenItems.push({
+                        packageId: pkg.id,
+                        name: `[Paket] ${pkg.name}`,
+                        qty: requestedQty,
+                        price: packagePrice,
+                        notes: item.notes || null,
+                        components: pkg.items.map(packageItem => ({ name: packageItem.product.name, qty: packageItem.qty }))
+                    });
+                    itemDetailsForMidtrans.push({ id: `PKG-${pkg.id}`, price: Math.round(packagePrice), quantity: requestedQty, name: pkg.name.substring(0, 50) });
+                    continue;
+                }
+
+                const product = await tx.product.findUnique({ where: { id: parseInt(item.productId) } });
 
                 if (!product || !product.isActive) {
                     throw new Error(`Produk tidak valid.`);
                 }
                 // Skip stock check for unlimited stock products
-                if (!product.isUnlimitedStock && product.stock < item.qty) {
+                if (!product.isUnlimitedStock && product.stock < requestedQty) {
                     throw new Error(`Stok ${product.name} tidak mencukupi.`);
                 }
 
-                const price = Number(product.price);
-                subTotal += price * item.qty;
+                const priceInfo = getProductPrice(product);
+                const price = priceInfo.effectivePrice;
+                subTotal += price * requestedQty;
+                addStockDeduction(product, requestedQty);
 
                 transactionItemsData.push({
                     productId: product.id,
-                    qty: item.qty,
-                    price: product.price,
+                    qty: requestedQty,
+                    price,
+                    originalPrice: priceInfo.originalPrice,
+                    discountAmount: priceInfo.discountAmount,
                     costPrice: product.costPrice,
+                    notes: item.notes || null
+                });
+
+                kitchenItems.push({
+                    productId: product.id,
+                    name: product.name,
+                    qty: requestedQty,
+                    price,
+                    originalPrice: priceInfo.originalPrice,
+                    discountAmount: priceInfo.discountAmount,
                     notes: item.notes || null
                 });
 
                 itemDetailsForMidtrans.push({
                     id: product.sku || product.id.toString(),
                     price: Math.round(price),
-                    quantity: item.qty,
+                    quantity: requestedQty,
                     name: product.name.substring(0, 50)
                 });
+            }
+
+            for (const { product, qty } of stockDeductions.values()) {
+                if (!product.isUnlimitedStock && product.stock < qty) {
+                    throw new Error(`Stok ${product.name} tidak mencukupi.`);
+                }
             }
 
             // Hitung pajak
@@ -137,16 +202,12 @@ exports.createTransaction = async (req, res) => {
 
             // HANYA KURANGI STOCK JIKA PAYMENT = CASH ATAU QRIS_MANUAL
             if (isInstantPayment) {
-                for (const item of items) {
-                    const product = await tx.product.findUnique({
-                        where: { id: item.productId }
-                    });
-
+                for (const { product, qty } of stockDeductions.values()) {
                     // Skip stock deduction for unlimited stock products
                     if (!product.isUnlimitedStock) {
                         await tx.product.update({
                             where: { id: product.id },
-                            data: { stock: product.stock - item.qty }
+                            data: { stock: product.stock - qty }
                         });
                     }
 
@@ -154,7 +215,7 @@ exports.createTransaction = async (req, res) => {
                         data: {
                             productId: product.id,
                             type: 'OUT',
-                            qty: item.qty,
+                            qty,
                             source: 'SALE',
                             description: `Penjualan ${payment.type} - ${invoiceNumber}`
                         }
@@ -193,6 +254,24 @@ exports.createTransaction = async (req, res) => {
                 include: { items: true, payments: true }
             });
 
+            let kitchenQueue = null;
+            if (isInstantPayment && (orderType || 'DINE_IN') !== 'PRE_ORDER') {
+                kitchenQueue = await reserveQueue(tx);
+                await tx.kitchenOrder.create({
+                    data: {
+                        source: 'POS',
+                        orderCode: invoiceNumber,
+                        ...kitchenQueue,
+                        tableNumber: tableNumber || null,
+                        customerName: customerName || null,
+                        note: note || null,
+                        total: grandTotal,
+                        itemsJson: JSON.stringify(kitchenItems),
+                        transactionId: newTransaction.id
+                    }
+                });
+            }
+
             // Loyalty points earning
             if (customerId && isInstantPayment) {
                 const loyaltyConfig = await tx.loyaltyConfig.findFirst({ where: { isActive: true } });
@@ -209,10 +288,19 @@ exports.createTransaction = async (req, res) => {
 
             // Update table status if dine-in
             if (orderType === 'DINE_IN' && tableNumber) {
-                await tx.dineTable.updateMany({
-                    where: { number: tableNumber },
-                    data: { status: 'OCCUPIED' }
-                });
+                const dineTable = await tx.dineTable.findUnique({ where: { number: tableNumber } });
+                if (dineTable) {
+                    await tx.dineTable.update({
+                        where: { id: dineTable.id },
+                        data: {
+                            status: 'OCCUPIED',
+                            occupiedAt: dineTable.occupiedAt || new Date(),
+                            statusUpdatedAt: dineTable.status === 'OCCUPIED'
+                                ? dineTable.statusUpdatedAt
+                                : new Date()
+                        }
+                    });
+                }
             }
 
             let midtransToken = null;
@@ -242,7 +330,7 @@ exports.createTransaction = async (req, res) => {
                 }
             }
 
-            return { ...newTransaction, midtransToken, midtransUrl };
+            return { ...newTransaction, ...kitchenQueue, midtransToken, midtransUrl };
         }, {
             timeout: 10000
         });
@@ -650,11 +738,11 @@ exports.returnTransaction = async (req, res) => {
                 });
             }
 
-            // Release table if it was dine-in
+            // Setelah transaksi dine-in selesai/retur, meja perlu dibersihkan sebelum dipakai lagi.
             if (transaction.orderType === 'DINE_IN' && transaction.tableNumber) {
                 await tx.dineTable.updateMany({
                     where: { number: transaction.tableNumber },
-                    data: { status: 'AVAILABLE' }
+                    data: { status: 'CLEANING', statusUpdatedAt: new Date() }
                 });
             }
         });

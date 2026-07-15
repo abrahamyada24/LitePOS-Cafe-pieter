@@ -8,6 +8,7 @@ import { getDBConnection } from '../database/db';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { Camera, CameraType } from 'react-native-camera-kit';
 import { printKitchenTicket } from '../utils/kitchenPrinter';
+import { applyProductDiscount } from '../utils/productDiscount';
 
 export default function POSScreen({ navigation, route }: any) {
     useAppColorScheme(tw);
@@ -201,7 +202,7 @@ export default function POSScreen({ navigation, route }: any) {
             const [prodResults] = await db.executeSql(prodQuery);
             const prods: any[] = [];
             for (let i = 0; i < prodResults.rows.length; i++) prods.push(prodResults.rows.item(i));
-            setProducts(prods);
+            setProducts(prods.map(applyProductDiscount));
 
             // Load local pending sales
             const [pendingRes] = await db.executeSql('SELECT * FROM saved_transactions ORDER BY createdAt DESC');
@@ -559,7 +560,7 @@ export default function POSScreen({ navigation, route }: any) {
             }
 
             if (pending.source === 'server') {
-                await api.delete(`/saved-transactions/${pending.id}`);
+                await api.delete(`/saved-transactions/${pending.id}?action=accepted`);
             } else {
                 const db = await getDBConnection();
                 await db.executeSql('DELETE FROM saved_transactions WHERE id = ?', [pending.id]);
@@ -616,7 +617,8 @@ export default function POSScreen({ navigation, route }: any) {
                 >
                     <View style={tw`flex-1`}>
                         <Text style={tw`font-bold text-gray-800 dark:text-gray-100 text-[15px]`} numberOfLines={1}>{item.name}</Text>
-                        <Text style={tw`text-blue-600 font-bold mt-1 text-xs`}>{formatRp(item.price)}</Text>
+                        {item.isDiscountActive && <Text style={tw`text-gray-400 line-through text-[10px] mt-1`}>{formatRp(item.originalPrice)}</Text>}
+                        <Text style={tw`${item.isDiscountActive ? 'text-red-600' : 'text-blue-600'} font-bold mt-0.5 text-xs`}>{formatRp(item.price)}</Text>
                         <Text style={tw`text-gray-400 dark:text-gray-500 text-[10px] mt-1`}>Stok: {item.isUnlimitedStock === 1 ? '∞' : item.stock}</Text>
                     </View>
                     {renderProductControls(item, true)}
@@ -644,11 +646,17 @@ export default function POSScreen({ navigation, route }: any) {
                                 <Text style={tw`text-white text-[10px] font-black`}>DIPILIH</Text>
                             </View>
                         )}
+                        {item.isDiscountActive && (
+                            <View style={tw`absolute top-2 right-2 bg-red-600 rounded-lg px-2 py-1`}>
+                                <Text style={tw`text-white text-[9px] font-black`}>{item.discountLabel || 'PROMO'}</Text>
+                            </View>
+                        )}
                     </View>
                     <View style={tw`p-3 min-h-[116px] justify-between`}>
                         <View>
                         <Text style={tw`font-bold text-gray-800 dark:text-gray-100 text-sm`} numberOfLines={1}>{item.name}</Text>
-                        <Text style={tw`text-blue-600 font-bold mt-1 text-xs`}>{formatRp(item.price)}</Text>
+                        {item.isDiscountActive && <Text style={tw`text-gray-400 line-through text-[10px] mt-1`}>{formatRp(item.originalPrice)}</Text>}
+                        <Text style={tw`${item.isDiscountActive ? 'text-red-600' : 'text-blue-600'} font-bold mt-0.5 text-xs`}>{formatRp(item.price)}</Text>
                         <Text style={tw`text-gray-400 dark:text-gray-500 text-[10px] mt-1`}>Stok: {item.isUnlimitedStock === 1 ? '∞' : item.stock}</Text>
                         </View>
                         <View style={tw`mt-2`}>

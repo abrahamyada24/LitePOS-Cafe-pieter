@@ -60,8 +60,23 @@ export default function KatalogPage() {
       const res = await fetch(`${API_URL}/api/catalog`);
       const json = await res.json();
       if (!json.success) throw new Error(json.message || "Katalog belum tersedia.");
-      setProducts(Array.isArray(json.data.products) ? json.data.products : []);
-      setCategories(Array.isArray(json.data.categories) ? json.data.categories : []);
+      const regularProducts = Array.isArray(json.data.products) ? json.data.products.map(product => ({
+        ...product,
+        originalPrice: Number(product.originalPrice ?? product.price),
+        price: Number(product.effectivePrice ?? product.price)
+      })) : [];
+      const packageProducts = Array.isArray(json.data.packages) ? json.data.packages.map(pkg => ({
+        ...pkg,
+        id: `pkg-${pkg.id}`,
+        packageId: pkg.id,
+        originalPrice: Number(pkg.price),
+        price: Number(pkg.price)
+      })) : [];
+      setProducts([...regularProducts, ...packageProducts]);
+      setCategories([
+        ...(Array.isArray(json.data.categories) ? json.data.categories : []),
+        ...(packageProducts.length > 0 ? [{ id: 'PACKAGE', name: 'Paket' }] : [])
+      ]);
       setSettings(json.data.settings || null);
     } catch (error) {
       setLoadError(error.message || "Gagal mengambil katalog.");
@@ -140,9 +155,12 @@ export default function KatalogPage() {
         {
           cartItemId,
           id: product.id,
+          packageId: product.packageId || null,
           name: product.name,
           categoryName: product.category?.name || null,
           price: Number(product.price),
+          originalPrice: Number(product.originalPrice ?? product.price),
+          discountAmount: Number(product.discountAmount || 0),
           imageUrl: product.imageUrl,
           stock: product.stock,
           isUnlimitedStock: product.isUnlimitedStock,
@@ -252,6 +270,7 @@ export default function KatalogPage() {
         {
           cartItemId,
           id: selectedProduct.id,
+          packageId: selectedProduct.packageId || null,
           name: selectedProduct.name,
           categoryName: selectedProduct.category?.name || null,
           price: Number(selectedProduct.price),
@@ -292,6 +311,7 @@ export default function KatalogPage() {
           note: orderNote,
           items: cart.map((item) => ({
             productId: item.id,
+            packageId: item.packageId || null,
             qty: item.quantity,
             notes: item.notes || null,
           })),
@@ -480,9 +500,17 @@ export default function KatalogPage() {
                         {product.name}
                       </h2>
                       <p className="text-xs font-bold text-gray-500 mt-1">{getStockLabel(product)}</p>
+                      {product.isDiscountActive && (
+                        <span className="inline-flex mt-1 px-2 py-0.5 rounded-md bg-red-50 text-red-600 text-[10px] font-black uppercase">
+                          {product.discountLabel || "Promo"}
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-end justify-between gap-3 mt-2">
-                      <p className="font-black text-gray-950">{formatRupiah(product.price)}</p>
+                      <div>
+                        {product.isDiscountActive && <p className="text-[10px] text-gray-400 line-through">{formatRupiah(product.originalPrice)}</p>}
+                        <p className={`font-black ${product.isDiscountActive ? 'text-red-600' : 'text-gray-950'}`}>{formatRupiah(product.price)}</p>
+                      </div>
                       {isTableMode ? (
                         qtyInCart > 0 ? (
                           <div
@@ -581,7 +609,10 @@ export default function KatalogPage() {
                   <p className="text-xs font-bold text-emerald-700">{selectedProduct.category?.name || "Menu"}</p>
                   <h2 className="text-2xl font-black text-gray-950 mt-1">{selectedProduct.name}</h2>
                   <div className="mt-3 flex items-center justify-between gap-4">
-                    <p className="text-xl font-black">{formatRupiah(selectedProduct.price)}</p>
+                    <div>
+                      {selectedProduct.isDiscountActive && <p className="text-xs text-gray-400 line-through">{formatRupiah(selectedProduct.originalPrice)}</p>}
+                      <p className={`text-xl font-black ${selectedProduct.isDiscountActive ? 'text-red-600' : ''}`}>{formatRupiah(selectedProduct.price)}</p>
+                    </div>
                     <span className="text-xs font-bold rounded-full bg-stone-100 px-3 py-1.5 text-gray-600">
                       {getStockLabel(selectedProduct)}
                     </span>

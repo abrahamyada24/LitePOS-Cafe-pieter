@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react';
 import {
   X, UploadCloud, Save, LayoutGrid, Package,
   DollarSign, Tag, Info, Edit3, Boxes,
-  Monitor, CheckCircle2, AlertCircle, Trash2, Plus, ScanBarcode
+  Monitor, CheckCircle2, AlertCircle, Trash2, Plus, ScanBarcode,
+  Percent, CalendarClock
 } from 'lucide-react';
 
 export default function ProductModal({ isOpen, onClose, onSave, initialData, categories }) {
@@ -22,7 +23,16 @@ export default function ProductModal({ isOpen, onClose, onSave, initialData, cat
     isUnlimitedStock: false,
     status: 'active',
     displayType: 'normal',
-    imageFile: null
+    imageFile: null,
+    discountActive: false,
+    discountType: 'PERCENT',
+    discountValue: '',
+    discountStartAt: '',
+    discountEndAt: '',
+    discountStartTime: '',
+    discountEndTime: '',
+    discountDays: [],
+    discountLabel: ''
   });
   const [previewUrl, setPreviewUrl] = useState('');
 
@@ -66,7 +76,16 @@ export default function ProductModal({ isOpen, onClose, onSave, initialData, cat
           isUnlimitedStock: initialData.isUnlimitedStock || false,
           status: initialData.isActive ? 'active' : 'inactive',
           displayType: initialData.displayType || 'normal',
-          imageFile: null
+          imageFile: null,
+          discountActive: initialData.discountActive || false,
+          discountType: initialData.discountType || 'PERCENT',
+          discountValue: initialData.discountValue || '',
+          discountStartAt: initialData.discountStartAt ? initialData.discountStartAt.slice(0, 10) : '',
+          discountEndAt: initialData.discountEndAt ? initialData.discountEndAt.slice(0, 10) : '',
+          discountStartTime: initialData.discountStartTime || '',
+          discountEndTime: initialData.discountEndTime || '',
+          discountDays: initialData.discountDays ? String(initialData.discountDays).split(',').map(Number) : [],
+          discountLabel: initialData.discountLabel || ''
         });
         setPreviewUrl(getImageUrl(initialData.imageUrl));
         fetchAddons(initialData.id);
@@ -83,7 +102,16 @@ export default function ProductModal({ isOpen, onClose, onSave, initialData, cat
           isUnlimitedStock: false,
           status: 'active',
           displayType: 'normal',
-          imageFile: null
+          imageFile: null,
+          discountActive: false,
+          discountType: 'PERCENT',
+          discountValue: '',
+          discountStartAt: '',
+          discountEndAt: '',
+          discountStartTime: '',
+          discountEndTime: '',
+          discountDays: [],
+          discountLabel: ''
         });
         setPreviewUrl('');
         setAddons([]);
@@ -135,6 +163,13 @@ export default function ProductModal({ isOpen, onClose, onSave, initialData, cat
   const handleSubmit = (e) => {
     e.preventDefault();
     onSave(formData);
+  };
+
+  const toggleDiscountDay = (day) => {
+    const days = formData.discountDays.includes(day)
+      ? formData.discountDays.filter(item => item !== day)
+      : [...formData.discountDays, day].sort();
+    setFormData({ ...formData, discountDays: days });
   };
 
   if (!isOpen) return null;
@@ -290,6 +325,110 @@ export default function ProductModal({ isOpen, onClose, onSave, initialData, cat
                     </div>
                   </div>
                 </div>
+
+                <section className="p-5 border border-red-100 bg-red-50/40 rounded-xl space-y-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-9 h-9 rounded-lg bg-red-100 text-red-600 flex items-center justify-center shrink-0">
+                        <Percent size={18} />
+                      </div>
+                      <div className="min-w-0">
+                        <h4 className="font-black text-sm text-gray-900">Diskon Produk</h4>
+                        <p className="text-xs text-gray-500 truncate">Harga promo terjadwal per produk</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={formData.discountActive}
+                      onClick={() => setFormData({ ...formData, discountActive: !formData.discountActive })}
+                      className={`w-12 h-7 rounded-full p-1 transition-colors ${formData.discountActive ? 'bg-red-600' : 'bg-gray-300'}`}
+                    >
+                      <span className={`block w-5 h-5 bg-white rounded-full transition-transform ${formData.discountActive ? 'translate-x-5' : ''}`} />
+                    </button>
+                  </div>
+
+                  {formData.discountActive && (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="grid grid-cols-2 p-1 bg-white border border-red-100 rounded-lg">
+                          {[
+                            { id: 'PERCENT', label: 'Persen' },
+                            { id: 'NOMINAL', label: 'Nominal' }
+                          ].map(option => (
+                            <button
+                              key={option.id}
+                              type="button"
+                              onClick={() => setFormData({ ...formData, discountType: option.id })}
+                              className={`h-10 rounded-md text-xs font-black ${formData.discountType === option.id ? 'bg-red-600 text-white' : 'text-gray-500'}`}
+                            >
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="relative">
+                          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xs font-black text-gray-400">
+                            {formData.discountType === 'PERCENT' ? '%' : 'Rp'}
+                          </span>
+                          <input
+                            required
+                            type="number"
+                            min="0"
+                            max={formData.discountType === 'PERCENT' ? 100 : undefined}
+                            value={formData.discountValue}
+                            onChange={(e) => setFormData({ ...formData, discountValue: e.target.value })}
+                            className="w-full h-12 pl-12 pr-4 bg-white border border-red-100 rounded-lg font-black outline-none focus:border-red-400"
+                            placeholder="0"
+                          />
+                        </div>
+                      </div>
+
+                      <input
+                        value={formData.discountLabel}
+                        onChange={(e) => setFormData({ ...formData, discountLabel: e.target.value })}
+                        className="w-full h-11 px-4 bg-white border border-red-100 rounded-lg text-sm font-bold outline-none focus:border-red-400"
+                        placeholder="Nama promo / event, mis. Kopi Pagi"
+                      />
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <label className="text-[10px] font-black text-gray-500 uppercase">
+                          Mulai tanggal
+                          <input type="date" value={formData.discountStartAt} onChange={(e) => setFormData({ ...formData, discountStartAt: e.target.value })} className="mt-1 w-full h-11 px-3 bg-white border border-red-100 rounded-lg text-sm text-gray-800" />
+                        </label>
+                        <label className="text-[10px] font-black text-gray-500 uppercase">
+                          Sampai tanggal
+                          <input type="date" value={formData.discountEndAt} onChange={(e) => setFormData({ ...formData, discountEndAt: e.target.value })} className="mt-1 w-full h-11 px-3 bg-white border border-red-100 rounded-lg text-sm text-gray-800" />
+                        </label>
+                        <label className="text-[10px] font-black text-gray-500 uppercase">
+                          Jam mulai
+                          <input type="time" value={formData.discountStartTime} onChange={(e) => setFormData({ ...formData, discountStartTime: e.target.value })} className="mt-1 w-full h-11 px-3 bg-white border border-red-100 rounded-lg text-sm text-gray-800" />
+                        </label>
+                        <label className="text-[10px] font-black text-gray-500 uppercase">
+                          Jam selesai
+                          <input type="time" value={formData.discountEndTime} onChange={(e) => setFormData({ ...formData, discountEndTime: e.target.value })} className="mt-1 w-full h-11 px-3 bg-white border border-red-100 rounded-lg text-sm text-gray-800" />
+                        </label>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center gap-2 text-[10px] font-black text-gray-500 uppercase mb-2">
+                          <CalendarClock size={14} /> Hari berlaku
+                        </div>
+                        <div className="grid grid-cols-7 gap-1">
+                          {['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'].map((label, day) => (
+                            <button
+                              key={label}
+                              type="button"
+                              onClick={() => toggleDiscountDay(day)}
+                              className={`h-9 rounded-md text-[10px] font-black ${formData.discountDays.includes(day) ? 'bg-red-600 text-white' : 'bg-white border border-red-100 text-gray-500'}`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </section>
 
                 <div className="grid grid-cols-2 gap-6">
                   <div className="space-y-2">

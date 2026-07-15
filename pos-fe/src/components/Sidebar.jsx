@@ -5,7 +5,7 @@ import {
   LayoutDashboard, ShoppingCart, Users, Settings,
   ChevronDown, Box, ClipboardList, UserCircle, LogOut, Utensils,
   Wallet, Clock, PackageCheck, ClipboardCheck, UtensilsCrossed, Truck, Gift,
-  PlayCircle, Pause, AlertCircle, QrCode
+  PlayCircle, Pause, AlertCircle, QrCode, ChefHat
 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -65,6 +65,7 @@ export default function Sidebar({ isMobileOpen, setIsMobileOpen }) {
   const [mounted, setMounted] = useState(false);
   const [expandedMenu, setExpandedMenu] = useState({ inventory: true });
   const [pendingSalesCount, setPendingSalesCount] = useState(0);
+  const [kitchenNewCount, setKitchenNewCount] = useState(0);
 
   // Pastikan komponen sudah terpasang (mounted) untuk menghindari error hydration
   useEffect(() => {
@@ -73,8 +74,9 @@ export default function Sidebar({ isMobileOpen, setIsMobileOpen }) {
 
   // Fetch pending saved transactions count
   useEffect(() => {
-    if (!mounted || !settings?.enableTableOrder) {
+    if (!mounted) {
       setPendingSalesCount(0);
+      setKitchenNewCount(0);
       return;
     }
     const fetchPendingSales = async () => {
@@ -89,6 +91,11 @@ export default function Sidebar({ isMobileOpen, setIsMobileOpen }) {
         if (data.success) {
           setPendingSalesCount(Array.isArray(data.data) ? data.data.length : 0);
         }
+        const kitchenRes = await fetch(`${baseUrl}/api/kitchen-orders/summary`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const kitchenData = await kitchenRes.json();
+        if (kitchenData.success) setKitchenNewCount(Number(kitchenData.data?.NEW || 0));
       } catch (e) { /* silent */ }
     };
     fetchPendingSales();
@@ -125,7 +132,7 @@ export default function Sidebar({ isMobileOpen, setIsMobileOpen }) {
       >
         <div className="h-full flex flex-col">
           {/* Brand Header - Identik dengan Header Kasir */}
-          <div className="h-16 lg:h-20 flex items-center px-6 border-b border-gray-100 flex-shrink-0">
+          <Link href="/" className="h-16 lg:h-20 flex items-center px-6 border-b border-gray-100 flex-shrink-0" title="Kembali ke dashboard">
             <div className="w-8 h-8 lg:w-10 lg:h-10 flex items-center justify-center flex-shrink-0 mr-3">
               <img src="/logo.png" alt="Logo" className="w-full h-full object-contain" />
             </div>
@@ -133,7 +140,7 @@ export default function Sidebar({ isMobileOpen, setIsMobileOpen }) {
               <h1 className="text-lg font-bold leading-none tracking-tight text-gray-800 truncate">LitePOS</h1>
               <p className="text-[10px] text-gray-400 font-medium mt-1 uppercase tracking-wider truncate">Enterprise Suite</p>
             </div>
-          </div>
+          </Link>
 
           {/* POS Quick Action Button */}
           <div className="px-4 pt-4 pb-2">
@@ -192,6 +199,7 @@ export default function Sidebar({ isMobileOpen, setIsMobileOpen }) {
             <div className="pt-4 pb-2">
               <p className="px-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 italic">Operasional</p>
               <SidebarItem icon={Clock} label="Shift" href="/shifts" />
+              <SidebarItem icon={ChefHat} label="Antrean Dapur" href="/kitchen" badge={kitchenNewCount} />
               {isAdminOrOwner && (
                 <SidebarItem icon={Wallet} label="Pengeluaran" href="/expenses" />
               )}

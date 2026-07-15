@@ -10,6 +10,7 @@ import StockOpnameScreen from './StockOpnameScreen';
 import RNFS from 'react-native-fs';
 import { resolveApiAssetUrl } from '../services/api';
 import { closeConfiguredPrinter, connectConfiguredPrinter } from '../utils/printerConnection';
+import ProductDiscountFields from '../components/ProductDiscountFields';
 
 type TabType = 'products' | 'categories' | 'customers' | 'penerimaan' | 'opname' | 'stokDarurat';
 
@@ -51,6 +52,7 @@ export default function ManagementScreen({ navigation }: any) {
     const [newAddonName, setNewAddonName] = useState('');
     const [newAddonPrice, setNewAddonPrice] = useState('');
     const [productMinStock, setProductMinStock] = useState('');
+    const [productDiscount, setProductDiscount] = useState<any>({ active: false, type: 'PERCENT', value: '', label: '', startAt: '', endAt: '', startTime: '', endTime: '', days: '' });
 
     // Customer form
     const [customerName, setCustomerName] = useState('');
@@ -140,16 +142,17 @@ export default function ManagementScreen({ navigation }: any) {
             const enableCost = enableCostPrice ? 1 : 0;
             const barcode = productBarcode.trim() ? productBarcode.trim() : null;
             const minStock = parseInt(productMinStock || '0', 10);
+            const discountValues = [productDiscount.active ? 1 : 0, productDiscount.type, parseFloat(productDiscount.value || '0'), productDiscount.startAt || null, productDiscount.endAt || null, productDiscount.startTime || null, productDiscount.endTime || null, productDiscount.days || null, productDiscount.label || null];
 
             if (editingProduct) {
                 await db.executeSql(
-                    'UPDATE products SET name = ?, price = ?, costPrice = ?, enableCostPrice = ?, stock = ?, categoryId = ?, imageUrl = ?, isUnlimitedStock = ?, barcode = ?, minStock = ?, isSynced = 0 WHERE id = ?',
-                    [productName, price, costPrice, enableCost, stock, catId, img, isUnlimited, barcode, minStock, editingProduct.id]
+                    'UPDATE products SET name = ?, price = ?, costPrice = ?, enableCostPrice = ?, stock = ?, categoryId = ?, imageUrl = ?, isUnlimitedStock = ?, barcode = ?, minStock = ?, discountActive = ?, discountType = ?, discountValue = ?, discountStartAt = ?, discountEndAt = ?, discountStartTime = ?, discountEndTime = ?, discountDays = ?, discountLabel = ?, isSynced = 0 WHERE id = ?',
+                    [productName, price, costPrice, enableCost, stock, catId, img, isUnlimited, barcode, minStock, ...discountValues, editingProduct.id]
                 );
             } else {
                 const [insertResult] = await db.executeSql(
-                    'INSERT INTO products (name, price, costPrice, enableCostPrice, stock, categoryId, imageUrl, isUnlimitedStock, barcode, minStock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                    [productName, price, costPrice, enableCost, stock, catId, img, isUnlimited, barcode, minStock]
+                    'INSERT INTO products (name, price, costPrice, enableCostPrice, stock, categoryId, imageUrl, isUnlimitedStock, barcode, minStock, discountActive, discountType, discountValue, discountStartAt, discountEndAt, discountStartTime, discountEndTime, discountDays, discountLabel) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    [productName, price, costPrice, enableCost, stock, catId, img, isUnlimited, barcode, minStock, ...discountValues]
                 );
                 await saveBufferedAddons(insertResult.insertId);
             }
@@ -185,6 +188,7 @@ export default function ManagementScreen({ navigation }: any) {
             setIsUnlimitedStock(prod.isUnlimitedStock === 1);
             setProductBarcode(prod.barcode || '');
             setProductMinStock((prod.minStock || 0).toString());
+            setProductDiscount({ active: prod.discountActive === 1, type: prod.discountType || 'PERCENT', value: (prod.discountValue || '').toString(), label: prod.discountLabel || '', startAt: prod.discountStartAt ? String(prod.discountStartAt).slice(0, 10) : '', endAt: prod.discountEndAt ? String(prod.discountEndAt).slice(0, 10) : '', startTime: prod.discountStartTime || '', endTime: prod.discountEndTime || '', days: prod.discountDays || '' });
             // Load add-ons for this product
             try {
                 const db = await getDBConnection();
@@ -330,6 +334,7 @@ export default function ManagementScreen({ navigation }: any) {
         setProductStock(''); setProductCategoryId(''); setProductImageUrl('');
         setIsUnlimitedStock(false); setProductBarcode('');
         setProductMinStock('');
+        setProductDiscount({ active: false, type: 'PERCENT', value: '', label: '', startAt: '', endAt: '', startTime: '', endTime: '', days: '' });
         setProductAddons([]); setNewAddonName(''); setNewAddonPrice('');
         setEditingCustomer(null); setCustomerName(''); setCustomerPhone(''); setCustomerNotes('');
         setCustomerPoints('0');
@@ -814,6 +819,8 @@ export default function ManagementScreen({ navigation }: any) {
                                     </View>
                                 )}
                             </View>
+
+                            <ProductDiscountFields values={productDiscount} onChange={setProductDiscount} />
 
                             {/* ── Section: Stok */}
                             <View style={tw`bg-gray-50 dark:bg-gray-900 rounded-xl p-4 mb-4`}>

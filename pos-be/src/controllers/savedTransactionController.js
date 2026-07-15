@@ -42,7 +42,16 @@ exports.saveTransaction = async (req, res) => {
 exports.deleteSavedTransaction = async (req, res) => {
     try {
         const { id } = req.params;
-        await prisma.savedTransaction.delete({ where: { id } });
+        const accepted = req.query.action === 'accepted';
+        await prisma.$transaction(async (tx) => {
+            await tx.kitchenOrder.updateMany({
+                where: { savedOrderId: id, status: { in: ['NEW', 'PREPARING'] } },
+                data: accepted
+                    ? { status: 'PREPARING', startedAt: new Date() }
+                    : { status: 'CANCELLED', completedAt: new Date() }
+            });
+            await tx.savedTransaction.delete({ where: { id } });
+        });
         res.json({ success: true, message: "Transaksi tersimpan berhasil dihapus" });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });

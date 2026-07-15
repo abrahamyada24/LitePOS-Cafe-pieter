@@ -70,20 +70,40 @@ export default function POSPage() {
 
             const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
 
-            const [prodRes, catRes, memRes, tableRes] = await Promise.all([
+            const [prodRes, catRes, memRes, tableRes, pkgRes] = await Promise.all([
                 fetch(`${API_URL}/api/products`, { headers }),
                 fetch(`${API_URL}/api/products/categories`, { headers }),
                 fetch(`${API_URL}/api/customers`, { headers }),
-                fetch(`${API_URL}/api/tables`, { headers })
+                fetch(`${API_URL}/api/tables`, { headers }),
+                fetch(`${API_URL}/api/packages`, { headers })
             ]);
 
             const prodData = await prodRes.json();
             const catData = await catRes.json();
             const memData = await memRes.json();
             const tableData = await tableRes.json();
+            const pkgData = await pkgRes.json();
 
-            if (prodData.success) setProducts(prodData.data);
-            if (catData.success) setCategories([{ id: 0, name: 'Semua' }, ...catData.data]);
+            if (prodData.success) {
+                const regularProducts = prodData.data.map(product => ({
+                    ...product,
+                    originalPrice: Number(product.originalPrice ?? product.price),
+                    price: Number(product.effectivePrice ?? product.price)
+                }));
+                const packageProducts = pkgData.success ? pkgData.data.filter(pkg => pkg.isActive).map(pkg => ({
+                    ...pkg,
+                    id: `pkg-${pkg.id}`,
+                    packageId: pkg.id,
+                    category: { name: 'Paket' },
+                    stock: 999,
+                    isUnlimitedStock: true,
+                    originalPrice: Number(pkg.price),
+                    price: Number(pkg.price),
+                    isPackage: true
+                })) : [];
+                setProducts([...regularProducts, ...packageProducts]);
+            }
+            if (catData.success) setCategories([{ id: 0, name: 'Semua' }, ...catData.data, ...(pkgData.success && pkgData.data.some(pkg => pkg.isActive) ? [{ id: 'PACKAGE', name: 'Paket' }] : [])]);
             if (memData.success) setMembers(memData.data);
             if (tableData.success) setTables(tableData.data.filter(t => t.status === 'AVAILABLE'));
 
@@ -206,7 +226,7 @@ export default function POSPage() {
           const payload = {
               userId: userId, 
               customerId: selectedMember ? selectedMember.id : null,
-              items: cart.map(c => ({ productId: c.id, qty: c.qty })),
+              items: cart.map(c => ({ productId: c.id, packageId: c.packageId || null, qty: c.qty })),
               payment: { type: type, amount: grandTotal },
               orderType: orderType,
               tableNumber: orderType === 'DINE_IN' && selectedTable ? selectedTable.number : null,
