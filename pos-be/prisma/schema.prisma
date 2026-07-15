@@ -128,7 +128,7 @@ model Product {
 model Customer {
   id              Int           @id @default(autoincrement())
   androidId       Int?          @unique @map("android_id")
-  memberId        String        @unique @map("member_id") @db.VarChar(20)
+  memberId        String        @unique @map("member_id") @db.VarChar(50)
   name            String        @db.VarChar(255)
   phone           String?       @unique @db.VarChar(20)
   email           String?       @db.VarChar(255)
