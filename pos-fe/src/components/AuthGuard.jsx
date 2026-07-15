@@ -33,7 +33,7 @@ export default function AuthGuard({ children }) {
 
     // Staff / Cashier route access
     if (role === 'CASHIER') {
-      const allowedPaths = ['/', '/pos', '/transactions', '/tables', '/shifts'];
+      const allowedPaths = ['/', '/pos', '/transactions', '/tables', '/shifts', '/order-meja', '/kitchen'];
       const isAllowed = allowedPaths.some(p => pathname === p || pathname.startsWith(p + '/'));
       if (!isAllowed) {
         router.replace('/');

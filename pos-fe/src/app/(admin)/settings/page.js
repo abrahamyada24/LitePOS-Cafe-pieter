@@ -12,7 +12,7 @@ import { showAlert } from '../../../utils/swal';
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
 export default function SettingsPage() {
-  const { settings, fetchDataMaster } = useStore();
+  const { settings, fetchDataMaster, fetchSettings } = useStore();
   const [activeTab, setActiveTab] = useState('general');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -158,9 +158,12 @@ export default function SettingsPage() {
             body: formData
         });
 
-        if (!res.ok) throw new Error("Gagal menyimpan pengaturan");
-        
-        await fetchDataMaster(); 
+        const result = await res.json();
+        if (!res.ok || !result.success) throw new Error(result.message || result.error || "Gagal menyimpan pengaturan");
+
+        // Endpoint settings jauh lebih ringan daripada memuat semua master data
+        // dan langsung memicu render ulang menu Sidebar.
+        await fetchSettings();
         showAlert.success('Pengaturan tersimpan', 'Konfigurasi aplikasi berhasil diperbarui.');
 
     } catch (error) {

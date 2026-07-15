@@ -46,8 +46,13 @@ export const useStore = create(
             set({
               user: data.user,
               token: data.token,
-              isAuthenticated: true
+              isAuthenticated: true,
+              settings: null
             });
+
+            // Sidebar bergantung pada settings. Ambil konfigurasi terbaru sebelum
+            // halaman dashboard dibuka agar menu fitur tidak memakai cache lama.
+            await get().fetchSettings(data.token);
             return { success: true };
           }
           return { success: false, message: data.message };
@@ -57,7 +62,7 @@ export const useStore = create(
       },
 
       logout: () => {
-        set({ user: null, token: null, isAuthenticated: false, cart: [], discount: 0, discountType: 'amount', activeShift: null });
+        set({ user: null, token: null, isAuthenticated: false, cart: [], settings: null, discount: 0, discountType: 'amount', activeShift: null });
         localStorage.removeItem('pos-storage');
         localStorage.removeItem('token');
       },
@@ -67,6 +72,38 @@ export const useStore = create(
       customers: [],
       settings: null,
       isLoading: false,
+
+      fetchSettings: async (tokenOverride = null) => {
+        const token = tokenOverride || get().token || (typeof window !== 'undefined' ? localStorage.getItem('token') : null);
+        if (!token) return { success: false, message: 'Token tidak tersedia' };
+
+        try {
+          const baseUrl = API_URL.endsWith('/api') ? API_URL.replace(/\/api$/, '') : API_URL;
+          const response = await fetch(`${baseUrl}/api/settings`, {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Cache-Control': 'no-cache'
+            },
+            cache: 'no-store'
+          });
+          const data = await response.json();
+
+          if (response.status === 401) {
+            get().logout();
+            return { success: false, message: 'Sesi berakhir' };
+          }
+
+          if (response.ok && data.success) {
+            set({ settings: data.data });
+            return { success: true, data: data.data };
+          }
+
+          return { success: false, message: data.message || data.error || 'Gagal mengambil pengaturan' };
+        } catch (error) {
+          console.error('Gagal mengambil pengaturan:', error);
+          return { success: false, message: error.message };
+        }
+      },
 
       fetchDataMaster: async () => {
         const headers = get().getHeaders();
@@ -83,7 +120,7 @@ export const useStore = create(
             fetch(`${baseUrl}/api/products`, { headers }),
             fetch(`${baseUrl}/api/products/categories`, { headers }),
             fetch(`${baseUrl}/api/customers`, { headers }),
-            fetch(`${baseUrl}/api/settings`, { headers })
+            fetch(`${baseUrl}/api/settings`, { headers, cache: 'no-store' })
           ]);
 
           const prodData = await prodRes.json();

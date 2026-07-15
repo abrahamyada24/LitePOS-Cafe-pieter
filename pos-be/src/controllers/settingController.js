@@ -24,6 +24,9 @@ exports.getSettings = async (req, res) => {
       });
     }
 
+    // Konfigurasi fitur harus selalu aktual karena dipakai untuk membentuk menu.
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
     res.json({ success: true, data: setting });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });

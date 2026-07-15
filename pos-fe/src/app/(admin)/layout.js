@@ -1,12 +1,35 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Sidebar from "@/components/Sidebar";
 import AuthGuard from "@/components/AuthGuard";
 import Link from "next/link";
+import { useStore } from "@/store/useStore";
 
 export default function AdminLayout({ children }) {
   const [isMobileOpen, setIsMobileOpen] = useState(false);
+  const fetchSettings = useStore(state => state.fetchSettings);
+  const isAuthenticated = useStore(state => state.isAuthenticated);
+
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+
+    const refreshSettings = () => fetchSettings();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshSettings();
+    };
+
+    refreshSettings();
+    window.addEventListener('focus', refreshSettings);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    const interval = window.setInterval(refreshSettings, 30000);
+
+    return () => {
+      window.removeEventListener('focus', refreshSettings);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.clearInterval(interval);
+    };
+  }, [fetchSettings, isAuthenticated]);
 
   return (
     <AuthGuard>
