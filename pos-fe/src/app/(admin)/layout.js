@@ -22,7 +22,7 @@ export default function AdminLayout({ children }) {
     refreshSettings();
     window.addEventListener('focus', refreshSettings);
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    const interval = window.setInterval(refreshSettings, 30000);
+    const interval = window.setInterval(refreshSettings, 5000);
 
     return () => {
       window.removeEventListener('focus', refreshSettings);
