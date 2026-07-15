@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useState } from 'react';
 import { ClipboardCheck, Save, Loader2, AlertTriangle, CheckCircle } from 'lucide-react';
+import { showAlert } from '@/utils/swal';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -35,8 +36,13 @@ export default function StockOpnamePage() {
             .filter(p => p.physicalQty !== '' && !p.isUnlimitedStock)
             .map(p => ({ productId: p.id, physicalQty: parseInt(p.physicalQty) }));
 
-        if (items.length === 0) return alert('Isi stok fisik minimal 1 produk');
-        if (!confirm(`Simpan stock opname untuk ${items.length} produk?`)) return;
+        if (items.length === 0) return showAlert.warning('Stok fisik kosong', 'Isi stok fisik minimal 1 produk.');
+        const confirmed = await showAlert.confirm(
+            'Simpan stock opname?',
+            `${items.length} produk akan disesuaikan dengan stok fisik.`,
+            'Ya, Simpan'
+        );
+        if (!confirmed) return;
 
         setSaving(true);
         try {
@@ -46,8 +52,8 @@ export default function StockOpnamePage() {
             });
             const data = await res.json();
             if (data.success) { setDone(true); setResults(data.data); }
-            else alert(data.error);
-        } catch (e) { console.error(e); }
+            else showAlert.error('Stock opname gagal', data.error || data.message);
+        } catch (e) { showAlert.error('Stock opname gagal', e.message || 'Coba lagi.'); }
         setSaving(false);
     };
 

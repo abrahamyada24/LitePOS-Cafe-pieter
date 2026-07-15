@@ -18,6 +18,7 @@ import {
   Utensils,
   X,
 } from "lucide-react";
+import { showAlert } from '@/utils/swal';
 
 const RAW_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 const API_URL = RAW_API_URL.replace(/\/api$/, "").replace(/\/$/, "");
@@ -135,7 +136,7 @@ export default function KatalogPage() {
     const currentQty = getProductCartQty(product.id);
 
     if (!isUnlimitedStock(product) && currentQty + quantity > Number(product.stock || 0)) {
-      alert("Jumlah melebihi stok yang tersedia.");
+      showAlert.warning('Stok tidak cukup', 'Jumlah melebihi stok yang tersedia.');
       return;
     }
 
@@ -183,7 +184,7 @@ export default function KatalogPage() {
           if (item.cartItemId !== cartItemId) return item;
           const nextQty = Math.max(0, Number(quantity) || 0);
           if (!isUnlimitedStock(item) && nextQty > Number(item.stock || 0)) {
-            alert("Jumlah melebihi stok yang tersedia.");
+            showAlert.warning('Stok tidak cukup', 'Jumlah melebihi stok yang tersedia.');
             return item;
           }
           return { ...item, quantity: nextQty };
@@ -245,7 +246,7 @@ export default function KatalogPage() {
       !isUnlimitedStock(selectedProduct) &&
       otherProductQty + quantity > Number(selectedProduct.stock || 0)
     ) {
-      alert("Jumlah melebihi stok yang tersedia.");
+      showAlert.warning('Stok tidak cukup', 'Jumlah melebihi stok yang tersedia.');
       return;
     }
 
@@ -288,15 +289,15 @@ export default function KatalogPage() {
 
   const submitTableOrder = async () => {
     if (!isTableMode) {
-      alert("Fitur order meja sedang tidak aktif.");
+      showAlert.warning('Order meja tidak aktif', 'Silakan hubungi petugas.');
       return;
     }
     if (!tableNumber) {
-      alert("Nomor meja tidak ditemukan.");
+      showAlert.error('Nomor meja tidak ditemukan', 'Pindai kembali QR yang tersedia di meja.');
       return;
     }
     if (cart.length === 0) {
-      alert("Keranjang masih kosong.");
+      showAlert.warning('Keranjang kosong', 'Pilih minimal satu menu sebelum mengirim order.');
       return;
     }
 
@@ -327,7 +328,7 @@ export default function KatalogPage() {
       setCustomerName("");
       setOrderNote("");
     } catch (error) {
-      alert(error.message || "Gagal mengirim order.");
+      showAlert.error('Order belum terkirim', error.message || 'Periksa koneksi lalu coba lagi.');
     } finally {
       setSubmitting(false);
     }
@@ -336,7 +337,7 @@ export default function KatalogPage() {
   const openWhatsApp = (product) => {
     let phone = settings?.phone || "";
     if (!phone) {
-      alert("Nomor WhatsApp toko belum diatur.");
+      showAlert.warning('WhatsApp belum tersedia', 'Nomor WhatsApp toko belum diatur.');
       return;
     }
     if (phone.startsWith("0")) phone = `62${phone.slice(1)}`;

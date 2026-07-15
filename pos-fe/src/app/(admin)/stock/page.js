@@ -6,6 +6,7 @@ import {
     Search, Filter, Calendar, Package, Loader2, ArrowRightLeft 
 } from 'lucide-react';
 import StockModal from '@/components/StockModal';
+import { showAlert } from '@/utils/swal';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -70,12 +71,12 @@ export default function InventoryPage() {
           const data = await res.json();
           if (!data.success) throw new Error(data.message);
 
-          alert("Stok berhasil diperbarui!");
+          showAlert.success('Stok diperbarui', 'Perubahan stok berhasil disimpan.');
           setIsModalOpen(false);
           fetchData();
 
       } catch (error) {
-          alert("Gagal: " + error.message);
+          showAlert.error('Gagal memperbarui stok', error.message);
       }
   };
 

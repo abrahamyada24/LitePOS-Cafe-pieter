@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChefHat, Clock3, Flame, CheckCircle2, Loader2, RefreshCw, X, History } from 'lucide-react';
+import { ChefHat, Clock3, Flame, CheckCircle2, Loader2, RefreshCw, X, History, CircleX } from 'lucide-react';
 import { showAlert } from '@/utils/swal';
 
 const RAW_API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
@@ -11,7 +11,8 @@ const STATUS_META = {
     NEW: { label: 'Baru', icon: Clock3, accent: 'border-amber-300', button: 'Mulai masak', next: 'PREPARING' },
     PREPARING: { label: 'Diproses', icon: Flame, accent: 'border-blue-300', button: 'Tandai siap', next: 'READY' },
     READY: { label: 'Siap', icon: CheckCircle2, accent: 'border-emerald-300', button: 'Selesaikan', next: 'COMPLETED' },
-    COMPLETED: { label: 'Selesai', icon: CheckCircle2, accent: 'border-gray-200' }
+    COMPLETED: { label: 'Selesai', icon: CheckCircle2, accent: 'border-gray-200' },
+    CANCELLED: { label: 'Dibatalkan', icon: CircleX, accent: 'border-red-200' }
 };
 
 const formatRp = (value) => `Rp ${Number(value || 0).toLocaleString('id-ID')}`;
@@ -59,10 +60,25 @@ export default function KitchenPage() {
             const data = await res.json();
             if (!data.success) throw new Error(data.message || data.error);
             await loadOrders(true);
+            return true;
         } catch (error) {
             showAlert.error('Status belum berubah', error.message || 'Coba lagi.');
+            return false;
         } finally {
             setUpdatingId(null);
+        }
+    };
+
+    const cancelOrder = async (order) => {
+        const confirmed = await showAlert.confirmDanger(
+            'Batalkan pesanan?',
+            `${order.queueLabel}${order.tableNumber ? ` - Meja ${order.tableNumber}` : ''} akan dibatalkan dan tidak dapat diproses di kasir.`,
+            'Ya, Batalkan'
+        );
+        if (!confirmed) return;
+        const cancelled = await updateStatus(order, 'CANCELLED');
+        if (cancelled) {
+            showAlert.success('Pesanan dibatalkan', `${order.queueLabel} tersimpan di Riwayat sebagai Dibatalkan.`);
         }
     };
 
@@ -74,7 +90,7 @@ export default function KitchenPage() {
     const grouped = useMemo(() => Object.fromEntries(
         Object.keys(STATUS_META).map(status => [status, orders.filter(order => order.status === status)])
     ), [orders]);
-    const visibleStatuses = includeCompleted ? ['NEW', 'PREPARING', 'READY', 'COMPLETED'] : ['NEW', 'PREPARING', 'READY'];
+    const visibleStatuses = includeCompleted ? ['NEW', 'PREPARING', 'READY', 'COMPLETED', 'CANCELLED'] : ['NEW', 'PREPARING', 'READY'];
 
     return (
         <div className="space-y-5">
@@ -99,7 +115,7 @@ export default function KitchenPage() {
             {loading ? (
                 <div className="h-72 flex items-center justify-center text-gray-400"><Loader2 className="animate-spin" size={30} /></div>
             ) : (
-                <div className={`grid grid-cols-1 ${includeCompleted ? 'xl:grid-cols-4' : 'lg:grid-cols-3'} gap-4 items-start`}>
+                <div className={`grid grid-cols-1 md:grid-cols-2 ${includeCompleted ? 'xl:grid-cols-5' : 'xl:grid-cols-3'} gap-4 items-start`}>
                     {visibleStatuses.map(status => {
                         const meta = STATUS_META[status];
                         const StatusIcon = meta.icon;
@@ -139,7 +155,7 @@ export default function KitchenPage() {
                                                 <span className="text-xs font-black text-gray-600">{formatRp(order.total)}</span>
                                                 {meta.next && (
                                                     <div className="flex gap-2">
-                                                        {status !== 'READY' && <button onClick={() => updateStatus(order, 'CANCELLED')} disabled={updatingId === order.id} className="w-9 h-9 rounded-lg border border-red-100 text-red-500 flex items-center justify-center" title="Batalkan"><X size={15} /></button>}
+                                                        {status !== 'READY' && <button onClick={() => cancelOrder(order)} disabled={updatingId === order.id} className="w-9 h-9 rounded-lg border border-red-100 text-red-500 flex items-center justify-center hover:bg-red-50 disabled:opacity-50" title="Batalkan pesanan"><X size={15} /></button>}
                                                         <button onClick={() => updateStatus(order, meta.next)} disabled={updatingId === order.id} className="h-9 px-3 rounded-lg bg-gray-950 text-white text-xs font-black disabled:opacity-50">{updatingId === order.id ? '...' : meta.button}</button>
                                                     </div>
                                                 )}

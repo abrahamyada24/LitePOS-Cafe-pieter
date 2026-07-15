@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 
 // Import Components
@@ -31,6 +31,7 @@ export default function POSPage() {
   
   // --- STATE UI ---
   const [cart, setCart] = useState([]);
+  const [pendingOrderContext, setPendingOrderContext] = useState(null);
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Semua');
   const [mobileView, setMobileView] = useState('menu'); 
@@ -56,6 +57,7 @@ export default function POSPage() {
   const [takeawayOptions, setTakeawayOptions] = useState([]);
   const [takeawayOption, setTakeawayOption] = useState('');
   const [taxRate, setTaxRate] = useState(0);
+  const tableOrderRestoreStarted = useRef(false);
 
   // --- 1. FETCH DATA ---
   useEffect(() => {
@@ -144,6 +146,77 @@ export default function POSPage() {
     }
   }, []);
 
+  useEffect(() => {
+    if (tableOrderRestoreStarted.current) return;
+    const rawOrder = sessionStorage.getItem('table-order-to-process');
+    if (!rawOrder) return;
+    tableOrderRestoreStarted.current = true;
+
+    const restoreTableOrder = async () => {
+      try {
+        const order = JSON.parse(rawOrder);
+        const payload = typeof order.cartData === 'string' ? JSON.parse(order.cartData) : order.cartData;
+        if (!payload || !Array.isArray(payload.items) || payload.items.length === 0) {
+          throw new Error('Isi order meja tidak valid.');
+        }
+
+        const restoredCart = payload.items.map((item, index) => {
+          const packageId = item.packageId ? Number(item.packageId) : null;
+          const productId = packageId ? `pkg-${packageId}` : Number(item.productId || item.id);
+          return {
+            ...item,
+            id: productId,
+            packageId,
+            qty: Number(item.quantity || item.qty || 1),
+            price: Number(item.price || 0),
+            originalPrice: Number(item.originalPrice || item.price || 0),
+            category: { name: item.categoryName || (packageId ? 'Paket' : 'Menu') },
+            stock: Number(item.stock ?? (packageId ? 999 : 0)),
+            isUnlimitedStock: packageId ? true : Boolean(Number(item.isUnlimitedStock)),
+            cartItemId: item.cartItemId || `table-${order.id}-${index}`,
+          };
+        });
+
+        const context = {
+          savedOrderId: order.id,
+          orderCode: payload.orderCode,
+          queueLabel: payload.queueLabel,
+          tableNumber: payload.tableNumber,
+          customerName: payload.customerName,
+          note: payload.note || null,
+          accepted: sessionStorage.getItem('table-order-accepted-id') === String(order.id),
+        };
+        setCart(restoredCart);
+        setPendingOrderContext(context);
+        setOrderType('DINE_IN');
+        setSelectedTable({ number: payload.tableNumber, name: payload.tableNumber });
+        setSelectedMember(payload.customerName ? { id: null, name: payload.customerName, isTableGuest: true } : null);
+        if (window.innerWidth < 1024) setMobileView('cart');
+
+        if (context.accepted) return;
+
+        const token = localStorage.getItem('token');
+        const response = await fetch(`${API_URL}/api/saved-transactions/${order.id}?action=accepted`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.message || data.error || 'Order belum dapat diterima.');
+
+        sessionStorage.setItem('table-order-accepted-id', String(order.id));
+        setPendingOrderContext(current => current ? { ...current, accepted: true } : current);
+        showAlert.success('Order diterima', `${payload.queueLabel || 'Order meja'} siap diproses di kasir.`);
+      } catch (error) {
+        await showAlert.error('Gagal membuka order meja', error.message || 'Kembali ke daftar Order Meja lalu coba lagi.');
+        setCart([]);
+        setPendingOrderContext(null);
+        router.push('/order-meja');
+      }
+    };
+
+    restoreTableOrder();
+  }, [router]);
+
   // --- LOGIC FILTER ---
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
@@ -180,7 +253,7 @@ export default function POSPage() {
   const updateQty = (id, delta) => {
     setCart(cart.map(item => {
       if (item.id === id) {
-        const product = products.find(p => p.id === id);
+        const product = products.find(p => p.id === id) || item;
         if (delta > 0 && item.qty + 1 > product.stock && !product.isUnlimitedStock) {
             showAlert.warning("Batas Stok", "Stok produk tidak mencukupi.");
             return item;
@@ -225,11 +298,14 @@ export default function POSPage() {
           
           const payload = {
               userId: userId, 
-              customerId: selectedMember ? selectedMember.id : null,
-              items: cart.map(c => ({ productId: c.id, packageId: c.packageId || null, qty: c.qty })),
+              customerId: selectedMember?.id || null,
+              customerName: pendingOrderContext?.customerName || selectedMember?.name || null,
+              items: cart.map(c => ({ productId: c.id, packageId: c.packageId || null, qty: c.qty, notes: c.notes || null })),
               payment: { type: type, amount: grandTotal },
               orderType: orderType,
               tableNumber: orderType === 'DINE_IN' && selectedTable ? selectedTable.number : null,
+              note: pendingOrderContext?.note || null,
+              sourceOrderCode: pendingOrderContext?.orderCode || null,
               preOrderDate: orderType === 'PRE_ORDER' && preOrderDate ? new Date(preOrderDate).toISOString() : null,
               takeawayOption: orderType === 'TAKE_AWAY' && takeawayOption ? takeawayOption : null
           };
@@ -246,6 +322,11 @@ export default function POSPage() {
           const data = await res.json();
 
           if (!data.success) throw new Error(data.message);
+
+          if (pendingOrderContext?.orderCode) {
+              sessionStorage.removeItem('table-order-to-process');
+              sessionStorage.removeItem('table-order-accepted-id');
+          }
 
           if (type === 'QRIS' && data.data.midtransToken) {
               window.snap.pay(data.data.midtransToken, {
@@ -280,6 +361,10 @@ export default function POSPage() {
   };
 
   const handlePaymentOpen = () => {
+    if (pendingOrderContext && !pendingOrderContext.accepted) {
+      showAlert.warning('Order sedang diterima', 'Tunggu sebentar sampai order meja terkonfirmasi oleh server.');
+      return;
+    }
     setPaymentStep('SELECT');
     setPaymentMethod('');
     setCashGiven(0);
@@ -299,6 +384,9 @@ export default function POSPage() {
       setOrderType('TAKE_AWAY');
       setPreOrderDate('');
       setTakeawayOption('');
+      setPendingOrderContext(null);
+      sessionStorage.removeItem('table-order-to-process');
+      sessionStorage.removeItem('table-order-accepted-id');
       setMobileView('menu');
       window.location.reload(); 
   }
@@ -362,9 +450,11 @@ export default function POSPage() {
         takeawayOption={takeawayOption}
         setTakeawayOption={setTakeawayOption}
         taxRate={taxRate}
+        pendingOrderContext={pendingOrderContext}
         // Logout sekarang dihandle Header, tapi jika butuh di mobile menu:
-        handleLogout={() => {
-            if(confirm('Keluar?')) {
+        handleLogout={async () => {
+            const confirmed = await showAlert.confirm('Keluar Kasir?', 'Sesi kasir akan diakhiri.', 'Ya, Keluar');
+            if(confirmed) {
                 localStorage.removeItem('token');
                 localStorage.removeItem('user');
                 router.push('/login');

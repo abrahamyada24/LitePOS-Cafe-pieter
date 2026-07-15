@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Plus, Search, Edit, Trash2, Mail, ShieldCheck, User } from 'lucide-react';
 import UserModal from '@/components/UserModal';
+import { showAlert } from '@/utils/swal';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -52,7 +53,8 @@ export default function UsersPage() {
 
     const handleDelete = async (id, e) => {
         e.stopPropagation();
-        if (confirm('Yakin ingin menghapus akses pegawai ini?')) {
+        const confirmed = await showAlert.confirmDanger('Hapus akses pegawai?', 'Pegawai tidak akan dapat login lagi.', 'Ya, Hapus Akses');
+        if (confirmed) {
             try {
                 const token = localStorage.getItem('token');
                 const res = await fetch(`${API_URL}/api/users/${id}`, {
@@ -61,10 +63,11 @@ export default function UsersPage() {
                 });
                 const json = await res.json();
 
-                if (res.ok) fetchUsers();
-                else alert(json.message || "Gagal menghapus");
+                if (!res.ok || !json.success) throw new Error(json.message || json.error);
+                await fetchUsers();
+                showAlert.success('Akses dihapus', 'Akun pegawai berhasil dihapus.');
             } catch (error) {
-                console.error(error);
+                showAlert.error('Gagal menghapus akses', error.message || 'Coba lagi.');
             }
         }
     };
@@ -106,7 +109,7 @@ export default function UsersPage() {
             fetchUsers();
             setIsModalOpen(false);
         } catch (error) {
-            alert("Error: " + error.message);
+            showAlert.error('Gagal menyimpan pegawai', error.message);
         }
     };
 

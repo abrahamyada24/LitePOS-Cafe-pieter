@@ -48,7 +48,7 @@ exports.createTransaction = async (req, res) => {
             userId, customerId, customerName, items, payment,
             orderType, tableNumber, note,
             preOrderDate, discountAmount, discountType, takeawayOption,
-            loyaltyPointsRedeemed
+            loyaltyPointsRedeemed, sourceOrderCode
         } = req.body;
 
         if (!items || items.length === 0) {
@@ -256,20 +256,51 @@ exports.createTransaction = async (req, res) => {
 
             let kitchenQueue = null;
             if (isInstantPayment && (orderType || 'DINE_IN') !== 'PRE_ORDER') {
-                kitchenQueue = await reserveQueue(tx);
-                await tx.kitchenOrder.create({
-                    data: {
-                        source: 'POS',
-                        orderCode: invoiceNumber,
-                        ...kitchenQueue,
-                        tableNumber: tableNumber || null,
-                        customerName: customerName || null,
-                        note: note || null,
-                        total: grandTotal,
-                        itemsJson: JSON.stringify(kitchenItems),
-                        transactionId: newTransaction.id
+                if (sourceOrderCode) {
+                    const existingKitchenOrder = await tx.kitchenOrder.findUnique({
+                        where: { orderCode: String(sourceOrderCode) }
+                    });
+                    if (!existingKitchenOrder) {
+                        throw new Error('Antrean order meja tidak ditemukan. Muat ulang Order Meja lalu coba lagi.');
                     }
-                });
+                    if (['CANCELLED', 'COMPLETED'].includes(existingKitchenOrder.status)) {
+                        throw new Error(`Order meja sudah berstatus ${existingKitchenOrder.status === 'CANCELLED' ? 'dibatalkan' : 'selesai'}.`);
+                    }
+
+                    kitchenQueue = {
+                        queueDate: existingKitchenOrder.queueDate,
+                        queueNumber: existingKitchenOrder.queueNumber,
+                        queueLabel: existingKitchenOrder.queueLabel
+                    };
+                    await tx.kitchenOrder.update({
+                        where: { id: existingKitchenOrder.id },
+                        data: {
+                            status: existingKitchenOrder.status === 'NEW' ? 'PREPARING' : existingKitchenOrder.status,
+                            startedAt: existingKitchenOrder.startedAt || new Date(),
+                            tableNumber: tableNumber || existingKitchenOrder.tableNumber,
+                            customerName: customerName || existingKitchenOrder.customerName,
+                            note: note || existingKitchenOrder.note,
+                            total: grandTotal,
+                            itemsJson: JSON.stringify(kitchenItems),
+                            transactionId: newTransaction.id
+                        }
+                    });
+                } else {
+                    kitchenQueue = await reserveQueue(tx);
+                    await tx.kitchenOrder.create({
+                        data: {
+                            source: 'POS',
+                            orderCode: invoiceNumber,
+                            ...kitchenQueue,
+                            tableNumber: tableNumber || null,
+                            customerName: customerName || null,
+                            note: note || null,
+                            total: grandTotal,
+                            itemsJson: JSON.stringify(kitchenItems),
+                            transactionId: newTransaction.id
+                        }
+                    });
+                }
             }
 
             // Loyalty points earning

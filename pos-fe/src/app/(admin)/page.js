@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useStore } from '../../store/useStore';
+import { showAlert } from '../../utils/swal';
 
 const SalesChart = lazy(() => import('../../components/SalesChart'));
 
@@ -384,10 +385,10 @@ export default function Dashboard() {
         setOpenShiftModal(false);
         setOpeningCash('');
       } else {
-        alert(json.message || 'Gagal membuka shift');
+        showAlert.error('Gagal membuka shift', json.message || 'Coba lagi.');
       }
     } catch (err) {
-      alert('Gagal membuka shift: ' + err.message);
+      showAlert.error('Gagal membuka shift', err.message);
     } finally {
       setShiftActionLoading(false);
     }
@@ -408,10 +409,10 @@ export default function Dashboard() {
         setCloseShiftModal(false);
         setClosingCash('');
       } else {
-        alert(json.message || 'Gagal menutup shift');
+        showAlert.error('Gagal menutup shift', json.message || 'Coba lagi.');
       }
     } catch (err) {
-      alert('Gagal menutup shift: ' + err.message);
+      showAlert.error('Gagal menutup shift', err.message);
     } finally {
       setShiftActionLoading(false);
     }
@@ -429,10 +430,10 @@ export default function Dashboard() {
       if (json.success) {
         setPreOrders(prev => prev.filter(po => po.id !== id));
       } else {
-        alert(json.message || 'Gagal konfirmasi pre-order');
+        showAlert.error('Gagal konfirmasi pre-order', json.message || 'Coba lagi.');
       }
     } catch (err) {
-      alert('Error: ' + err.message);
+      showAlert.error('Gagal konfirmasi pre-order', err.message);
     } finally {
       setConfirmingPreOrder(null);
     }

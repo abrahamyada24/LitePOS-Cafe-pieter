@@ -7,6 +7,7 @@ import {
   Truck, Plus, X, Trash2, Gift, Layout, PackageSearch, QrCode
 } from 'lucide-react';
 import { useStore } from '../../../store/useStore';
+import { showAlert } from '../../../utils/swal';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -160,10 +161,10 @@ export default function SettingsPage() {
         if (!res.ok) throw new Error("Gagal menyimpan pengaturan");
         
         await fetchDataMaster(); 
-        alert("Pengaturan berhasil disimpan!");
+        showAlert.success('Pengaturan tersimpan', 'Konfigurasi aplikasi berhasil diperbarui.');
 
     } catch (error) {
-        alert("Error: " + error.message);
+        showAlert.error('Gagal menyimpan pengaturan', error.message);
     } finally {
         setIsLoading(false);
     }
@@ -183,9 +184,9 @@ export default function SettingsPage() {
         });
 
         if (!res.ok) throw new Error("Gagal menyimpan konfigurasi loyalitas");
-        alert("Konfigurasi loyalitas berhasil disimpan!");
+        showAlert.success('Loyalitas tersimpan', 'Konfigurasi loyalitas berhasil diperbarui.');
     } catch (error) {
-        alert("Error: " + error.message);
+        showAlert.error('Gagal menyimpan loyalitas', error.message);
     } finally {
         setIsLoading(false);
     }
@@ -193,7 +194,7 @@ export default function SettingsPage() {
 
   const handleUpdatePassword = async () => {
     if (passForm.newPassword !== passForm.confirmPassword) {
-        return alert("Konfirmasi password tidak cocok!");
+        return showAlert.warning('Konfirmasi tidak cocok', 'Password baru dan konfirmasi harus sama.');
     }
     
     setIsLoading(true);
@@ -214,11 +215,11 @@ export default function SettingsPage() {
         const data = await res.json();
         if (!data.success) throw new Error(data.message);
 
-        alert("Password berhasil diubah! Silakan login ulang.");
+        showAlert.success('Password diubah', 'Silakan login ulang menggunakan password baru.');
         setPassForm({ oldPassword: '', newPassword: '', confirmPassword: '' });
 
     } catch (error) {
-        alert("Gagal: " + error.message);
+        showAlert.error('Gagal mengubah password', error.message);
     } finally {
         setIsLoading(false);
     }

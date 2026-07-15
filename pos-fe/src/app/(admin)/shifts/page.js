@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useState } from 'react';
 import { Clock, Play, Square, Loader2, DollarSign, ShoppingCart } from 'lucide-react';
+import { showAlert } from '@/utils/swal';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -45,8 +46,8 @@ export default function ShiftsPage() {
             });
             const data = await res.json();
             if (data.success) { setShowOpenModal(false); setOpeningCash(''); loadData(); }
-            else alert(data.message);
-        } catch (e) { console.error(e); }
+            else showAlert.error('Gagal membuka shift', data.message || data.error);
+        } catch (e) { showAlert.error('Gagal membuka shift', e.message || 'Coba lagi.'); }
     };
 
     const handleCloseShift = async (e) => {
@@ -58,8 +59,9 @@ export default function ShiftsPage() {
                 body: JSON.stringify({ closingCash })
             });
             const data = await res.json();
-            if (data.success) { setShowCloseModal(false); setClosingCash(''); loadData(); alert(`Shift ditutup.\nPenjualan: ${formatRp(data.data.totalSales)}\nSelisih: ${formatRp(data.data.difference)}`); }
-        } catch (e) { console.error(e); }
+            if (data.success) { setShowCloseModal(false); setClosingCash(''); loadData(); showAlert.success('Shift ditutup', `Penjualan ${formatRp(data.data.totalSales)}. Selisih ${formatRp(data.data.difference)}.`); }
+            else showAlert.error('Gagal menutup shift', data.message || data.error);
+        } catch (e) { showAlert.error('Gagal menutup shift', e.message || 'Coba lagi.'); }
     };
 
     return (

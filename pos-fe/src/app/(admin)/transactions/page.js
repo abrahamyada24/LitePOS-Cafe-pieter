@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { Search, ChevronLeft, ChevronRight, Eye, RefreshCw, Calendar as CalendarIcon, Loader2, PackageCheck } from 'lucide-react';
 // Import modal dari folder components
 import TransactionDetailModal from '../../../components/TransactionDetailModal';
+import { showAlert } from '../../../utils/swal';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -82,7 +83,7 @@ export default function TransactionsPage() {
             }
         } catch (error) {
             console.error(error);
-            alert("Gagal memuat detail transaksi");
+            showAlert.error('Gagal memuat transaksi', 'Detail transaksi belum dapat ditampilkan.');
         }
     };
 

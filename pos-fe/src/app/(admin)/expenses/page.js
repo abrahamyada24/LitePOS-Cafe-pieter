@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useState } from 'react';
 import { Wallet, Plus, Trash2, Loader2, Calendar, Filter, ShoppingBag, Receipt, ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
+import { showAlert } from '@/utils/swal';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -54,11 +55,15 @@ export default function ExpensesPage() {
     };
 
     const handleDelete = async (id) => {
-        if (!confirm('Hapus pengeluaran ini?')) return;
+        const confirmed = await showAlert.confirmDanger('Hapus pengeluaran?', 'Catatan pengeluaran ini tidak dapat dikembalikan.', 'Ya, Hapus');
+        if (!confirmed) return;
         try {
-            await fetch(`${API_URL}/api/expenses/${id}`, { method: 'DELETE', headers: headers() });
+            const response = await fetch(`${API_URL}/api/expenses/${id}`, { method: 'DELETE', headers: headers() });
+            const data = await response.json();
+            if (!response.ok || !data.success) throw new Error(data.message || data.error);
             loadExpenses();
-        } catch (e) { console.error(e); }
+            showAlert.success('Pengeluaran dihapus', 'Catatan berhasil dihapus.');
+        } catch (e) { showAlert.error('Gagal menghapus', e.message || 'Coba lagi.'); }
     };
 
     // Filter by type

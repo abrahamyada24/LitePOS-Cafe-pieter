@@ -37,6 +37,15 @@ export const showAlert = {
     });
   },
 
+  info: (title, text) => {
+    return Swal.fire({
+      icon: 'info',
+      title: title,
+      text: text,
+      confirmButtonColor: themeColors.confirm,
+    });
+  },
+
   confirm: async (title, text, confirmText = 'Ya, Lanjutkan') => {
     const result = await Swal.fire({
       title: title,
@@ -62,6 +71,22 @@ export const showAlert = {
       cancelButtonColor: themeColors.cancel,
       confirmButtonText: 'Ya, Hapus!',
       cancelButtonText: 'Batal'
+    });
+    return result.isConfirmed;
+  },
+
+  confirmDanger: async (title, text, confirmText = 'Ya, Lanjutkan') => {
+    const result = await Swal.fire({
+      title,
+      text,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: themeColors.danger,
+      cancelButtonColor: themeColors.cancel,
+      confirmButtonText: confirmText,
+      cancelButtonText: 'Batal',
+      reverseButtons: true,
+      focusCancel: true,
     });
     return result.isConfirmed;
   },

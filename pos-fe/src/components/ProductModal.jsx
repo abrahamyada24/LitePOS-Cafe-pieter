@@ -7,6 +7,7 @@ import {
   Monitor, CheckCircle2, AlertCircle, Trash2, Plus, ScanBarcode,
   Percent, CalendarClock
 } from 'lucide-react';
+import { showAlert } from '@/utils/swal';
 
 export default function ProductModal({ isOpen, onClose, onSave, initialData, categories }) {
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
@@ -133,23 +134,28 @@ export default function ProductModal({ isOpen, onClose, onSave, initialData, cat
               setNewAddon({ name: '', price: '' });
               fetchAddons(initialData.id);
           } else {
-              alert('Gagal menambah addon: ' + (json.message || json.error || 'Unknown error'));
+              showAlert.error('Gagal menambah addon', json.message || json.error || 'Terjadi kesalahan.');
           }
       } catch(e) {
           console.error(e);
-          alert('Gagal menambah addon: koneksi error');
+          showAlert.error('Gagal menambah addon', 'Koneksi ke server bermasalah.');
       }
   };
 
   const handleDeleteAddon = async (id) => {
+      const confirmed = await showAlert.confirmDanger('Hapus addon?', 'Pilihan tambahan ini akan dihapus dari produk.', 'Ya, Hapus Addon');
+      if (!confirmed) return;
       try {
           const token = localStorage.getItem('token');
           const res = await fetch(`${API_URL}/api/addons/${id}`, {
               method: 'DELETE',
               headers: { 'Authorization': `Bearer ${token}` }
           });
-          if(res.ok) fetchAddons(initialData.id);
-      } catch(e) { console.error(e); }
+          const data = await res.json();
+          if (!res.ok || !data.success) throw new Error(data.message || data.error);
+          await fetchAddons(initialData.id);
+          showAlert.success('Addon dihapus', 'Pilihan tambahan berhasil dihapus.');
+      } catch(e) { showAlert.error('Gagal menghapus addon', e.message || 'Coba lagi.'); }
   };
 
   const handleFileChange = (e) => {

@@ -50,10 +50,25 @@ exports.updateKitchenOrderStatus = async (req, res) => {
         if (status === 'READY') data.readyAt = new Date();
         if (status === 'COMPLETED' || status === 'CANCELLED') data.completedAt = new Date();
 
-        const order = await prisma.kitchenOrder.update({
-            where: { id: req.params.id },
-            data
+        const order = await prisma.$transaction(async (tx) => {
+            const currentOrder = await tx.kitchenOrder.findUnique({ where: { id: req.params.id } });
+            if (!currentOrder) return null;
+
+            const updatedOrder = await tx.kitchenOrder.update({
+                where: { id: currentOrder.id },
+                data
+            });
+
+            if (status === 'CANCELLED' && currentOrder.savedOrderId) {
+                await tx.savedTransaction.deleteMany({ where: { id: currentOrder.savedOrderId } });
+            }
+
+            return updatedOrder;
         });
+
+        if (!order) {
+            return res.status(404).json({ success: false, message: 'Pesanan dapur tidak ditemukan.' });
+        }
 
         res.json({ success: true, data: serializeOrder(order), message: 'Status pesanan diperbarui.' });
     } catch (error) {

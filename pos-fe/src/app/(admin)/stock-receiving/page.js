@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useState } from 'react';
 import { PackageCheck, Plus, Minus, Trash2, Save, Loader2, Search } from 'lucide-react';
+import { showAlert } from '@/utils/swal';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -54,7 +55,7 @@ export default function StockReceivingPage() {
     const removeFromCart = (productId) => setCart(cart.filter(c => c.productId !== productId));
 
     const handleSave = async () => {
-        if (cart.length === 0) return alert('Tambahkan produk terlebih dahulu');
+        if (cart.length === 0) return showAlert.warning('Belum ada produk', 'Tambahkan produk terlebih dahulu.');
         setSaving(true);
         try {
             const user = (() => { try { return JSON.parse(localStorage.getItem('pos-store') || '{}')?.state?.user; } catch { return null; } })();
@@ -63,9 +64,9 @@ export default function StockReceivingPage() {
                 body: JSON.stringify({ notes, createdBy: user?.name || 'Admin', items: cart })
             });
             const data = await res.json();
-            if (data.success) { alert('Penerimaan barang berhasil disimpan!'); setCart([]); setNotes(''); loadProducts(); loadHistory(); }
-            else alert(data.error);
-        } catch (e) { console.error(e); }
+            if (data.success) { showAlert.success('Penerimaan tersimpan', 'Stok produk berhasil diperbarui.'); setCart([]); setNotes(''); loadProducts(); loadHistory(); }
+            else showAlert.error('Gagal menyimpan penerimaan', data.error || data.message);
+        } catch (e) { showAlert.error('Gagal menyimpan penerimaan', e.message || 'Coba lagi.'); }
         setSaving(false);
     };
 

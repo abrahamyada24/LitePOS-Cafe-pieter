@@ -4,7 +4,13 @@ const prisma = new PrismaClient();
 // 1. GET SAVED TRANSACTIONS
 exports.getSavedTransactions = async (req, res) => {
     try {
+        const cancelledTableOrders = await prisma.kitchenOrder.findMany({
+            where: { status: 'CANCELLED', savedOrderId: { not: null } },
+            select: { savedOrderId: true }
+        });
+        const cancelledIds = cancelledTableOrders.map(order => order.savedOrderId).filter(Boolean);
         const saved = await prisma.savedTransaction.findMany({
+            where: cancelledIds.length > 0 ? { id: { notIn: cancelledIds } } : undefined,
             include: { user: { select: { name: true } } },
             orderBy: { createdAt: 'desc' }
         });

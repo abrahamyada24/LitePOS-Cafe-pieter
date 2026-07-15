@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { UtensilsCrossed, Plus, Trash2, Loader2, Edit2, QrCode, Clock3, UserRoundCheck, Sparkles } from 'lucide-react';
 import { useStore } from '../../../store/useStore';
+import { showAlert } from '../../../utils/swal';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -54,27 +55,37 @@ export default function TablesPage() {
             const res = await fetch(url, { method, headers: headers(), body: JSON.stringify(form) });
             const data = await res.json();
             if (data.success) { setShowForm(false); setEditId(null); setForm({ number: '', name: '', capacity: '4' }); loadTables(); }
-            else alert(data.message);
-        } catch (e) { console.error(e); }
+            else showAlert.error('Gagal menyimpan meja', data.message || data.error);
+        } catch (e) { showAlert.error('Gagal menyimpan meja', e.message || 'Coba lagi.'); }
     };
 
     const handleDelete = async (id) => {
-        if (!confirm('Hapus meja ini?')) return;
+        const confirmed = await showAlert.confirmDanger('Hapus meja?', 'Nomor meja dan link QR-nya akan dihapus.', 'Ya, Hapus Meja');
+        if (!confirmed) return;
         try {
-            await fetch(`${API_URL}/api/tables/${id}`, { method: 'DELETE', headers: headers() });
+            const response = await fetch(`${API_URL}/api/tables/${id}`, { method: 'DELETE', headers: headers() });
+            const data = await response.json();
+            if (!response.ok || !data.success) throw new Error(data.message || data.error);
             loadTables();
-        } catch (e) { console.error(e); }
+            showAlert.success('Meja dihapus', 'Data meja berhasil dihapus.');
+        } catch (e) { showAlert.error('Gagal menghapus meja', e.message || 'Coba lagi.'); }
     };
 
     const handleStatusChange = async (id, status, currentStatus) => {
         if (currentStatus === 'OCCUPIED' && status === 'AVAILABLE') {
-            const confirmed = window.confirm('Meja masih terisi. Yakin tandai langsung Tersedia tanpa proses dibersihkan?');
+            const confirmed = await showAlert.confirmDanger('Lewati proses bersih?', 'Meja masih terisi. Tandai langsung Tersedia tanpa status Dibersihkan?', 'Ya, Langsung Tersedia');
+            if (!confirmed) return;
+        }
+        if (currentStatus === 'OCCUPIED' && status === 'CLEANING') {
+            const confirmed = await showAlert.confirm('Pelanggan sudah selesai?', 'Meja akan ditandai perlu dibersihkan.', 'Ya, Pelanggan Selesai');
             if (!confirmed) return;
         }
         try {
-            await fetch(`${API_URL}/api/tables/${id}/status`, { method: 'PATCH', headers: headers(), body: JSON.stringify({ status }) });
+            const response = await fetch(`${API_URL}/api/tables/${id}/status`, { method: 'PATCH', headers: headers(), body: JSON.stringify({ status }) });
+            const data = await response.json();
+            if (!response.ok || !data.success) throw new Error(data.message || data.error);
             loadTables();
-        } catch (e) { console.error(e); }
+        } catch (e) { showAlert.error('Status belum berubah', e.message || 'Coba lagi.'); }
     };
 
     const formatElapsed = (value) => {
@@ -103,7 +114,7 @@ export default function TablesPage() {
         const url = `${window.location.origin}/katalog?table=${encodeURIComponent(tableNumber)}`;
         try {
             await navigator.clipboard.writeText(url);
-            alert(`Link order meja ${tableNumber} disalin.`);
+            showAlert.success('Link QR disalin', `Link order Meja ${tableNumber} siap ditempel atau dibagikan.`);
         } catch {
             window.prompt('Salin link order meja:', url);
         }

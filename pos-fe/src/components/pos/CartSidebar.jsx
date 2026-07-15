@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { ArrowLeft, LogOut, X, UserPlus, ShoppingCart, Utensils, Minus, Plus, User, ChevronRight, Truck, Tag, Save, ShoppingBag, MessageSquare } from 'lucide-react';
+import { showAlert } from '@/utils/swal';
 
 export default function CartSidebar({ 
     cart, 
@@ -29,6 +30,7 @@ export default function CartSidebar({
     takeawayOption,
     setTakeawayOption,
     taxRate,
+    pendingOrderContext,
     // New props for enhanced features
     discount,
     onOpenDiscountModal,
@@ -39,6 +41,14 @@ export default function CartSidebar({
     onUpdateItemNotes
 }) {
   const [editingNoteId, setEditingNoteId] = useState(null);
+  const clearCart = async () => {
+    const confirmed = await showAlert.confirmDanger(
+      'Kosongkan pesanan?',
+      'Semua item yang sedang dipilih akan dihapus dari keranjang.',
+      'Ya, Kosongkan'
+    );
+    if (confirmed) setCart([]);
+  };
   return (
     <div className={`w-full lg:w-[400px] bg-white border-l border-gray-100 flex-col shadow-2xl z-30 relative ${mobileView === 'menu' ? 'hidden lg:flex' : 'flex fixed inset-0 lg:static h-full'}`}>
         
@@ -69,13 +79,25 @@ export default function CartSidebar({
                 <button onClick={handleLogout} className="lg:hidden text-gray-400 hover:text-red-500">
                     <LogOut size={18}/>
                 </button>
-                {cart.length > 0 && (
-                    <button onClick={() => setCart([])} className="text-sm text-red-500 font-bold hover:text-red-600 transition-colors">
+                {cart.length > 0 && !pendingOrderContext && (
+                    <button onClick={clearCart} className="text-sm text-red-500 font-bold hover:text-red-600 transition-colors">
                         Hapus
                     </button>
                 )}
             </div>
         </div>
+
+        {pendingOrderContext && (
+            <div className="mx-4 mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                    <p className="text-[10px] font-black uppercase text-emerald-600">Order Meja {pendingOrderContext.queueLabel || ''}</p>
+                    <p className="text-sm font-bold text-emerald-900 truncate">Meja {pendingOrderContext.tableNumber} - {pendingOrderContext.customerName || 'Pelanggan'}</p>
+                </div>
+                <span className={`text-[10px] font-black px-2 py-1 rounded-md ${pendingOrderContext.accepted ? 'bg-emerald-700 text-white' : 'bg-white text-amber-700 border border-amber-200'}`}>
+                    {pendingOrderContext.accepted ? 'Diterima' : 'Memproses'}
+                </span>
+            </div>
+        )}
 
         {/* Member Selection Area */}
         <div className="px-6 py-2 border-b border-gray-50 space-y-3">
@@ -93,20 +115,23 @@ export default function CartSidebar({
             {/* Order Type Toggle */}
             <div className="flex bg-gray-100 p-1 rounded-lg">
                 <button 
+                    disabled={Boolean(pendingOrderContext)}
                     onClick={() => setOrderType('TAKE_AWAY')}
-                    className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${orderType === 'TAKE_AWAY' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500'}`}
+                    className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all disabled:cursor-not-allowed ${orderType === 'TAKE_AWAY' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500'} ${pendingOrderContext ? 'opacity-50' : ''}`}
                 >
                     Take Away
                 </button>
                 <button 
+                    disabled={Boolean(pendingOrderContext)}
                     onClick={() => setOrderType('DINE_IN')}
-                    className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${orderType === 'DINE_IN' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500'}`}
+                    className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all disabled:cursor-not-allowed ${orderType === 'DINE_IN' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500'} ${pendingOrderContext ? 'opacity-50' : ''}`}
                 >
                     Dine In
                 </button>
                 <button 
+                    disabled={Boolean(pendingOrderContext)}
                     onClick={() => setOrderType('PRE_ORDER')}
-                    className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${orderType === 'PRE_ORDER' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500'}`}
+                    className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all disabled:cursor-not-allowed ${orderType === 'PRE_ORDER' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500'} ${pendingOrderContext ? 'opacity-50' : ''}`}
                 >
                     Pre Order
                 </button>
@@ -115,8 +140,9 @@ export default function CartSidebar({
             {/* Table Selection Dropdown (Only if Dine In) */}
             {orderType === 'DINE_IN' && (
                 <button 
+                    disabled={Boolean(pendingOrderContext)}
                     onClick={() => setIsTableModalOpen(true)}
-                    className="flex items-center justify-between text-sm bg-gray-50 px-3 py-2 rounded-lg border border-gray-200 hover:border-blue-300 transition-colors w-full"
+                    className="flex items-center justify-between text-sm bg-gray-50 px-3 py-2 rounded-lg border border-gray-200 hover:border-blue-300 transition-colors w-full disabled:cursor-not-allowed disabled:opacity-70"
                 >
                     <span className="flex items-center gap-2 text-gray-600">
                         <Utensils size={14} />

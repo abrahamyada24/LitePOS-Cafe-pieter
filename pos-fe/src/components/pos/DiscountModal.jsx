@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { X, Percent, DollarSign, CheckCircle2 } from 'lucide-react';
+import { showAlert } from '@/utils/swal';
 
 export default function DiscountModal({ isOpen, onClose, onApply, subTotal, initialDiscount = 0, initialType = 'amount' }) {
     const [discountType, setDiscountType] = useState(initialType);
@@ -28,7 +29,7 @@ export default function DiscountModal({ isOpen, onClose, onApply, subTotal, init
 
         // Validate max discount
         if (amount > subTotal) {
-            alert('Diskon tidak boleh melebihi subtotal!');
+            showAlert.warning('Diskon terlalu besar', 'Diskon tidak boleh melebihi subtotal.');
             return;
         }
 

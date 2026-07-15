@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { Search, Plus, Edit, Trash2, Crown, ShoppingBag, User } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import CustomerModal from '@/components/CustomerModal';
+import { showAlert } from '@/utils/swal';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -54,16 +55,20 @@ export default function CustomersPage() {
 
   const handleDelete = async (id, e) => {
     e.stopPropagation();
-    if (confirm('Hapus pelanggan ini?')) {
+    const confirmed = await showAlert.confirmDanger('Hapus pelanggan?', 'Data pelanggan akan dihapus permanen.', 'Ya, Hapus');
+    if (confirmed) {
         try {
             const token = localStorage.getItem('token');
             const res = await fetch(`${API_URL}/api/customers/${id}`, {
                 method: 'DELETE',
                 headers: { 'Authorization': `Bearer ${token}` }
             });
-            if(res.ok) fetchDataMaster(); 
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.message || data.error);
+            await fetchDataMaster();
+            showAlert.success('Pelanggan dihapus', 'Data pelanggan berhasil dihapus.');
         } catch (error) {
-            console.error(error);
+            showAlert.error('Gagal menghapus pelanggan', error.message || 'Coba lagi.');
         }
     }
   };
@@ -101,7 +106,7 @@ const handleSaveCustomer = async (formData) => {
         fetchDataMaster(); 
         setIsModalOpen(false);
     } catch (error) {
-        alert("Error: " + error.message);
+        showAlert.error('Gagal menyimpan pelanggan', error.message);
     }
   };
 

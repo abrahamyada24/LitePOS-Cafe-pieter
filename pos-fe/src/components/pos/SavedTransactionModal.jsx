@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { X, Clock, Play, Trash2, ShoppingCart, Loader2 } from 'lucide-react';
+import { showAlert } from '@/utils/swal';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -36,7 +37,12 @@ export default function SavedTransactionModal({ isOpen, onClose, onResume, forma
 
     const handleDelete = async (id, e) => {
         e.stopPropagation();
-        if (!confirm('Hapus transaksi tersimpan ini?')) return;
+        const confirmed = await showAlert.confirmDanger(
+            'Hapus transaksi tersimpan?',
+            'Pesanan yang belum diselesaikan akan dibatalkan.',
+            'Ya, Hapus'
+        );
+        if (!confirmed) return;
         
         try {
             const token = localStorage.getItem('token');
@@ -46,11 +52,11 @@ export default function SavedTransactionModal({ isOpen, onClose, onResume, forma
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             const data = await res.json();
-            if (data.success) {
-                loadSavedTransactions();
-            }
+            if (!res.ok || !data.success) throw new Error(data.message || data.error);
+            await loadSavedTransactions();
+            showAlert.success('Transaksi dihapus', 'Pesanan tersimpan berhasil dibatalkan.');
         } catch (error) {
-            console.error("Failed to delete saved transaction:", error);
+            showAlert.error('Gagal menghapus transaksi', error.message || 'Coba lagi.');
         }
     };
 
@@ -89,8 +95,14 @@ export default function SavedTransactionModal({ isOpen, onClose, onResume, forma
                     ) : (
                         <div className="grid gap-4">
                             {savedTransactions.map((tx) => {
-                                const cartData = JSON.parse(tx.cartData);
-                                const itemCount = cartData.reduce((sum, item) => sum + item.qty, 0);
+                                const parsed = JSON.parse(tx.cartData);
+                                const payload = Array.isArray(parsed) ? { items: parsed } : parsed;
+                                const cartData = Array.isArray(payload.items) ? payload.items : [];
+                                const itemCount = cartData.reduce((sum, item) => sum + Number(item.qty || item.quantity || 1), 0);
+                                const total = Number(payload.grandTotal || tx.total || cartData.reduce(
+                                    (sum, item) => sum + Number(item.price || 0) * Number(item.qty || item.quantity || 1),
+                                    0
+                                ));
                                 
                                 return (
                                     <div 
@@ -109,7 +121,7 @@ export default function SavedTransactionModal({ isOpen, onClose, onResume, forma
                                                     </span>
                                                 </div>
                                                 <p className="text-sm text-gray-500 line-clamp-1">
-                                                    {cartData.map(i => `${i.qty}x ${i.name}`).join(', ')}
+                                                    {cartData.map(i => `${i.qty || i.quantity || 1}x ${i.name}`).join(', ')}
                                                 </p>
                                                 
                                                 <div className="flex items-center gap-4 mt-3">
@@ -119,7 +131,7 @@ export default function SavedTransactionModal({ isOpen, onClose, onResume, forma
                                                     </div>
                                                     <div className="text-sm">
                                                         <span className="text-gray-500">Total:</span>
-                                                        <span className="font-bold text-blue-600 ml-1">{formatNumber(Number(tx.total))}</span>
+                                                        <span className="font-bold text-blue-600 ml-1">{formatNumber(total)}</span>
                                                     </div>
                                                 </div>
                                             </div>
