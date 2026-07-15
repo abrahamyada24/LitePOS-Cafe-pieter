@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useStore } from '../store/useStore';
+import OrderNotificationWatcher from './OrderNotificationWatcher';
 
 type DialogButtonStyle = 'default' | 'cancel' | 'destructive';
 
@@ -202,6 +203,7 @@ export default function AppDialogProvider({ children }: { children: ReactNode })
 
     return (
         <>
+            <OrderNotificationWatcher />
             {children}
             <Modal
                 visible={!!dialog}

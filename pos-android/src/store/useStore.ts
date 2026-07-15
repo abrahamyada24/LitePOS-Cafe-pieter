@@ -23,6 +23,7 @@ interface StoreState {
     discount: number;
     discountType: 'amount' | 'percent';
     activeShift: { id: string; openingCash: number; openedAt: string } | null;
+    tableOrderNotificationCount: number;
     pendingOrderContext: {
         orderType?: 'DINE_IN' | 'TAKE_AWAY';
         tableNumber?: string;
@@ -42,6 +43,7 @@ interface StoreState {
         enableShift: boolean;
         enableDineTable: boolean;
         enableTableOrder: boolean;
+        enableKitchenQueue: boolean;
         enableKitchenPrint: boolean;
         showImages: boolean;
         printerAddress: string | null;
@@ -64,6 +66,7 @@ interface StoreState {
     setSettings: (settings: any) => void;
     setUser: (user: any) => void;
     setActiveShift: (shift: { id: string; openingCash: number; openedAt: string } | null) => void;
+    setTableOrderNotificationCount: (count: number) => void;
     setPendingOrderContext: (context: StoreState['pendingOrderContext']) => void;
     clearPendingOrderContext: () => void;
     addToCart: (product: any) => void;
@@ -85,6 +88,7 @@ export const useStore = create<StoreState>((set, get) => ({
     discount: 0,
     discountType: 'amount',
     activeShift: null,
+    tableOrderNotificationCount: 0,
     pendingOrderContext: null,
     settings: {
         storeName: 'LitePOS',
@@ -95,6 +99,7 @@ export const useStore = create<StoreState>((set, get) => ({
         enableShift: true,
         enableDineTable: false,
         enableTableOrder: false,
+        enableKitchenQueue: false,
         enableKitchenPrint: false,
         showImages: true,
         printerAddress: null,
@@ -113,6 +118,7 @@ export const useStore = create<StoreState>((set, get) => ({
     setSettings: (settings) => set({ settings }),
     setUser: (user) => set({ user }),
     setActiveShift: (shift) => set({ activeShift: shift }),
+    setTableOrderNotificationCount: (count) => set({ tableOrderNotificationCount: count }),
     setPendingOrderContext: (context) => set({ pendingOrderContext: context }),
     clearPendingOrderContext: () => set({ pendingOrderContext: null }),
     addToCart: (product) => {

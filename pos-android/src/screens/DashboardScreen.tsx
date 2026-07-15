@@ -201,6 +201,7 @@ export default function DashboardScreen({ navigation }: any) {
     const [closingCashInput, setClosingCashInput] = useState('');
     const [showCloseShiftModal, setShowCloseShiftModal] = useState(false);
     const [pendingCount, setPendingCount] = useState(0);
+    const tableOrderNotificationCount = useStore((state) => state.tableOrderNotificationCount);
     const [upcomingPreOrders, setUpcomingPreOrders] = useState<any[]>([]);
     const settings = useStore(state => state.settings);
 
@@ -517,9 +518,20 @@ export default function DashboardScreen({ navigation }: any) {
                     </View>
                 </View>
                 <View style={styles.headerRight}>
-                    <TouchableOpacity style={styles.notifBtn}>
+                    <TouchableOpacity
+                        style={styles.notifBtn}
+                        accessibilityLabel={`${tableOrderNotificationCount} order meja baru`}
+                        onPress={() => {
+                            if (settings.enableTableOrder) navigation.navigate('TableOrders');
+                            else Alert.alert('Order Meja tidak aktif', 'Aktifkan fitur Order Meja dari pengaturan web.');
+                        }}
+                    >
                         <Icon name="bell-outline" size={22} color={COLORS.textPrimary} />
-                        <View style={styles.notifDot} />
+                        {tableOrderNotificationCount > 0 && (
+                            <View style={styles.notifBadge}>
+                                <Text style={styles.notifBadgeText}>{tableOrderNotificationCount > 99 ? '99+' : tableOrderNotificationCount}</Text>
+                            </View>
+                        )}
                     </TouchableOpacity>
                     <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
                         <Icon name="logout-variant" size={20} color={COLORS.danger} />
@@ -1254,16 +1266,25 @@ const getStyles = (COLORS: any) => StyleSheet.create({
         shadowRadius: 6,
         elevation: 3,
     },
-    notifDot: {
+    notifBadge: {
         position: 'absolute',
-        top: 9,
-        right: 9,
-        width: 8,
-        height: 8,
-        borderRadius: 4,
+        top: -3,
+        right: -5,
+        minWidth: 19,
+        height: 19,
+        paddingHorizontal: 4,
+        borderRadius: 10,
         backgroundColor: COLORS.danger,
-        borderWidth: 1.5,
+        borderWidth: 2,
         borderColor: COLORS.white,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    notifBadgeText: {
+        ...FONTS.bold,
+        color: '#FFFFFF',
+        fontSize: 9,
+        lineHeight: 11,
     },
     logoutBtn: {
         width: 40,

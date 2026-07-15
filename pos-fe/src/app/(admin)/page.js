@@ -264,6 +264,7 @@ function PreOrderCard({ order, onConfirm, confirming }) {
 // ─── Main Dashboard ─────────────────────────────────────────────────
 export default function Dashboard() {
   const user = useStore(state => state.user);
+  const settings = useStore(state => state.settings);
 
   const [stats, setStats] = useState(null);
   const [recentTransactions, setRecentTransactions] = useState([]);
@@ -491,7 +492,9 @@ export default function Dashboard() {
       {isAdminOrOwner && (
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
           <QuickActionCard icon={ShoppingCart} label="Buka Kasir" href="/pos" gradient="from-blue-500 to-indigo-600" />
-          <QuickActionCard icon={QrCode} label="Order Meja" href="/order-meja" gradient="from-cyan-500 to-emerald-600" />
+          {settings?.enableTableOrder && (
+            <QuickActionCard icon={QrCode} label="Order Meja" href="/order-meja" gradient="from-cyan-500 to-emerald-600" />
+          )}
           <QuickActionCard icon={BarChart3} label="Laporan" href="/reports" gradient="from-emerald-500 to-teal-600" />
           <QuickActionCard icon={Package} label="Kelola Data" href="/products" gradient="from-violet-500 to-purple-600" />
           <QuickActionCard icon={Users} label="Kontak" href="/customers" gradient="from-rose-500 to-pink-600" />

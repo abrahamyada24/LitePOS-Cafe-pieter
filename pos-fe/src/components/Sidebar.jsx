@@ -91,17 +91,21 @@ export default function Sidebar({ isMobileOpen, setIsMobileOpen }) {
         if (data.success) {
           setPendingSalesCount(Array.isArray(data.data) ? data.data.length : 0);
         }
-        const kitchenRes = await fetch(`${baseUrl}/api/kitchen-orders/summary`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const kitchenData = await kitchenRes.json();
-        if (kitchenData.success) setKitchenNewCount(Number(kitchenData.data?.NEW || 0));
+        if (settings?.enableKitchenQueue) {
+          const kitchenRes = await fetch(`${baseUrl}/api/kitchen-orders/summary`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          const kitchenData = await kitchenRes.json();
+          if (kitchenData.success) setKitchenNewCount(Number(kitchenData.data?.NEW || 0));
+        } else {
+          setKitchenNewCount(0);
+        }
       } catch (e) { /* silent */ }
     };
     fetchPendingSales();
     const interval = setInterval(fetchPendingSales, 30000);
     return () => clearInterval(interval);
-  }, [mounted, settings?.enableTableOrder]);
+  }, [mounted, settings?.enableTableOrder, settings?.enableKitchenQueue]);
 
   const toggleSubmenu = (key) => {
     setExpandedMenu(prev => ({ ...prev, [key]: !prev[key] }));
@@ -123,6 +127,7 @@ export default function Sidebar({ isMobileOpen, setIsMobileOpen }) {
   const isAdminOrOwner = user?.role === 'ADMIN' || user?.role === 'OWNER';
   const enableDineTable = settings?.enableDineTable;
   const enableTableOrder = settings?.enableTableOrder;
+  const enableKitchenQueue = settings?.enableKitchenQueue;
 
   return (
     <>
@@ -199,7 +204,9 @@ export default function Sidebar({ isMobileOpen, setIsMobileOpen }) {
             <div className="pt-4 pb-2">
               <p className="px-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 italic">Operasional</p>
               <SidebarItem icon={Clock} label="Shift" href="/shifts" />
-              <SidebarItem icon={ChefHat} label="Antrean Dapur" href="/kitchen" badge={kitchenNewCount} />
+              {enableKitchenQueue && (
+                <SidebarItem icon={ChefHat} label="Antrean Dapur" href="/kitchen" badge={kitchenNewCount} />
+              )}
               {isAdminOrOwner && (
                 <SidebarItem icon={Wallet} label="Pengeluaran" href="/expenses" />
               )}

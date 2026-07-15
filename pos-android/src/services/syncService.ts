@@ -58,7 +58,7 @@ export const syncService = {
                 // Settings — "NON-EMPTY WINS" merge strategy
                 // Boolean keys: selalu update (false adalah value valid)
                 // String keys: hanya update jika server value non-kosong, atau lokal belum ada
-                const BOOLEAN_KEYS = ['enablePreOrder', 'enableShift', 'enableDineTable', 'enableTableOrder', 'allowNegativeStock', 'showImages', 'loyalty_active'];
+                const BOOLEAN_KEYS = ['enablePreOrder', 'enableShift', 'enableDineTable', 'enableTableOrder', 'enableKitchenQueue', 'allowNegativeStock', 'showImages', 'loyalty_active'];
                 const NUMERIC_KEYS = ['taxRate', 'serviceCharge', 'loyalty_multiplier', 'loyalty_multiplier_amount', 'loyalty_point_value', 'loyalty_min_points'];
                 
                 if (data.settings && data.settings.length > 0) {

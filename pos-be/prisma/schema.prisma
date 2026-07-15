@@ -234,6 +234,7 @@ model StoreSetting {
   enableShift        Boolean  @default(true) @map("enable_shift")
   enableDineTable    Boolean  @default(false) @map("enable_dine_table")
   enableTableOrder   Boolean  @default(false) @map("enable_table_order")
+  enableKitchenQueue Boolean  @default(false) @map("enable_kitchen_queue")
   takeawayOptions    String?  @map("takeaway_options") @db.Text
   allowNegativeStock Boolean  @default(false) @map("allow_negative_stock")
   showImages         Boolean  @default(true) @map("show_images")

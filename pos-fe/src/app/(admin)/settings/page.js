@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { 
   Save, Store, CreditCard, ShieldCheck, UploadCloud, 
   Receipt, Printer, Smartphone, DollarSign, Loader2, Image as ImageIcon,
-  Truck, Plus, X, Trash2, Gift, Layout, PackageSearch, QrCode
+  Truck, Plus, X, Trash2, Gift, Layout, PackageSearch, QrCode, ChefHat
 } from 'lucide-react';
 import { useStore } from '../../../store/useStore';
 import { showAlert } from '../../../utils/swal';
@@ -36,7 +36,8 @@ export default function SettingsPage() {
     enablePreOrder: false,
     enableShift: true,
     enableDineTable: false,
-    enableTableOrder: false
+    enableTableOrder: false,
+    enableKitchenQueue: false
   });
 
   const [loyaltyForm, setLoyaltyForm] = useState({
@@ -99,7 +100,8 @@ export default function SettingsPage() {
         enablePreOrder: settings.enablePreOrder || false,
         enableShift: settings.enableShift !== undefined ? settings.enableShift : true,
         enableDineTable: settings.enableDineTable || false,
-        enableTableOrder: settings.enableTableOrder || false
+        enableTableOrder: settings.enableTableOrder || false,
+        enableKitchenQueue: settings.enableKitchenQueue || false
       });
       if (settings.logoUrl) {
           setLogoPreview(settings.logoUrl.startsWith('http') ? settings.logoUrl : `${API_URL}${settings.logoUrl}`);
@@ -452,12 +454,13 @@ export default function SettingsPage() {
                             <option value="system">Ikuti Sistem HP</option>
                         </select>
                     </div>
+
                 </div>
             </div>
 
             <div className="card-base p-6 mt-6">
                 <h3 className="font-bold text-gray-800 mb-4 border-b border-gray-100 pb-3 flex items-center gap-2">
-                    <Smartphone size={18} /> Fitur Android POS
+                    <Smartphone size={18} /> Fitur Operasional POS
                 </h3>
                 <div className="space-y-4">
                     <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
@@ -504,6 +507,20 @@ export default function SettingsPage() {
                         <label className="relative inline-flex items-center cursor-pointer ml-4">
                             <input type="checkbox" className="sr-only peer" checked={form.enableTableOrder} onChange={() => handleToggle('enableTableOrder')} />
                             <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+                        </label>
+                    </div>
+
+                    <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                        <div className="flex items-start gap-3">
+                            <ChefHat size={18} className="text-orange-600 mt-0.5" />
+                            <div>
+                                <p className="font-bold text-gray-800 text-sm">Antrean Dapur</p>
+                                <p className="text-xs text-gray-500">Tampilkan display urutan pesanan untuk tim dapur.</p>
+                            </div>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer ml-4">
+                            <input type="checkbox" className="sr-only peer" checked={form.enableKitchenQueue} onChange={() => handleToggle('enableKitchenQueue')} />
+                            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
                         </label>
                     </div>
                 </div>

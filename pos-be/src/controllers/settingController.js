@@ -77,6 +77,7 @@ exports.updateSettings = async (req, res) => {
     if (req.body.enableShift !== undefined) dataToUpdate.enableShift = req.body.enableShift === 'true' || req.body.enableShift === true;
     if (req.body.enableDineTable !== undefined) dataToUpdate.enableDineTable = req.body.enableDineTable === 'true' || req.body.enableDineTable === true;
     if (req.body.enableTableOrder !== undefined) dataToUpdate.enableTableOrder = req.body.enableTableOrder === 'true' || req.body.enableTableOrder === true;
+    if (req.body.enableKitchenQueue !== undefined) dataToUpdate.enableKitchenQueue = req.body.enableKitchenQueue === 'true' || req.body.enableKitchenQueue === true;
     if (dataToUpdate.enableTableOrder === true) dataToUpdate.enableDineTable = true;
     if (dataToUpdate.enableTableOrder !== true && dataToUpdate.enableDineTable === false) dataToUpdate.enableTableOrder = false;
     if (req.body.takeawayOptions !== undefined) dataToUpdate.takeawayOptions = req.body.takeawayOptions;

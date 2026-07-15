@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChefHat, Clock3, Flame, CheckCircle2, Loader2, RefreshCw, X, History, CircleX } from 'lucide-react';
 import { showAlert } from '@/utils/swal';
+import { useStore } from '@/store/useStore';
 
 const RAW_API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 const API_URL = RAW_API_URL.replace(/\/api$/, '').replace(/\/$/, '');
@@ -18,6 +19,8 @@ const STATUS_META = {
 const formatRp = (value) => `Rp ${Number(value || 0).toLocaleString('id-ID')}`;
 
 export default function KitchenPage() {
+    const settings = useStore(state => state.settings);
+    const fetchSettings = useStore(state => state.fetchSettings);
     const [orders, setOrders] = useState([]);
     const [loading, setLoading] = useState(true);
     const [updatingId, setUpdatingId] = useState(null);
@@ -25,6 +28,11 @@ export default function KitchenPage() {
     const [now, setNow] = useState(Date.now());
 
     const loadOrders = useCallback(async (silent = false) => {
+        if (!settings?.enableKitchenQueue) {
+            setOrders([]);
+            setLoading(false);
+            return;
+        }
         if (!silent) setLoading(true);
         try {
             const token = localStorage.getItem('token');
@@ -39,7 +47,11 @@ export default function KitchenPage() {
         } finally {
             if (!silent) setLoading(false);
         }
-    }, [includeCompleted]);
+    }, [includeCompleted, settings?.enableKitchenQueue]);
+
+    useEffect(() => {
+        if (!settings) fetchSettings();
+    }, [fetchSettings, settings]);
 
     useEffect(() => {
         loadOrders();
@@ -91,6 +103,18 @@ export default function KitchenPage() {
         Object.keys(STATUS_META).map(status => [status, orders.filter(order => order.status === status)])
     ), [orders]);
     const visibleStatuses = includeCompleted ? ['NEW', 'PREPARING', 'READY', 'COMPLETED', 'CANCELLED'] : ['NEW', 'PREPARING', 'READY'];
+
+    if (settings && !settings.enableKitchenQueue) {
+        return (
+            <div className="min-h-[60vh] flex items-center justify-center">
+                <div className="w-full max-w-md border border-gray-200 bg-white rounded-lg p-6 text-center">
+                    <ChefHat size={36} className="mx-auto text-gray-400" />
+                    <h1 className="mt-4 text-xl font-black text-gray-900">Antrean dapur tidak aktif</h1>
+                    <p className="mt-2 text-sm text-gray-500">Owner dapat mengaktifkannya dari Pengaturan fitur.</p>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-5">
