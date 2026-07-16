@@ -10,6 +10,7 @@ import ProductGrid from '@/components/pos/ProductGrid';
 import CartSidebar from '@/components/pos/CartSidebar';
 import MemberModal from '@/components/pos/MemberModal';
 import PaymentModal from '@/components/pos/PaymentModal';
+import ReceiptPreviewModal from '@/components/pos/ReceiptPreviewModal';
 import TableModal from '@/components/pos/TableModal';
 
 // Import SweetAlert
@@ -28,6 +29,7 @@ export default function POSPage() {
   const [categories, setCategories] = useState([]);
   const [tables, setTables] = useState([]);
   const [currentUser, setCurrentUser] = useState(null); 
+  const [storeSettings, setStoreSettings] = useState(null);
   
   // --- STATE UI ---
   const [cart, setCart] = useState([]);
@@ -38,6 +40,7 @@ export default function POSPage() {
 
   // Member State
   const [selectedMember, setSelectedMember] = useState(null);
+  const [guestCustomerName, setGuestCustomerName] = useState('');
   const [isMemberModalOpen, setIsMemberModalOpen] = useState(false);
   const [memberSearch, setMemberSearch] = useState('');
 
@@ -46,8 +49,9 @@ export default function POSPage() {
   const [paymentStep, setPaymentStep] = useState('SELECT'); 
   const [paymentMethod, setPaymentMethod] = useState(''); 
   const [cashGiven, setCashGiven] = useState(0);
-  const [isPrinting, setIsPrinting] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [completedTransaction, setCompletedTransaction] = useState(null);
+  const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
 
   // Table & Order Type States
   const [orderType, setOrderType] = useState('TAKE_AWAY');
@@ -115,6 +119,7 @@ export default function POSPage() {
                 const settingsData = await settingsRes.json();
                 
                 if (settingsData.success && settingsData.data) {
+                    setStoreSettings(settingsData.data);
                     if (settingsData.data.takeawayOptions) {
                         try {
                             const parsed = JSON.parse(settingsData.data.takeawayOptions);
@@ -281,6 +286,31 @@ export default function POSPage() {
   const handleCashInput = (e) => setCashGiven(Number(e.target.value.replace(/\D/g, '')));
   const getImageUrl = (path) => !path ? null : (path.startsWith('http') ? path : `${API_URL}${path}`);
 
+  const buildReceiptTransaction = (transaction, type, customerName) => ({
+      ...transaction,
+      createdAt: transaction.createdAt || new Date().toISOString(),
+      customerName: transaction.customerName || customerName || null,
+      user: transaction.user || currentUser,
+      items: cart.map(item => ({
+          productId: item.id,
+          qty: item.qty,
+          price: Number(item.price),
+          notes: item.notes || null,
+          product: { name: item.name },
+      })),
+      payments: transaction.payments?.length
+          ? transaction.payments
+          : [{ paymentType: type, amount: grandTotal }],
+      cashAmount: type === 'CASH' ? cashGiven : (transaction.cashAmount ?? grandTotal),
+      changeAmount: type === 'CASH' ? change : (transaction.changeAmount ?? 0),
+      subTotal: transaction.subTotal ?? subTotal,
+      taxAmount: transaction.taxAmount ?? taxAmount,
+      discountAmount: transaction.discountAmount ?? 0,
+      grandTotal: transaction.grandTotal ?? grandTotal,
+      orderType: transaction.orderType || orderType,
+      tableNumber: transaction.tableNumber || selectedTable?.number || null,
+  });
+
   // --- LOGOUT HANDLER (Sudah dipindah ke Header.jsx, tapi logic bisa disini jika butuh state) ---
   // Kita gunakan logic logout internal Header.jsx saja biar bersih.
 
@@ -299,9 +329,14 @@ export default function POSPage() {
           const payload = {
               userId: userId, 
               customerId: selectedMember?.id || null,
-              customerName: pendingOrderContext?.customerName || selectedMember?.name || null,
+              customerName: pendingOrderContext?.customerName || selectedMember?.name || guestCustomerName.trim() || null,
               items: cart.map(c => ({ productId: c.id, packageId: c.packageId || null, qty: c.qty, notes: c.notes || null })),
-              payment: { type: type, amount: grandTotal },
+              payment: {
+                type,
+                amount: grandTotal,
+                cashAmount: type === 'CASH' ? cashGiven : null,
+                changeAmount: type === 'CASH' ? change : null,
+              },
               orderType: orderType,
               tableNumber: orderType === 'DINE_IN' && selectedTable ? selectedTable.number : null,
               note: pendingOrderContext?.note || null,
@@ -322,6 +357,7 @@ export default function POSPage() {
           const data = await res.json();
 
           if (!data.success) throw new Error(data.message);
+          const receiptTransaction = buildReceiptTransaction(data.data, type, payload.customerName);
 
           if (pendingOrderContext?.orderCode) {
               sessionStorage.removeItem('table-order-to-process');
@@ -331,13 +367,13 @@ export default function POSPage() {
           if (type === 'QRIS' && data.data.midtransToken) {
               window.snap.pay(data.data.midtransToken, {
                   onSuccess: function(result) {
+                      setCompletedTransaction(receiptTransaction);
                       setPaymentStep('SUCCESS');
-                      handlePrintReceipt();
                       showAlert.success("Pembayaran Sukses", "Transaksi QRIS berhasil!");
                   },
                   onPending: function(result) {
+                      setCompletedTransaction(receiptTransaction);
                       setPaymentStep('SUCCESS'); 
-                      handlePrintReceipt();
                       showAlert.info("Menunggu", "Pembayaran sedang diproses.");
                   },
                   onError: function(result) {
@@ -348,9 +384,9 @@ export default function POSPage() {
                   }
               });
           } else {
+              setCompletedTransaction(receiptTransaction);
               setPaymentStep('SUCCESS');
-              handlePrintReceipt();
-              showAlert.success("Pembayaran Sukses", "Transaksi tunai berhasil disimpan.");
+              showAlert.success("Pembayaran Sukses", "Transaksi berhasil disimpan dan struk siap dicetak.");
           }
 
       } catch (error) {
@@ -368,18 +404,18 @@ export default function POSPage() {
     setPaymentStep('SELECT');
     setPaymentMethod('');
     setCashGiven(0);
+    setCompletedTransaction(null);
+    setIsReceiptModalOpen(false);
     setIsPaymentModalOpen(true);
   }
 
-  const handlePrintReceipt = () => {
-      setIsPrinting(true);
-      setTimeout(() => { setIsPrinting(false); }, 2000);
-  };
-
   const resetTransaction = () => {
       setIsPaymentModalOpen(false);
+      setIsReceiptModalOpen(false);
+      setCompletedTransaction(null);
       setCart([]);
       setSelectedMember(null);
+      setGuestCustomerName('');
       setSelectedTable(null);
       setOrderType('TAKE_AWAY');
       setPreOrderDate('');
@@ -394,6 +430,7 @@ export default function POSPage() {
   // Handle Member Select from Modal
   const handleMemberSelect = (member) => {
       setSelectedMember(member);
+      setGuestCustomerName('');
       setIsMemberModalOpen(false);
       setMemberSearch('');
   }
@@ -431,6 +468,8 @@ export default function POSPage() {
         setMobileView={setMobileView}
         selectedMember={selectedMember}
         setSelectedMember={setSelectedMember}
+        guestCustomerName={guestCustomerName}
+        setGuestCustomerName={setGuestCustomerName}
         setIsMemberModalOpen={setIsMemberModalOpen}
         removeFromCart={removeFromCart}
         updateQty={updateQty}
@@ -482,6 +521,7 @@ export default function POSPage() {
          paymentMethod={paymentMethod}
          setPaymentMethod={setPaymentMethod}
          cashGiven={cashGiven}
+         setCashGiven={setCashGiven}
          handleCashInput={handleCashInput}
          isCashSufficient={isCashSufficient}
          change={change}
@@ -489,8 +529,17 @@ export default function POSPage() {
          handleProcessTransaction={handleProcessTransaction}
          resetTransaction={resetTransaction}
          isProcessing={isProcessing}
-         isPrinting={isPrinting}
+         hasReceipt={Boolean(completedTransaction)}
+         onOpenReceipt={() => setIsReceiptModalOpen(true)}
          grandTotal={grandTotal}
+         formatNumber={formatNumber}
+      />
+
+      <ReceiptPreviewModal
+         isOpen={isReceiptModalOpen}
+         onClose={() => setIsReceiptModalOpen(false)}
+         transaction={completedTransaction}
+         store={storeSettings}
          formatNumber={formatNumber}
       />
 

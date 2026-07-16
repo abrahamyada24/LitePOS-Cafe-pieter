@@ -10,6 +10,8 @@ export default function CartSidebar({
     setMobileView, 
     selectedMember, 
     setSelectedMember, 
+    guestCustomerName,
+    setGuestCustomerName,
     setIsMemberModalOpen, 
     removeFromCart, 
     updateQty, 
@@ -99,7 +101,7 @@ export default function CartSidebar({
             </div>
         )}
 
-        {/* Member Selection Area */}
+        {/* Customer Selection Area */}
         <div className="px-6 py-2 border-b border-gray-50 space-y-3">
             {selectedMember ? (
                 <div className="flex items-center justify-between text-sm bg-blue-50 text-blue-700 px-3 py-2 rounded-lg border border-blue-100">
@@ -107,9 +109,23 @@ export default function CartSidebar({
                     <button onClick={()=>setSelectedMember(null)}><X size={14}/></button>
                 </div>
             ) : (
-                <button onClick={() => setIsMemberModalOpen(true)} className="text-xs flex items-center gap-1 text-gray-500 hover:text-blue-500 transition-colors w-full justify-center py-2 border border-dashed rounded-lg border-gray-200 hover:border-blue-200">
-                    <UserPlus size={14}/> Tambah Pelanggan
-                </button>
+                <div className="space-y-2">
+                    <label htmlFor="guest-customer-name" className="block text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                        Nama pelanggan di nota (opsional)
+                    </label>
+                    <input
+                        id="guest-customer-name"
+                        type="text"
+                        maxLength={100}
+                        value={guestCustomerName}
+                        onChange={(event) => setGuestCustomerName(event.target.value)}
+                        placeholder="Contoh: Pak Budi"
+                        className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 outline-none transition-colors placeholder:text-gray-400 focus:border-blue-400 focus:bg-white"
+                    />
+                    <button onClick={() => setIsMemberModalOpen(true)} className="text-xs flex items-center gap-1 text-gray-500 hover:text-blue-500 transition-colors w-full justify-center py-2 border border-dashed rounded-lg border-gray-200 hover:border-blue-200">
+                        <UserPlus size={14}/> Pilih dari daftar member
+                    </button>
+                </div>
             )}
 
             {/* Order Type Toggle */}

@@ -218,7 +218,7 @@ export default function TransactionsPage() {
                                             </span>
                                         </td>
                                         <td className="px-6 py-4 text-gray-800 font-medium text-xs">
-                                            {trx.customer ? trx.customer.name : 'Umum'}
+                                            {trx.customerName || trx.customer?.name || 'Umum'}
                                         </td>
                                         <td className="px-6 py-4 font-bold text-gray-900 text-xs">
                                             {formatRp(trx.grandTotal)}

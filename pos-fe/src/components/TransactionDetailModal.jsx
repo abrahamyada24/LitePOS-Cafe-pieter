@@ -129,7 +129,7 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction })
                         <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
                             <p className="text-[10px] text-gray-400 font-bold uppercase mb-1">Pelanggan</p>
                             <div className="flex items-center gap-2 font-bold text-gray-700 text-xs">
-                                <User size={12} /> {customer?.name || 'Umum / Guest'}
+                                <User size={12} /> {transaction.customerName || customer?.name || 'Umum / Guest'}
                             </div>
                         </div>
                     </div>
@@ -241,7 +241,7 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction })
                         </div>
                         <div>TGL : {formatDate(transaction.createdAt)}</div>
                         <div>KASIR: {user?.name || 'Staff'}</div>
-                        <div>CUST : {customer?.name || 'Guest'}</div>
+                        <div>CUST : {transaction.customerName || customer?.name || 'Guest'}</div>
                         <div>TIPE : {transaction.orderType === 'DINE_IN' ? `DINE-IN (Meja ${transaction.tableNumber || '-'})` : transaction.orderType === 'PRE_ORDER' ? 'PRE-ORDER' : 'TAKE AWAY'}</div>
                         {transaction.takeawayOption && <div>VIA  : {transaction.takeawayOption}</div>}
                     </div>

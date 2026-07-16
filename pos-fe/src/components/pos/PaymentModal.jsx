@@ -1,11 +1,11 @@
 "use client";
 
-import { X, Banknote, QrCode, CheckCircle2, Loader2, AlertCircle, ExternalLink, ArrowRight, RotateCcw, CreditCard } from 'lucide-react';
+import { X, Banknote, QrCode, CheckCircle2, Loader2, ExternalLink, RotateCcw, CreditCard, Printer } from 'lucide-react';
 
 export default function PaymentModal({
     isOpen, onClose, paymentStep, setPaymentStep, paymentMethod, setPaymentMethod,
     cashGiven, setCashGiven, handleCashInput, isCashSufficient, change, deficit,
-    handleProcessTransaction, resetTransaction, isProcessing, isPrinting,
+    handleProcessTransaction, resetTransaction, isProcessing, hasReceipt, onOpenReceipt,
     grandTotal, formatNumber
 }) {
 
@@ -35,7 +35,7 @@ export default function PaymentModal({
                 <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
                     <h3 className="font-bold text-gray-800">Pembayaran</h3>
                     {/* Tombol Close hanya muncul jika tidak sedang memproses */}
-                    {!isProcessing && (
+                    {!isProcessing && paymentStep !== 'SUCCESS' && (
                         <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full text-gray-400 transition-colors">
                             <X size={20} />
                         </button>
@@ -217,14 +217,23 @@ export default function PaymentModal({
                             </div>
                             <div>
                                 <h3 className="text-2xl font-black text-gray-800">Pembayaran Berhasil</h3>
-                                <p className="text-sm text-gray-400 mt-1">{isPrinting ? 'Mencetak struk...' : 'Transaksi telah tercatat di sistem.'}</p>
+                                <p className="text-sm text-gray-400 mt-1">Transaksi telah tercatat dan struk siap dicetak.</p>
                             </div>
-                            <button
-                                onClick={resetTransaction}
-                                className="w-full py-4 bg-gray-950 text-white rounded-2xl font-bold shadow-lg hover:bg-blue-600 transition-all active:scale-95"
-                            >
-                                Selesai & Transaksi Baru
-                            </button>
+                            <div className="space-y-3">
+                                <button
+                                    disabled={!hasReceipt}
+                                    onClick={onOpenReceipt}
+                                    className="w-full py-4 bg-blue-600 text-white rounded-2xl font-bold shadow-lg hover:bg-blue-700 disabled:bg-gray-200 transition-all active:scale-95 flex items-center justify-center gap-2"
+                                >
+                                    <Printer size={18} /> Lihat & Cetak Struk
+                                </button>
+                                <button
+                                    onClick={resetTransaction}
+                                    className="w-full py-3 text-sm font-bold text-gray-500 hover:text-gray-800 transition-colors"
+                                >
+                                    Selesai & Transaksi Baru
+                                </button>
+                            </div>
                         </div>
                     )}
                 </div>
