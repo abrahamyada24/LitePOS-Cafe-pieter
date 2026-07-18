@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -187,6 +187,23 @@ function App(): React.JSX.Element {
     const [showTrialPopup, setShowTrialPopup] = useState(false);
     const [activationCode, setActivationCode] = useState('');
 
+    const reconcileActiveShift = useCallback(async () => {
+        const db = await getDBConnection();
+        const [result] = await db.executeSql(
+            `SELECT * FROM shifts WHERE status = 'OPEN' ORDER BY openedAt DESC LIMIT 1`
+        );
+        if (result.rows.length === 0) {
+            setActiveShift(null);
+            return;
+        }
+        const shift = result.rows.item(0);
+        setActiveShift({
+            id: shift.id,
+            openingCash: Number(shift.openingCash || 0),
+            openedAt: shift.openedAt,
+        });
+    }, [setActiveShift]);
+
     const handleActivate = async () => {
         const code = activationCode.trim().toUpperCase();
         if (code.length < 4) {
@@ -282,22 +299,14 @@ function App(): React.JSX.Element {
         if (!user) { setActiveShift(null); return; }
         const restoreShift = async () => {
             try {
-                const db = await getDBConnection();
-                const [res] = await db.executeSql(
-                    `SELECT * FROM shifts WHERE userId = ? AND status = 'OPEN' ORDER BY openedAt DESC LIMIT 1`,
-                    [user.id]
-                );
-                if (res.rows.length > 0) {
-                    const s = res.rows.item(0);
-                    setActiveShift({ id: s.id, openingCash: s.openingCash, openedAt: s.openedAt });
-                }
+                await reconcileActiveShift();
                 // No open shift Ã¢â€ â€™ activeShift stays null, Dashboard shows Buka Shift card
             } catch (e) {
                 console.error('Shift restore failed:', e);
             }
         };
         restoreShift();
-    }, [user?.id]);
+    }, [user?.id, reconcileActiveShift, setActiveShift]);
 
     // Setup Data Synchronization Polling (Foreground for now)
     useEffect(() => {
@@ -306,6 +315,13 @@ function App(): React.JSX.Element {
         const syncData = async () => {
             try {
                 // 1. Fetch Master Data
+                // Kirim perubahan lokal lebih dulu agar pull tidak menimpa data offline.
+                const pushRes = await syncService.pushLocalData();
+                if (!pushRes.success) {
+                    console.log('Push data lokal gagal; pull ditunda untuk melindungi perubahan lokal.', pushRes.error);
+                    return;
+                }
+
                 console.log('Ã°Å¸â€â€ž Syncing master data...');
                 const masterRes = await syncService.syncMasterData();
                 if (masterRes.success) {
@@ -346,7 +362,7 @@ function App(): React.JSX.Element {
 
                 // 2. Push Pending Local Transactions
                 console.log('Ã°Å¸â€â€ž Pushing local data...');
-                const pushRes = await syncService.pushLocalData();
+                // Perubahan lokal sudah dikirim sebelum master data ditarik.
                 if (pushRes.success) {
                     if (pushRes.message === 'No local data to sync') {
                         console.log('Ã¢â€žÂ¹Ã¯Â¸Â No local data to push');
@@ -361,6 +377,7 @@ function App(): React.JSX.Element {
                 console.log('Ã°Å¸â€â€ž Syncing transaction history...');
                 const historyRes = await syncService.syncTransactionHistory();
                 if (historyRes.success) {
+                    await reconcileActiveShift();
                     console.log('Ã¢Å“â€¦ Transaction history synced');
                 } else {
                     console.log('Ã¢Å¡Â Ã¯Â¸Â Transaction history sync failed:', historyRes.error);
@@ -378,7 +395,7 @@ function App(): React.JSX.Element {
         syncData();
 
         return () => clearInterval(intervalId);
-    }, [user]);
+    }, [user, reconcileActiveShift]);
 
     // Trial popup logic
     useEffect(() => {

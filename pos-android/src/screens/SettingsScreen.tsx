@@ -79,6 +79,7 @@ export default function SettingsScreen({ navigation }: any) {
     const [apiBaseUrl, setApiBaseUrlInput] = useState<string>(settings?.apiBaseUrl || DEFAULT_API_URL);
     const [, , setColorScheme] = useAppColorScheme(tw);
     const logoShotRef = useRef<any>(null);
+    const isHydratingSettingsRef = useRef(true);
 
     // Printer state
     const [bleDevices, setBleDevices] = useState<any[]>([]);
@@ -99,6 +100,7 @@ export default function SettingsScreen({ navigation }: any) {
     };
 
     const loadSettingsFromDB = async () => {
+        isHydratingSettingsRef.current = true;
         try {
             const db = await getDBConnection();
             const [results] = await db.executeSql('SELECT * FROM settings');
@@ -165,6 +167,9 @@ export default function SettingsScreen({ navigation }: any) {
             }
             setSettings(finalSettings);
         } catch (error) { console.error(error); }
+        finally {
+            setTimeout(() => { isHydratingSettingsRef.current = false; }, 0);
+        }
     };
 
         const saveSettings = async () => {
@@ -202,6 +207,9 @@ export default function SettingsScreen({ navigation }: any) {
                 await db.executeSql(`INSERT OR REPLACE INTO settings (key, value) VALUES ('printerAddress', ?)`, [connectedPrinter]);
                 await db.executeSql(`INSERT OR REPLACE INTO settings (key, value) VALUES ('printerType', ?)`, [printerType]);
             }
+            await db.executeSql(
+                `INSERT OR REPLACE INTO settings (key, value) VALUES ('settings_sync_pending', 'true')`
+            );
             setSettings({ ...settings, storeName, storeAddress, storePhone, storeLogo, enablePreOrder, enableShift, enableDineTable, enableTableOrder, enableKitchenPrint, showImages, printerAddress: connectedPrinter, printerType, theme: themeToSave, allowNegativeStock, showLogoOnReceipt, receiptFooter,
                 loyalty_active: loyaltyActive,
                 loyalty_multiplier: Number(loyaltyMultiplier),
@@ -218,6 +226,7 @@ export default function SettingsScreen({ navigation }: any) {
     };
 
     useEffect(() => {
+        if (isHydratingSettingsRef.current) return;
         const timer = setTimeout(() => {
             saveSettings();
         }, 800);
@@ -1041,19 +1050,7 @@ export default function SettingsScreen({ navigation }: any) {
                                         onPress: async () => {
                                             try {
                                                 const { syncService } = require('../services/syncService');
-                                                // 1. Ambil data master
-                                                console.log('[SYNC] Starting syncMasterData...');
-                                                const masterRes = await syncService.syncMasterData();
-                                                console.log('[SYNC] syncMasterData result:', masterRes);
-                                                if (!masterRes.success) {
-                                                    if (masterRes.status === 401 || masterRes.status === 403) {
-                                                        showServerLoginRequired(normalizedApiBaseUrl);
-                                                        return;
-                                                    }
-                                                    Alert.alert('Gagal', 'Gagal sinkron data master dari server: ' + JSON.stringify(masterRes.error || 'Unknown error'));
-                                                    return;
-                                                }
-                                                // 2. Dorong data lokal
+                                                // 1. Dorong perubahan lokal sebelum menarik data server.
                                                 console.log('[SYNC] Starting pushLocalData...');
                                                 const pushRes = await syncService.pushLocalData();
                                                 console.log('[SYNC] pushLocalData result:', pushRes);
@@ -1064,8 +1061,20 @@ export default function SettingsScreen({ navigation }: any) {
                                                     }
                                                     Alert.alert(
                                                         'Peringatan',
-                                                        `Data master berhasil ditarik, tetapi data lokal gagal dikirim.\n\n${pushRes.error || 'Alasan tidak diketahui.'}`
+                                                        `Data lokal gagal dikirim. Data server belum ditarik agar perubahan lokal tidak tertimpa.\n\n${pushRes.error || 'Alasan tidak diketahui.'}`
                                                     );
+                                                    return;
+                                                }
+                                                // 2. Ambil data master setelah perubahan lokal diterima server.
+                                                console.log('[SYNC] Starting syncMasterData...');
+                                                const masterRes = await syncService.syncMasterData();
+                                                console.log('[SYNC] syncMasterData result:', masterRes);
+                                                if (!masterRes.success) {
+                                                    if (masterRes.status === 401 || masterRes.status === 403) {
+                                                        showServerLoginRequired(normalizedApiBaseUrl);
+                                                        return;
+                                                    }
+                                                    Alert.alert('Gagal', 'Data lokal terkirim, tetapi gagal menarik data master: ' + JSON.stringify(masterRes.error || 'Unknown error'));
                                                     return;
                                                 }
                                                 // 3. Tarik histori transaksi dari server (30 hari)

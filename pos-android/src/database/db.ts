@@ -175,6 +175,7 @@ export const createTables = async (db: any) => {
       name TEXT NOT NULL,
       description TEXT,
       price REAL NOT NULL,
+      imageUrl TEXT,
       isActive INTEGER DEFAULT 1,
       createdAt TEXT NOT NULL
     );
@@ -280,6 +281,7 @@ export const createTables = async (db: any) => {
     { table: 'suppliers', column: 'isSynced', def: 'INTEGER DEFAULT 0' },
     { table: 'packages', column: 'serverId', def: 'INTEGER' },
     { table: 'packages', column: 'isSynced', def: 'INTEGER DEFAULT 0' },
+    { table: 'packages', column: 'imageUrl', def: 'TEXT' },
     { table: 'dine_tables', column: 'serverId', def: 'INTEGER' },
     { table: 'dine_tables', column: 'isSynced', def: 'INTEGER DEFAULT 0' },
     { table: 'product_addons', column: 'serverId', def: 'INTEGER' },
