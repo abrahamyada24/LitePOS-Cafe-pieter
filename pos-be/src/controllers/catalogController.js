@@ -259,11 +259,54 @@ exports.createTableOrder = async (req, res) => {
                 queueNumber: result.queueNumber,
                 queueLabel: result.queueLabel,
                 tableNumber: table.number,
-                grandTotal
+                grandTotal,
+                status: 'NEW'
             }
         });
     } catch (error) {
         console.error('Error in createTableOrder:', error);
         res.status(500).json({ success: false, message: 'Terjadi kesalahan pada server saat mengirim order meja.' });
+    }
+};
+
+exports.getTableOrderStatus = async (req, res) => {
+    try {
+        const orderCode = String(req.params.orderCode || '').trim().toUpperCase();
+        if (!orderCode || orderCode.length > 100) {
+            return res.status(400).json({ success: false, message: 'Kode order tidak valid.' });
+        }
+
+        const order = await prisma.kitchenOrder.findUnique({
+            where: { orderCode },
+            select: {
+                source: true,
+                orderCode: true,
+                queueLabel: true,
+                tableNumber: true,
+                total: true,
+                status: true,
+                createdAt: true,
+                startedAt: true,
+                readyAt: true,
+                completedAt: true,
+                updatedAt: true
+            }
+        });
+
+        if (!order || order.source !== 'TABLE_QR') {
+            return res.status(404).json({ success: false, message: 'Order meja tidak ditemukan.' });
+        }
+
+        res.set('Cache-Control', 'no-store');
+        res.json({
+            success: true,
+            data: {
+                ...order,
+                total: Number(order.total)
+            }
+        });
+    } catch (error) {
+        console.error('Error in getTableOrderStatus:', error);
+        res.status(500).json({ success: false, message: 'Status order belum dapat diperbarui.' });
     }
 };

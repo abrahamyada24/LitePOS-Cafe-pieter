@@ -6,5 +6,6 @@ const catalogController = require('../controllers/catalogController');
 // Tidak menggunakan middleware verifyToken karena ini untuk pengunjung umum
 router.get('/', catalogController.getPublicCatalog);
 router.post('/table-order', catalogController.createTableOrder);
+router.get('/table-order/:orderCode/status', catalogController.getTableOrderStatus);
 
 module.exports = router;

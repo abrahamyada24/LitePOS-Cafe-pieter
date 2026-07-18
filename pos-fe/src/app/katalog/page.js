@@ -6,7 +6,6 @@ import {
   AlertCircle,
   CheckCircle2,
   ChevronLeft,
-  ClipboardCheck,
   MessageCircle,
   Minus,
   Package,
@@ -19,9 +18,11 @@ import {
   X,
 } from "lucide-react";
 import { showAlert } from '@/utils/swal';
+import OrderStatusTracker from '@/components/catalog/OrderStatusTracker';
 
 const RAW_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 const API_URL = RAW_API_URL.replace(/\/api$/, "").replace(/\/$/, "");
+const ORDER_SESSION_KEY = "litepos:last-table-order";
 
 export default function KatalogPage() {
   const [products, setProducts] = useState([]);
@@ -46,7 +47,14 @@ export default function KatalogPage() {
   useEffect(() => {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
-      setTableNumber((params.get("table") || params.get("meja") || "").trim().toUpperCase());
+      const requestedTable = (params.get("table") || params.get("meja") || "").trim().toUpperCase();
+      setTableNumber(requestedTable);
+      try {
+        const storedOrder = JSON.parse(window.sessionStorage.getItem(ORDER_SESSION_KEY) || "null");
+        if (storedOrder?.orderCode && storedOrder?.tableNumber === requestedTable) setOrderSuccess(storedOrder);
+      } catch {
+        window.sessionStorage.removeItem(ORDER_SESSION_KEY);
+      }
     }
     fetchCatalog();
   }, []);
@@ -322,7 +330,9 @@ export default function KatalogPage() {
       const json = await res.json();
       if (!json.success) throw new Error(json.message || "Gagal mengirim order.");
 
-      setOrderSuccess(json.data);
+      const submittedOrder = { ...json.data, status: json.data.status || "NEW" };
+      setOrderSuccess(submittedOrder);
+      window.sessionStorage.setItem(ORDER_SESSION_KEY, JSON.stringify(submittedOrder));
       setCart([]);
       setShowCart(false);
       setCustomerName("");
@@ -813,36 +823,16 @@ export default function KatalogPage() {
       )}
 
       {orderSuccess && (
-        <div className="fixed inset-0 z-50 bg-white flex items-center justify-center px-6">
-          <div className="w-full max-w-sm text-center">
-            <div className="w-20 h-20 rounded-full bg-emerald-50 text-emerald-700 flex items-center justify-center mx-auto mb-5">
-              <ClipboardCheck size={40} />
-            </div>
-            <h2 className="text-2xl font-black text-gray-950">Order Terkirim</h2>
-            <p className="text-sm text-gray-500 mt-2">Meja {orderSuccess.tableNumber}</p>
-            <div className="mt-5 rounded-3xl border border-stone-200 bg-stone-50 p-4">
-              <p className="text-xs font-bold text-gray-500">Nomor Antrean</p>
-              <p className="text-3xl font-black text-emerald-700 mt-1">{orderSuccess.queueLabel || "-"}</p>
-              <div className="h-px bg-stone-200 my-4" />
-              <p className="text-xs font-bold text-gray-500">Kode Order</p>
-              <p className="font-black text-gray-950 mt-1">{orderSuccess.orderCode}</p>
-              <div className="h-px bg-stone-200 my-4" />
-              <p className="text-xs font-bold text-gray-500">Total</p>
-              <p className="text-xl font-black text-gray-950 mt-1">{formatRupiah(orderSuccess.grandTotal)}</p>
-            </div>
-            <div className="mt-5 flex items-center justify-center gap-2 text-sm font-bold text-emerald-700">
-              <CheckCircle2 size={18} />
-              Masuk ke kasir
-            </div>
-            <button
-              type="button"
-              onClick={() => setOrderSuccess(null)}
-              className="mt-7 w-full h-12 rounded-2xl bg-gray-950 text-white font-black"
-            >
-              Tambah Pesanan
-            </button>
-          </div>
-        </div>
+        <OrderStatusTracker
+          key={orderSuccess.orderCode}
+          apiUrl={API_URL}
+          order={orderSuccess}
+          kitchenTrackingEnabled={settings?.enableKitchenQueue === true}
+          onAddOrder={() => {
+            window.sessionStorage.removeItem(ORDER_SESSION_KEY);
+            setOrderSuccess(null);
+          }}
+        />
       )}
 
       {!isTableMode && (
