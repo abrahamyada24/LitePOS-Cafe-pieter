@@ -314,14 +314,14 @@ function App(): React.JSX.Element {
 
         const syncData = async () => {
             try {
-                // 1. Fetch Master Data
                 // Kirim perubahan lokal lebih dulu agar pull tidak menimpa data offline.
-                const pushRes = await syncService.pushLocalData();
+                let pushRes: any = await syncService.pushLocalData();
                 if (!pushRes.success) {
                     console.log('Push data lokal gagal; pull ditunda untuk melindungi perubahan lokal.', pushRes.error);
                     return;
                 }
 
+                // 1. Fetch Master Data
                 console.log('Ã°Å¸â€â€ž Syncing master data...');
                 const masterRes = await syncService.syncMasterData();
                 if (masterRes.success) {
@@ -357,6 +357,17 @@ function App(): React.JSX.Element {
                         setSettings(reloadedSettings);
                     } catch (reloadErr) {
                         console.error('Failed to reload settings after sync:', reloadErr);
+                    }
+                } else {
+                    console.log('Master data gagal ditarik:', masterRes.error);
+                    return;
+                }
+
+                if (pushRes.requiresMasterSync) {
+                    pushRes = await syncService.pushLocalData();
+                    if (!pushRes.success) {
+                        console.log('Push setelah initial sync gagal:', pushRes.error);
+                        return;
                     }
                 }
 

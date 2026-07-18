@@ -138,6 +138,14 @@ exports.getMasterData = async (req, res) => {
 exports.pushLocalData = async (req, res) => {
   try {
     const { transactions, expenses, shifts, categories, products, customers, settings, stockReceipts, suppliers: pushSuppliers, packages: pushPackages, dineTables, addons: pushAddons } = req.body;
+    const canManageMasterData = ['ADMIN', 'OWNER'].includes(req.user.role);
+    const restrictedPayloads = [settings, categories, products, stockReceipts, pushSuppliers, pushPackages, pushAddons];
+    if (!canManageMasterData && restrictedPayloads.some(items => Array.isArray(items) && items.length > 0)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Hanya Admin/Owner yang dapat mengubah pengaturan, katalog, supplier, paket, dan stok.'
+      });
+    }
     let savedTransactions = 0;
     let savedExpenses = 0;
     let savedShifts = 0;

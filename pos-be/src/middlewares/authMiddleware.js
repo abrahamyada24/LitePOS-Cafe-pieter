@@ -1,7 +1,9 @@
 const jwt = require('jsonwebtoken');
+const { PrismaClient } = require('@prisma/client');
 const JWT_SECRET = process.env.JWT_SECRET;
+const prisma = new PrismaClient();
 
-exports.verifyToken = (req, res, next) => {
+exports.verifyToken = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
@@ -14,7 +16,17 @@ exports.verifyToken = (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      select: { id: true, name: true, role: true, isActive: true }
+    });
+    if (!user || !user.isActive) {
+      return res.status(401).json({
+        success: false,
+        message: "Akun tidak ditemukan atau sudah dinonaktifkan. Silakan login kembali."
+      });
+    }
+    req.user = { id: user.id, name: user.name, role: user.role };
     next();
   } catch (error) {
     return res.status(403).json({

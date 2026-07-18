@@ -1052,7 +1052,7 @@ export default function SettingsScreen({ navigation }: any) {
                                                 const { syncService } = require('../services/syncService');
                                                 // 1. Dorong perubahan lokal sebelum menarik data server.
                                                 console.log('[SYNC] Starting pushLocalData...');
-                                                const pushRes = await syncService.pushLocalData();
+                                                let pushRes: any = await syncService.pushLocalData();
                                                 console.log('[SYNC] pushLocalData result:', pushRes);
                                                 if (!pushRes.success) {
                                                     if (pushRes.status === 401 || pushRes.status === 403) {
@@ -1076,6 +1076,13 @@ export default function SettingsScreen({ navigation }: any) {
                                                     }
                                                     Alert.alert('Gagal', 'Data lokal terkirim, tetapi gagal menarik data master: ' + JSON.stringify(masterRes.error || 'Unknown error'));
                                                     return;
+                                                }
+                                                if (pushRes.requiresMasterSync) {
+                                                    pushRes = await syncService.pushLocalData();
+                                                    if (!pushRes.success) {
+                                                        Alert.alert('Peringatan', `Data master berhasil ditarik, tetapi data lokal gagal dikirim.\n\n${pushRes.error || 'Alasan tidak diketahui.'}`);
+                                                        return;
+                                                    }
                                                 }
                                                 // 3. Tarik histori transaksi dari server (30 hari)
                                                 console.log('[SYNC] Starting syncTransactionHistory...');

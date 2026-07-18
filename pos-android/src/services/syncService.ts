@@ -2,7 +2,7 @@ import api, { isDeviceAssetUrl } from './api';
 import { getDBConnection } from '../database/db';
 
 // Keys yang hanya ada di device lokal, tidak boleh ditimpa oleh server
-const LOCAL_ONLY_KEYS = ['printerAddress', 'printerType', 'apiBaseUrl', 'enableKitchenPrint', 'settings_sync_pending'];
+const LOCAL_ONLY_KEYS = ['printerAddress', 'printerType', 'apiBaseUrl', 'enableKitchenPrint', 'settings_sync_pending', 'sync_initialized'];
 
 const markRowsSynced = async (db: any, table: string, ids: Array<string | number>) => {
     if (ids.length === 0) return;
@@ -372,6 +372,9 @@ export const syncService = {
                 }
             // End of sequential db execution
 
+            await db.executeSql(
+                `INSERT OR REPLACE INTO settings (key, value) VALUES ('sync_initialized', 'true')`
+            );
             return { success: true, message: 'Master data synced to SQLite successfully' };
 
         } catch (error: any) {
@@ -388,6 +391,16 @@ export const syncService = {
     pushLocalData: async () => {
         try {
             const db = await getDBConnection();
+            const [initialSyncResult] = await db.executeSql(
+                `SELECT value FROM settings WHERE key = 'sync_initialized'`
+            );
+            if (initialSyncResult.rows.length === 0 || initialSyncResult.rows.item(0).value !== 'true') {
+                return {
+                    success: true,
+                    message: 'Initial master sync required',
+                    requiresMasterSync: true,
+                };
+            }
             
             // Ambil transactions (dan items-nya)
             let transactions: any[] = [];
