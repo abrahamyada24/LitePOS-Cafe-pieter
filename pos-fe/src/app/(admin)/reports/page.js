@@ -209,10 +209,29 @@ export default function ReportsPage() {
     }, [activeTab, period, isCustomDate]);
 
     // Export Handler
-    const handleExport = () => {
+    const handleExport = async () => {
         const token = localStorage.getItem('token');
         const qs = getQueryString();
-        window.open(`${API_URL}/api/reports/export${qs}&format=csv&token=${token}`, '_blank');
+        try {
+            const response = await fetch(`${API_URL}/api/reports/export${qs}&format=csv`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (!response.ok) throw new Error('Gagal mengekspor laporan.');
+
+            const blob = await response.blob();
+            const disposition = response.headers.get('content-disposition') || '';
+            const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || 'laporan-transaksi.csv';
+            const downloadUrl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = downloadUrl;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(downloadUrl);
+        } catch (error) {
+            window.alert(error.message || 'Gagal mengekspor laporan.');
+        }
     };
 
     // Render Tab Content

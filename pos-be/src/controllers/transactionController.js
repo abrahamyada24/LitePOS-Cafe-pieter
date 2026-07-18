@@ -226,7 +226,7 @@ exports.createTransaction = async (req, res) => {
             // Buat transaksi
             const newTransaction = await tx.transaction.create({
                 data: {
-                    userId: parseInt(userId),
+                    userId: req.user.id,
                     customerId: customerId ? parseInt(customerId) : null,
                     customerName: takeawayOption ? `${customerName || 'Umum'} (${takeawayOption})` : (customerName || null),
                     invoiceNumber,
@@ -363,7 +363,8 @@ exports.createTransaction = async (req, res) => {
 
             return { ...newTransaction, ...kitchenQueue, midtransToken, midtransUrl };
         }, {
-            timeout: 10000
+            timeout: 10000,
+            isolationLevel: 'Serializable'
         });
 
         res.status(201).json({
@@ -793,7 +794,7 @@ exports.getPreOrders = async (req, res) => {
             where: {
                 preOrderDate: { not: null },
                 preOrderConfirmed: false,
-                status: { in: ['PAID', 'COMPLETED'] }
+                status: { in: ['PENDING', 'PAID', 'COMPLETED'] }
             },
             include: {
                 user: { select: { name: true } },

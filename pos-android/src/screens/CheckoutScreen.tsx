@@ -303,7 +303,7 @@ export default function CheckoutScreen({ navigation }: any) {
             // Optional: Mark table as OCCUPIED automatically
             if (orderType === 'DINE_IN' && selectedTable) {
                 try {
-                    await db.executeSql(`UPDATE dine_tables SET status = 'OCCUPIED' WHERE id = ?`, [selectedTable.id]);
+                    await db.executeSql(`UPDATE dine_tables SET status = 'OCCUPIED', isSynced = 0 WHERE id = ?`, [selectedTable.id]);
                 } catch (e) { console.error("Failed to update table status", e); }
             }
 

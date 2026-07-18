@@ -1,6 +1,48 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
+const normalizeAndroidPayment = (transaction) => {
+  const grandTotal = Math.max(0, Number(transaction.grandTotal) || 0);
+  const requestedStatus = String(transaction.paymentStatus || 'PAID').toUpperCase();
+  const paymentStatus = ['PAID', 'PARTIAL', 'UNPAID'].includes(requestedStatus)
+    ? requestedStatus
+    : 'PAID';
+  const paidAmount = paymentStatus === 'PAID'
+    ? grandTotal
+    : paymentStatus === 'PARTIAL'
+      ? Math.min(grandTotal, Math.max(0, Number(transaction.paidAmount) || 0))
+      : 0;
+
+  return {
+    grandTotal,
+    paymentStatus: paidAmount >= grandTotal && grandTotal > 0 ? 'PAID' : paidAmount > 0 ? 'PARTIAL' : 'UNPAID',
+    paidAmount,
+    remainingAmount: Math.max(0, grandTotal - paidAmount)
+  };
+};
+
+const summarizePayments = (transaction) => {
+  const grandTotal = Math.max(0, Number(transaction.grandTotal) || 0);
+  let paidAmount = 0;
+  let paidAt = null;
+
+  for (const payment of transaction.payments || []) {
+    const status = String(payment.paymentStatus || '').toUpperCase();
+    if (!['FAILED', 'PENDING', 'UNPAID'].includes(status)) {
+      paidAmount += Math.max(0, Number(payment.amount) || 0);
+      if (!paidAt || payment.createdAt > paidAt) paidAt = payment.createdAt;
+    }
+  }
+
+  paidAmount = Math.min(grandTotal, paidAmount);
+  return {
+    paymentStatus: paidAmount >= grandTotal && grandTotal > 0 ? 'PAID' : paidAmount > 0 ? 'PARTIAL' : 'UNPAID',
+    paidAmount,
+    remainingAmount: Math.max(0, grandTotal - paidAmount),
+    paidAt: paidAt ? paidAt.toISOString() : null
+  };
+};
+
 /**
  * 1. GET MASTER DATA
  * Mengembalikan semua data katalog yang dibutuhkan aplikasi Android
@@ -108,6 +150,14 @@ exports.pushLocalData = async (req, res) => {
     let savedDineTables = 0;
     let savedAddons = 0;
     const syncWarnings = [];
+    const syncedTransactionIds = [];
+    const syncedExpenseIds = [];
+    const syncedShiftIds = [];
+    const syncedStockReceiptIds = [];
+    const syncUser = await prisma.user.findUnique({
+        where: { id: req.user.id },
+        select: { name: true }
+    });
 
     const addSyncWarning = (entity, id, error) => {
         const message = error?.message || String(error);
@@ -340,8 +390,21 @@ exports.pushLocalData = async (req, res) => {
       for (const tx of transactions) {
         try {
         // Cek jika sudah ada (identity check menggunakan androidId)
-        const exists = await prisma.transaction.findUnique({ where: { androidId: tx.id }});
+        const exists = await prisma.transaction.findUnique({
+          where: { androidId: tx.id },
+          include: { payments: true }
+        });
         const isPreOrderConfirmed = tx.preOrderConfirmed === true || Number(tx.preOrderConfirmed) === 1;
+        const incomingPayment = normalizeAndroidPayment(tx);
+        const paymentType = String(tx.paymentMethod || 'CASH').toUpperCase();
+        const validPaymentType = ['CASH', 'QRIS', 'QRIS_MANUAL', 'TRANSFER'].includes(paymentType) ? paymentType : 'CASH';
+        const validStatuses = ['PENDING', 'PAID', 'CANCELLED', 'COMPLETED', 'RETURNED'];
+        const requestedTransactionStatus = validStatuses.includes(String(tx.status).toUpperCase())
+          ? String(tx.status).toUpperCase()
+          : 'COMPLETED';
+        const incomingTransactionStatus = tx.preOrderDate && !isPreOrderConfirmed && incomingPayment.paymentStatus !== 'PAID'
+          ? 'PENDING'
+          : requestedTransactionStatus;
         if (exists && tx.status === 'RETURNED' && exists.status !== 'RETURNED') {
           // ── UPDATE STATUS RETUR ─────────────────────────────────
           // Transaksi sudah ada di server tapi diretur dari Android
@@ -376,13 +439,46 @@ exports.pushLocalData = async (req, res) => {
           }
           savedTransactions++;
         } else if (exists) {
+          const existingPayment = summarizePayments(exists);
+          const shouldApplyPayment = incomingPayment.paidAmount > existingPayment.paidAmount;
+          const transactionData = {};
+
           // Konfirmasi pengambilan bersifat satu arah (false -> true), sehingga
           // data Android yang lebih lama tidak dapat membatalkan konfirmasi web.
           if (isPreOrderConfirmed && !exists.preOrderConfirmed) {
-            await prisma.transaction.update({
-              where: { id: exists.id },
-              data: { preOrderConfirmed: true, status: 'COMPLETED' }
-            });
+            transactionData.preOrderConfirmed = true;
+            transactionData.status = 'COMPLETED';
+          }
+
+          if (shouldApplyPayment) {
+            transactionData.status = isPreOrderConfirmed ? 'COMPLETED' : incomingTransactionStatus;
+            transactionData.cashAmount = tx.cashAmount == null ? null : Number(tx.cashAmount);
+            transactionData.changeAmount = tx.changeAmount == null ? null : Number(tx.changeAmount);
+
+            const firstPayment = exists.payments[0];
+            if (firstPayment) {
+              await prisma.payment.update({
+                where: { id: firstPayment.id },
+                data: {
+                  paymentType: validPaymentType,
+                  amount: incomingPayment.paidAmount,
+                  paymentStatus: incomingPayment.paymentStatus
+                }
+              });
+            } else {
+              await prisma.payment.create({
+                data: {
+                  transactionId: exists.id,
+                  paymentType: validPaymentType,
+                  amount: incomingPayment.paidAmount,
+                  paymentStatus: incomingPayment.paymentStatus
+                }
+              });
+            }
+          }
+
+          if (Object.keys(transactionData).length > 0) {
+            await prisma.transaction.update({ where: { id: exists.id }, data: transactionData });
             savedTransactions++;
           }
         } else if (!exists) {
@@ -401,8 +497,41 @@ exports.pushLocalData = async (req, res) => {
               }
           }
 
-          // Resolve productId untuk setiap item
-          const resolvedItems = await Promise.all((tx.items || []).map(async item => {
+          // Resolve productId untuk setiap item. Paket Android disimpan sebagai satu
+          // baris `pkg-{id}` dan harus diurai kembali ke komponen produk server.
+          const resolvedItems = [];
+          for (const item of (tx.items || [])) {
+              const requestedQty = parseInt(item.quantity) || 1;
+              const packageMatch = String(item.productId || '').match(/^pkg-(\d+)$/i);
+              if (packageMatch) {
+                  const localPackageId = parseInt(packageMatch[1]);
+                  let pkg = await prisma.package.findUnique({
+                      where: { androidId: localPackageId },
+                      include: { items: { include: { product: true } } }
+                  });
+                  if (!pkg) {
+                      pkg = await prisma.package.findUnique({
+                          where: { id: localPackageId },
+                          include: { items: { include: { product: true } } }
+                      });
+                  }
+                  if (!pkg || pkg.items.length === 0) {
+                      throw new Error(`Paket ${localPackageId} tidak ditemukan atau kosong di server.`);
+                  }
+                  pkg.items.forEach((component, index) => {
+                      resolvedItems.push({
+                          productId: component.productId,
+                          qty: component.qty * requestedQty,
+                          price: index === 0 ? Number(item.price) / component.qty : 0,
+                          originalPrice: index === 0 ? Number(item.originalPrice || item.price || 0) / component.qty : 0,
+                          discountAmount: index === 0 ? Number(item.discountAmount || 0) : 0,
+                          costPrice: Number(component.product.costPrice || 0),
+                          notes: `[Paket ${pkg.name}] ${item.notes || ''}`.trim()
+                      });
+                  });
+                  continue;
+              }
+
               let serverProductId = null;
               if (item.serverProductId) {
                   serverProductId = parseInt(item.serverProductId);
@@ -411,36 +540,33 @@ exports.pushLocalData = async (req, res) => {
                   if (!isNaN(parsedProdId)) {
                       const product = await prisma.product.findUnique({ where: { androidId: parsedProdId }});
                       serverProductId = product ? product.id : parsedProdId;
-                  } else {
-                      serverProductId = item.productId; // Fallback
                   }
               }
-              return {
+              if (!serverProductId) throw new Error(`Produk ${item.productId} tidak dapat dipetakan ke server.`);
+              resolvedItems.push({
                   productId: serverProductId,
-                  qty: parseInt(item.quantity) || 1,
+                  qty: requestedQty,
                   price: Number(item.price),
                   originalPrice: Number(item.originalPrice || item.price || 0),
                   discountAmount: Number(item.discountAmount || 0),
                   costPrice: 0,
                   notes: item.notes || null,
-              };
-          }));
+              });
+          }
 
-          // Map payment method to payment record
-          const paymentType = (tx.paymentMethod || 'CASH').toUpperCase();
-          const validPaymentType = ['CASH', 'QRIS', 'TRANSFER'].includes(paymentType) ? paymentType : 'CASH';
-
-          // Buat transaction & isinya
-          await prisma.transaction.create({
+          // Simpan transaksi dan perubahan stok secara atomik. Jika salah satu produk
+          // tidak cukup, seluruh transaksi dibatalkan dan Android akan mencoba lagi.
+          await prisma.$transaction(async (syncTx) => {
+          await syncTx.transaction.create({
             data: {
               androidId: tx.id,
               invoiceNumber: tx.invoiceNumber,
               subTotal: subTotal,
               taxAmount: 0,
               grandTotal: grandTotal,
-              cashAmount: tx.cashAmount ? Number(tx.cashAmount) : null,
-              changeAmount: tx.changeAmount ? Number(tx.changeAmount) : null,
-              status: tx.status || 'COMPLETED',
+              cashAmount: tx.cashAmount == null ? null : Number(tx.cashAmount),
+              changeAmount: tx.changeAmount == null ? null : Number(tx.changeAmount),
+              status: incomingTransactionStatus,
               customerId: resolvedCustomerId,
               customerName: tx.customerName || null,
               userId: req.user.id,
@@ -458,48 +584,47 @@ exports.pushLocalData = async (req, res) => {
               payments: {
                 create: [{
                     paymentType: validPaymentType,
-                    amount: grandTotal
+                    amount: incomingPayment.paidAmount,
+                    paymentStatus: incomingPayment.paymentStatus
                 }]
               }
             }
           });
           
-          // Kurangi stok produk secara langsung dan catat log pergerakan stok
-          for(const item of (tx.items || [])){
-              if(item.productId){
-                  try {
-                      const parsedAndroidId = parseInt(item.productId);
-                      let serverProductId = null;
-                      if(!isNaN(parsedAndroidId)) {
-                          const product = await prisma.product.findUnique({ where: { androidId: parsedAndroidId }});
-                          serverProductId = product ? product.id : parsedAndroidId;
-                      } else {
-                          serverProductId = item.productId;
-                      }
-                      const qty = parseInt(item.quantity) || 1;
+          const stockByProduct = new Map();
+          for (const item of resolvedItems) {
+              stockByProduct.set(item.productId, (stockByProduct.get(item.productId) || 0) + item.qty);
+          }
 
-                      await prisma.product.updateMany({
-                          where: { id: serverProductId, isUnlimitedStock: false },
-                          data: { stock: { decrement: qty } }
-                      });
+          for (const [serverProductId, qty] of stockByProduct.entries()) {
+              const product = await syncTx.product.findUnique({ where: { id: serverProductId } });
+              if (!product) throw new Error(`Produk ${serverProductId} tidak ditemukan di server.`);
 
-                      await prisma.stockMovement.create({
-                          data: {
-                              productId: serverProductId,
-                              type: 'OUT',
-                              qty: qty,
-                              source: 'SALE',
-                              description: `Penjualan offline via sync (INV: ${tx.invoiceNumber})`,
-                              createdAt: new Date(tx.createdAt || Date.now())
-                          }
-                      });
-                  } catch(stockErr) {
-                      console.error(`[SYNC] Gagal update stok untuk item productId=${item.productId}:`, stockErr.message);
+              if (!product.isUnlimitedStock) {
+                  const stockUpdate = await syncTx.product.updateMany({
+                      where: { id: serverProductId, stock: { gte: qty }, isUnlimitedStock: false },
+                      data: { stock: { decrement: qty } }
+                  });
+                  if (stockUpdate.count !== 1) {
+                      throw new Error(`Stok ${product.name} tidak mencukupi.`);
                   }
               }
+
+              await syncTx.stockMovement.create({
+                  data: {
+                      productId: serverProductId,
+                      type: 'OUT',
+                      qty,
+                      source: 'SALE',
+                      description: `Penjualan offline via sync (INV: ${tx.invoiceNumber})`,
+                      createdAt: new Date(tx.createdAt || Date.now())
+                  }
+              });
           }
+          }, { isolationLevel: 'Serializable' });
           savedTransactions++;
         }
+        syncedTransactionIds.push(tx.id);
         } catch(txErr) {
             addSyncWarning('transaction', tx.id, txErr);
         }
@@ -523,11 +648,13 @@ exports.pushLocalData = async (req, res) => {
                             description: exp.description,
                             amount: Number(exp.amount),
                             category: exp.category || "Umum",
+                            type: exp.type === 'PURCHASE' ? 'PURCHASE' : 'EXPENSE',
                             createdAt: new Date(exp.createdAt)
                         }
                     });
                     savedExpenses++;
                 }
+                syncedExpenseIds.push(exp.id);
             } catch(expErr) {
                 addSyncWarning('expense', exp.id, expErr);
             }
@@ -538,33 +665,44 @@ exports.pushLocalData = async (req, res) => {
     if (shifts && Array.isArray(shifts)) {
         for (const shift of shifts) {
             try {
-                const exists = await prisma.shift.findUnique({ where: { id: shift.id }});
-                if (!exists) {
-                    await prisma.shift.create({
-                        data: {
-                            id: shift.id,
-                            userId: shift.userId || req.user.id,
-                            userName: shift.userName || req.user.name,
-                            openedAt: new Date(shift.openedAt),
-                            closedAt: shift.closedAt ? new Date(shift.closedAt) : null,
-                            openingCash: Number(shift.openingCash),
-                            closingCash: shift.closingCash ? Number(shift.closingCash) : null,
-                            status: shift.status || 'OPEN'
+                await prisma.$transaction(async (tx) => {
+                    const exists = await tx.shift.findUnique({ where: { id: shift.id }});
+                    if (!exists) {
+                        const incomingStatus = shift.status === 'CLOSED' ? 'CLOSED' : 'OPEN';
+                        if (incomingStatus === 'OPEN') {
+                            const otherOpenShift = await tx.shift.findFirst({
+                                where: { status: 'OPEN', id: { not: shift.id } },
+                                orderBy: { openedAt: 'desc' }
+                            });
+                            if (otherOpenShift) {
+                                throw new Error(`SHIFT_ALREADY_OPEN:${otherOpenShift.id}`);
+                            }
                         }
-                    });
-                } else {
-                    if(shift.status === 'CLOSED' && exists.status === 'OPEN'){
-                        await prisma.shift.update({
+                        await tx.shift.create({
+                            data: {
+                                id: shift.id,
+                                userId: req.user.id,
+                                userName: syncUser?.name || shift.userName || 'Kasir',
+                                openedAt: new Date(shift.openedAt),
+                                closedAt: shift.closedAt ? new Date(shift.closedAt) : null,
+                                openingCash: Number(shift.openingCash || 0),
+                                closingCash: shift.closingCash == null ? null : Number(shift.closingCash),
+                                status: incomingStatus
+                            }
+                        });
+                    } else if (shift.status === 'CLOSED' && exists.status === 'OPEN') {
+                        await tx.shift.update({
                             where: { id: shift.id },
                             data: {
                                 status: 'CLOSED',
-                                closedAt: new Date(shift.closedAt),
-                                closingCash: Number(shift.closingCash)
+                                closedAt: shift.closedAt ? new Date(shift.closedAt) : new Date(),
+                                closingCash: shift.closingCash == null ? null : Number(shift.closingCash)
                             }
                         });
                     }
-                }
+                }, { isolationLevel: 'Serializable' });
                 savedShifts++;
+                syncedShiftIds.push(shift.id);
             } catch(shiftErr) {
                 addSyncWarning('shift', shift.id, shiftErr);
             }
@@ -638,6 +776,7 @@ exports.pushLocalData = async (req, res) => {
                 }
                 savedStockReceipts++;
             }
+            syncedStockReceiptIds.push(receipt.id);
           } catch(receiptErr) {
               addSyncWarning('stockReceipt', receipt.id, receiptErr);
           }
@@ -696,6 +835,7 @@ exports.pushLocalData = async (req, res) => {
                             name: pkg.name,
                             description: pkg.description || null,
                             price: Number(pkg.price),
+                            imageUrl: pkg.imageUrl || null,
                             isActive: pkg.isActive === true || Number(pkg.isActive) === 1
                         }
                     });
@@ -707,6 +847,7 @@ exports.pushLocalData = async (req, res) => {
                             name: pkg.name || serverPkg.name,
                             description: pkg.description || serverPkg.description,
                             price: Number(pkg.price),
+                            imageUrl: pkg.imageUrl || serverPkg.imageUrl,
                             isActive: pkg.isActive === true || Number(pkg.isActive) === 1
                         }
                     });
@@ -830,6 +971,12 @@ exports.pushLocalData = async (req, res) => {
       message: `Berhasil sinkronisasi. Transaksi: ${savedTransactions}, Produk: ${savedProducts}, Kategori: ${savedCategories}, Pelanggan: ${savedCustomers}, Supplier: ${savedSuppliers}, Paket: ${savedPackages}`,
       stats: { savedTransactions, savedExpenses, savedShifts, savedCategories, savedProducts, savedCustomers, savedStockReceipts, savedSuppliers, savedPackages, savedDineTables, savedAddons },
       warnings: syncWarnings,
+      syncedIds: {
+          transactions: syncedTransactionIds,
+          expenses: syncedExpenseIds,
+          shifts: syncedShiftIds,
+          stockReceipts: syncedStockReceiptIds
+      },
       idMap: {
           categories: categoryIdMap,
           products: productIdMap,
@@ -874,32 +1021,43 @@ exports.getTransactionHistory = async (req, res) => {
     });
 
     // Format untuk Android SQLite
-    const formattedTransactions = transactions.map(tx => ({
-      id: tx.androidId || `server-${tx.id}`,
-      serverId: tx.id,
-      invoiceNumber: tx.invoiceNumber,
-      grandTotal: Number(tx.grandTotal),
-      discountAmount: Number(tx.discountAmount),
-      paymentMethod: tx.payments.length > 0 ? tx.payments[0].paymentType : 'CASH',
-      cashAmount: tx.cashAmount ? Number(tx.cashAmount) : null,
-      changeAmount: tx.changeAmount ? Number(tx.changeAmount) : null,
-      customerId: tx.customerId,
-      customerName: tx.customerName,
-      createdAt: tx.createdAt.toISOString(),
-      status: tx.status,
-      preOrderDate: tx.preOrderDate ? tx.preOrderDate.toISOString() : null,
-      preOrderConfirmed: tx.preOrderConfirmed,
-      orderType: tx.orderType,
-      tableName: tx.tableNumber,
-      items: tx.items.map(item => ({
-        productId: item.product?.androidId || item.productId,
-        serverProductId: item.productId,
-        productName: item.product?.name || null,
-        quantity: item.qty,
-        price: Number(item.price),
-        notes: item.notes
-      }))
-    }));
+    const formattedTransactions = transactions.map(tx => {
+      const payment = summarizePayments(tx);
+      const preferredPayment = tx.payments.find(item => !['FAILED', 'PENDING', 'UNPAID'].includes(
+        String(item.paymentStatus || '').toUpperCase()
+      )) || tx.payments[0];
+
+      return {
+        id: tx.androidId || `server-${tx.id}`,
+        serverId: tx.id,
+        invoiceNumber: tx.invoiceNumber,
+        grandTotal: Number(tx.grandTotal),
+        discountAmount: Number(tx.discountAmount),
+        paymentMethod: preferredPayment?.paymentType || 'CASH',
+        paymentStatus: payment.paymentStatus,
+        paidAmount: payment.paidAmount,
+        remainingAmount: payment.remainingAmount,
+        paidAt: payment.paidAt,
+        cashAmount: tx.cashAmount == null ? null : Number(tx.cashAmount),
+        changeAmount: tx.changeAmount == null ? null : Number(tx.changeAmount),
+        customerId: tx.customerId,
+        customerName: tx.customerName,
+        createdAt: tx.createdAt.toISOString(),
+        status: tx.status,
+        preOrderDate: tx.preOrderDate ? tx.preOrderDate.toISOString() : null,
+        preOrderConfirmed: tx.preOrderConfirmed,
+        orderType: tx.orderType,
+        tableName: tx.tableNumber,
+        items: tx.items.map(item => ({
+          productId: item.product?.androidId || item.productId,
+          serverProductId: item.productId,
+          productName: item.product?.name || null,
+          quantity: item.qty,
+          price: Number(item.price),
+          notes: item.notes
+        }))
+      };
+    });
 
     // Ambil expenses 30 hari terakhir
     const expenses = await prisma.expense.findMany({
@@ -914,6 +1072,7 @@ exports.getTransactionHistory = async (req, res) => {
       description: exp.description,
       amount: Number(exp.amount),
       category: exp.category,
+      type: exp.type,
       createdAt: exp.createdAt.toISOString()
     }));
 

@@ -304,7 +304,7 @@ export default function POSScreen({ navigation, route }: any) {
                     price: item.price,
                     stock: 999,
                     isUnlimitedStock: 1,
-                    imageUrl: null,
+                    imageUrl: item.imageUrl || null,
                     notes: `Paket: ${Array.from({ length: piRes.rows.length }, (_, i) => piRes.rows.item(i))
                         .map(pi => `${pi.productName} x${pi.quantity}`).join(', ')}`,
                 });

@@ -1,9 +1,13 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export const DEFAULT_API_URL = 'http://103.175.221.2:5000';
+export const DEFAULT_API_URL = 'https://103.150.227.178';
 export const API_BASE_URL_STORAGE_KEY = '@litepos_api_base_url';
 export const API_URL = DEFAULT_API_URL;
+
+const LEGACY_API_URLS = new Set([
+    'http://103.175.221.2:5000',
+]);
 
 const stripApiSuffix = (url: string) => url.replace(/\/api\/?$/i, '');
 
@@ -12,7 +16,8 @@ export const normalizeApiBaseUrl = (value?: string | null) => {
     if (!trimmed) return DEFAULT_API_URL;
 
     const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
-    return stripApiSuffix(withProtocol).replace(/\/+$/, '');
+    const normalized = stripApiSuffix(withProtocol).replace(/\/+$/, '');
+    return LEGACY_API_URLS.has(normalized) ? DEFAULT_API_URL : normalized;
 };
 
 export const buildApiBaseUrl = (baseUrl: string) => `${normalizeApiBaseUrl(baseUrl)}/api`;
@@ -36,7 +41,14 @@ export const resolveApiAssetUrl = (value?: string | null, baseUrl?: string | nul
 
 export const getApiBaseUrl = async () => {
     const savedUrl = await AsyncStorage.getItem(API_BASE_URL_STORAGE_KEY);
-    return normalizeApiBaseUrl(savedUrl);
+    const normalized = normalizeApiBaseUrl(savedUrl);
+
+    if (savedUrl && LEGACY_API_URLS.has(stripApiSuffix(savedUrl.trim()).replace(/\/+$/, ''))) {
+        await AsyncStorage.setItem(API_BASE_URL_STORAGE_KEY, normalized);
+        await AsyncStorage.multiRemove(['@auth_token', '@auth_user']);
+    }
+
+    return normalized;
 };
 
 const api = axios.create({

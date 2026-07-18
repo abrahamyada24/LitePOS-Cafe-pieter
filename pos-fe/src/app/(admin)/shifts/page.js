@@ -15,12 +15,12 @@ export default function ShiftsPage() {
     const [showCloseModal, setShowCloseModal] = useState(false);
 
     const getToken = () => typeof window !== 'undefined' ? localStorage.getItem('token') : '';
-    const getUser = () => { try { return JSON.parse(localStorage.getItem('pos-store') || '{}')?.state?.user; } catch { return null; } };
+    const getUser = () => { try { return JSON.parse(localStorage.getItem('pos-storage') || '{}')?.state?.user; } catch { return null; } };
     const headers = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` });
     const formatRp = (n) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(n || 0);
 
-    const loadData = async () => {
-        setLoading(true);
+    const loadData = async (silent = false) => {
+        if (!silent) setLoading(true);
         try {
             const [shiftRes, currentRes] = await Promise.all([
                 fetch(`${API_URL}/api/shifts`, { headers: headers() }),
@@ -31,10 +31,24 @@ export default function ShiftsPage() {
             if (shiftData.success) setShifts(shiftData.data);
             if (currentData.success) setCurrentShift(currentData.data);
         } catch (e) { console.error(e); }
-        setLoading(false);
+        if (!silent) setLoading(false);
     };
 
-    useEffect(() => { loadData(); }, []);
+    useEffect(() => {
+        loadData();
+        const intervalId = window.setInterval(() => loadData(true), 15000);
+        const handleRefresh = () => loadData(true);
+        const handleVisibility = () => {
+            if (document.visibilityState === 'visible') loadData(true);
+        };
+        window.addEventListener('focus', handleRefresh);
+        document.addEventListener('visibilitychange', handleVisibility);
+        return () => {
+            window.clearInterval(intervalId);
+            window.removeEventListener('focus', handleRefresh);
+            document.removeEventListener('visibilitychange', handleVisibility);
+        };
+    }, []);
 
     const handleOpenShift = async (e) => {
         e.preventDefault();

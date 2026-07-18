@@ -4,32 +4,65 @@ const prisma = new PrismaClient();
 // 1. OPEN SHIFT
 exports.openShift = async (req, res) => {
     try {
-        const { userId, userName, openingCash } = req.body;
-
-        // Check if there's already an open shift
-        const existingOpen = await prisma.shift.findFirst({
-            where: { status: 'OPEN' }
-        });
-
-        if (existingOpen) {
-            return res.status(400).json({
-                success: false,
-                message: "Sudah ada shift yang sedang berjalan. Tutup shift sebelumnya terlebih dahulu."
-            });
+        const parsedOpeningCash = Number(req.body.openingCash || 0);
+        if (!Number.isFinite(parsedOpeningCash) || parsedOpeningCash < 0) {
+            return res.status(400).json({ success: false, message: "Kas awal tidak valid." });
         }
 
-        const shift = await prisma.shift.create({
-            data: {
-                userId: parseInt(userId),
-                userName,
-                openedAt: new Date(),
-                openingCash: parseFloat(openingCash) || 0,
-                status: 'OPEN'
-            }
+        const activeUser = await prisma.user.findUnique({
+            where: { id: req.user.id },
+            select: { id: true, name: true, isActive: true }
         });
+
+        if (!activeUser || !activeUser.isActive) {
+            return res.status(403).json({ success: false, message: "Pengguna tidak aktif atau tidak ditemukan." });
+        }
+
+        const shift = await prisma.$transaction(async (tx) => {
+            const existingOpen = await tx.shift.findFirst({
+                where: { status: 'OPEN' },
+                orderBy: { openedAt: 'desc' }
+            });
+
+            if (existingOpen) {
+                const conflict = new Error('SHIFT_ALREADY_OPEN');
+                conflict.shift = existingOpen;
+                throw conflict;
+            }
+
+            return tx.shift.create({
+                data: {
+                    userId: activeUser.id,
+                    userName: activeUser.name,
+                    openedAt: new Date(),
+                    openingCash: parsedOpeningCash,
+                    status: 'OPEN'
+                }
+            });
+        }, { isolationLevel: 'Serializable' });
 
         res.status(201).json({ success: true, message: "Shift berhasil dibuka", data: shift });
     } catch (error) {
+        if (error.message === 'SHIFT_ALREADY_OPEN') {
+            return res.status(409).json({
+                success: false,
+                code: 'SHIFT_ALREADY_OPEN',
+                message: "Sudah ada shift yang sedang berjalan.",
+                data: error.shift
+            });
+        }
+        if (error.code === 'P2034') {
+            const existingOpen = await prisma.shift.findFirst({
+                where: { status: 'OPEN' },
+                orderBy: { openedAt: 'desc' }
+            });
+            return res.status(409).json({
+                success: false,
+                code: 'SHIFT_ALREADY_OPEN',
+                message: "Shift lain dibuka bersamaan. Gunakan shift yang sedang berjalan.",
+                data: existingOpen
+            });
+        }
         res.status(500).json({ success: false, error: error.message });
     }
 };

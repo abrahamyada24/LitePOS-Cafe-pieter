@@ -85,7 +85,7 @@ export default function ContactScreen({ navigation }: any) {
             if (activeTab === 'supplier') {
                 if (editing) {
                     await db.executeSql(
-                        'UPDATE suppliers SET name = ?, phone = ?, address = ?, notes = ? WHERE id = ?',
+                        'UPDATE suppliers SET name = ?, phone = ?, address = ?, notes = ?, isSynced = 0 WHERE id = ?',
                         [formName.trim(), formPhone, formAddress, formNotes, editing.id]
                     );
                 } else {

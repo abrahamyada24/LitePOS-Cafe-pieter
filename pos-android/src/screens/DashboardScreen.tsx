@@ -17,7 +17,7 @@ import { useStore } from '../store/useStore';
 import { getDBConnection, getStoreSummary } from '../database/db';
 import tw, { useAppColorScheme } from 'twrnc';
 import { getPaidAmount, getPaymentStatusLabel, getPaymentStatusMessage, getRemainingAmount } from '../utils/preOrderPayment';
-import { openCashierShift } from '../services/shiftService';
+import { closeCashierShift, openCashierShift } from '../services/shiftService';
 
 const { width } = Dimensions.get('window');
 const isTablet = width >= 768;
@@ -327,8 +327,8 @@ export default function DashboardScreen({ navigation }: any) {
             const shift = await openCashierShift(user, cash);
             setActiveShift(shift);
             setOpeningCashInput('');
-        } catch (e) {
-            Alert.alert('Error', 'Gagal membuka shift.');
+        } catch (e: any) {
+            Alert.alert('Error', e.response?.data?.message || e.message || 'Gagal membuka shift.');
         }
     };
 
@@ -342,11 +342,7 @@ export default function DashboardScreen({ navigation }: any) {
         if (!activeShift) return;
         const closingCash = parseFloat(closingCashInput.replace(/[^0-9]/g, '') || '0');
         try {
-            const db = await getDBConnection();
-            await db.executeSql(
-                `UPDATE shifts SET status = 'CLOSED', closedAt = ?, closingCash = ? WHERE id = ?`,
-                [new Date().toISOString(), closingCash, activeShift.id]
-            );
+            await closeCashierShift(activeShift, closingCash);
             const accumulated = activeShift.openingCash + shiftSummary.totalSales - shiftSummary.totalExpenses;
             const diff = closingCash - accumulated;
             setShowCloseShiftModal(false);
@@ -362,8 +358,8 @@ export default function DashboardScreen({ navigation }: any) {
                 `Kas Fisik Akhir: ${formatRp(closingCash)}\n` +
                 `Selisih Kas   : ${diff >= 0 ? '+' : ''}${formatRp(diff)}`
             );
-        } catch (e) {
-            Alert.alert('Error', 'Gagal menutup shift.');
+        } catch (e: any) {
+            Alert.alert('Error', e.response?.data?.message || e.message || 'Gagal menutup shift.');
         }
     };
 

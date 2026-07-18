@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const authController = require('../controllers/authController');
 const upload = require('../middlewares/uploadMiddleware');
-const { verifyToken } = require('../middlewares/authMiddleware');
+const { verifyToken, isAdmin } = require('../middlewares/authMiddleware');
 
 /**
  * @swagger
@@ -71,7 +71,7 @@ router.post('/login', authController.login);
  *       201:
  *         description: User berhasil dibuat
  */
-router.post('/register', upload.single('image'), authController.register);
+router.post('/register', verifyToken, isAdmin, upload.single('image'), authController.register);
 
 router.put('/change-password', verifyToken, authController.changePassword);
 

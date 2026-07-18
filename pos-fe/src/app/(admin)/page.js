@@ -365,6 +365,19 @@ export default function Dashboard() {
     };
 
     loadAndroidPosData();
+    const intervalId = window.setInterval(loadAndroidPosData, 15000);
+    const handleRefresh = () => loadAndroidPosData();
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') loadAndroidPosData();
+    };
+    window.addEventListener('focus', handleRefresh);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', handleRefresh);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, []);
 
   // ── Shift actions ──

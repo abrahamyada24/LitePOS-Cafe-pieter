@@ -2,7 +2,18 @@ import api, { isDeviceAssetUrl } from './api';
 import { getDBConnection } from '../database/db';
 
 // Keys yang hanya ada di device lokal, tidak boleh ditimpa oleh server
-const LOCAL_ONLY_KEYS = ['printerAddress', 'printerType', 'apiBaseUrl', 'enableKitchenPrint'];
+const LOCAL_ONLY_KEYS = ['printerAddress', 'printerType', 'apiBaseUrl', 'enableKitchenPrint', 'settings_sync_pending'];
+
+const markRowsSynced = async (db: any, table: string, ids: Array<string | number>) => {
+    if (ids.length === 0) return;
+    const allowedTables = new Set(['transactions', 'expenses', 'shifts', 'stock_receipts']);
+    if (!allowedTables.has(table)) throw new Error(`Tabel sinkronisasi tidak dikenal: ${table}`);
+    const placeholders = ids.map(() => '?').join(',');
+    await db.executeSql(
+        `UPDATE ${table} SET isSynced = 1 WHERE id IN (${placeholders})`,
+        ids
+    );
+};
 
 const getImageUploadMetadata = (uri: string) => {
     const cleanUri = uri.split('?')[0];
@@ -62,9 +73,15 @@ export const syncService = {
                 const NUMERIC_KEYS = ['taxRate', 'serviceCharge', 'loyalty_multiplier', 'loyalty_multiplier_amount', 'loyalty_point_value', 'loyalty_min_points'];
                 
                 if (data.settings && data.settings.length > 0) {
+                    const [pendingSettingsResult] = await tx.executeSql(
+                        `SELECT value FROM settings WHERE key = 'settings_sync_pending'`
+                    );
+                    const hasPendingLocalSettings = pendingSettingsResult.rows.length > 0 &&
+                        pendingSettingsResult.rows.item(0).value === 'true';
                     for (const s of data.settings) {
                         // Skip local-only keys — jangan timpa dengan data server
                         if (LOCAL_ONLY_KEYS.includes(s.key)) continue;
+                        if (hasPendingLocalSettings) continue;
                         
                         // Boolean & numeric keys: selalu update dari server
                         if (BOOLEAN_KEYS.includes(s.key) || NUMERIC_KEYS.includes(s.key)) {
@@ -86,10 +103,14 @@ export const syncService = {
                 if (data.categories) {
                     for (const c of data.categories) {
                         // Cek apakah kategori ini sudah ada di lokal (berdasarkan serverId atau id)
-                        const [checkRes] = await tx.executeSql('SELECT id FROM categories WHERE serverId = ? OR id = ?', [c.id, c.androidId]);
+                        const [checkRes] = await tx.executeSql('SELECT id, isSynced FROM categories WHERE serverId = ? OR id = ?', [c.id, c.androidId]);
                         if (checkRes.rows.length > 0) {
-                            const localId = checkRes.rows.item(0).id;
-                            await tx.executeSql('UPDATE categories SET name = ?, serverId = ?, isSynced = 1 WHERE id = ?', [c.name, c.id, localId]);
+                            const localCategory = checkRes.rows.item(0);
+                            if (Number(localCategory.isSynced) === 0) {
+                                await tx.executeSql('UPDATE categories SET serverId = COALESCE(serverId, ?) WHERE id = ?', [c.id, localCategory.id]);
+                            } else {
+                                await tx.executeSql('UPDATE categories SET name = ?, serverId = ?, isSynced = 1 WHERE id = ?', [c.name, c.id, localCategory.id]);
+                            }
                         } else {
                             await tx.executeSql('INSERT INTO categories (name, serverId, isSynced) VALUES (?, ?, 1)', [c.name, c.id]);
                         }
@@ -157,10 +178,14 @@ export const syncService = {
                 // Customers
                 if (data.customers) {
                     for (const c of data.customers) {
-                        const [checkRes] = await tx.executeSql('SELECT id FROM customers WHERE serverId = ? OR id = ?', [c.id, c.androidId]);
+                        const [checkRes] = await tx.executeSql('SELECT id, isSynced FROM customers WHERE serverId = ? OR id = ?', [c.id, c.androidId]);
                         if (checkRes.rows.length > 0) {
-                            const localId = checkRes.rows.item(0).id;
-                            await tx.executeSql('UPDATE customers SET name = ?, phone = ?, notes = ?, loyaltyDiscount = ?, points = ?, serverId = ?, isSynced = 1 WHERE id = ?', [c.name, c.phone, c.notes, c.loyaltyDiscount || 0, c.points || 0, c.id, localId]);
+                            const localCustomer = checkRes.rows.item(0);
+                            if (Number(localCustomer.isSynced) === 0) {
+                                await tx.executeSql('UPDATE customers SET serverId = COALESCE(serverId, ?) WHERE id = ?', [c.id, localCustomer.id]);
+                            } else {
+                                await tx.executeSql('UPDATE customers SET name = ?, phone = ?, notes = ?, loyaltyDiscount = ?, points = ?, serverId = ?, isSynced = 1 WHERE id = ?', [c.name, c.phone, c.notes, c.loyaltyDiscount || 0, c.points || 0, c.id, localCustomer.id]);
+                            }
                         } else {
                             await tx.executeSql('INSERT INTO customers (name, phone, notes, loyaltyDiscount, points, serverId, isSynced) VALUES (?, ?, ?, ?, ?, ?, 1)', [c.name, c.phone, c.notes, c.loyaltyDiscount || 0, c.points || 0, c.id]);
                         }
@@ -170,10 +195,14 @@ export const syncService = {
                 // Suppliers — upsert by serverId
                 if (data.suppliers) {
                     for (const s of data.suppliers) {
-                        const [checkRes] = await tx.executeSql('SELECT id FROM suppliers WHERE serverId = ? OR id = ?', [s.id, s.id]);
+                        const [checkRes] = await tx.executeSql('SELECT id, isSynced FROM suppliers WHERE serverId = ? OR id = ?', [s.id, s.id]);
                         if (checkRes.rows.length > 0) {
-                            const localId = checkRes.rows.item(0).id;
-                            await tx.executeSql('UPDATE suppliers SET name = ?, phone = ?, address = ?, notes = ?, serverId = ?, isSynced = 1 WHERE id = ?', [s.name, s.phone || s.contact, s.address, s.notes || '', s.id, localId]);
+                            const localSupplier = checkRes.rows.item(0);
+                            if (Number(localSupplier.isSynced) === 0) {
+                                await tx.executeSql('UPDATE suppliers SET serverId = COALESCE(serverId, ?) WHERE id = ?', [s.id, localSupplier.id]);
+                            } else {
+                                await tx.executeSql('UPDATE suppliers SET name = ?, phone = ?, address = ?, notes = ?, serverId = ?, isSynced = 1 WHERE id = ?', [s.name, s.phone || s.contact, s.address, s.notes || '', s.id, localSupplier.id]);
+                            }
                         } else {
                             await tx.executeSql('INSERT INTO suppliers (name, phone, address, notes, serverId, isSynced) VALUES (?, ?, ?, ?, ?, 1)', [s.name, s.phone || s.contact, s.address, s.notes || '', s.id]);
                         }
@@ -191,10 +220,10 @@ export const syncService = {
                                     await tx.executeSql('UPDATE packages SET serverId = COALESCE(serverId, ?) WHERE id = ?', [pk.id, localPackage.id]);
                                 }
                             } else {
-                                await tx.executeSql('UPDATE packages SET name = ?, description = ?, price = ?, isActive = ?, serverId = ?, isSynced = 1 WHERE id = ?', [pk.name, pk.description, pk.price, pk.isActive ? 1 : 0, pk.id, localPackage.id]);
+                                await tx.executeSql('UPDATE packages SET name = ?, description = ?, price = ?, imageUrl = ?, isActive = ?, serverId = ?, isSynced = 1 WHERE id = ?', [pk.name, pk.description, pk.price, pk.imageUrl || null, pk.isActive ? 1 : 0, pk.id, localPackage.id]);
                             }
                         } else {
-                            await tx.executeSql('INSERT INTO packages (name, description, price, isActive, createdAt, serverId, isSynced) VALUES (?, ?, ?, ?, ?, ?, 1)', [pk.name, pk.description, pk.price, pk.isActive ? 1 : 0, new Date().toISOString(), pk.id]);
+                            await tx.executeSql('INSERT INTO packages (name, description, price, imageUrl, isActive, createdAt, serverId, isSynced) VALUES (?, ?, ?, ?, ?, ?, ?, 1)', [pk.name, pk.description, pk.price, pk.imageUrl || null, pk.isActive ? 1 : 0, new Date().toISOString(), pk.id]);
                         }
                     }
                 }
@@ -221,10 +250,14 @@ export const syncService = {
                 // Dine-in Tables — upsert by serverId
                 if (data.tables) {
                     for (const tb of data.tables) {
-                        const [checkRes] = await tx.executeSql('SELECT id FROM dine_tables WHERE serverId = ? OR id = ?', [tb.id, tb.id]);
+                        const [checkRes] = await tx.executeSql('SELECT id, isSynced FROM dine_tables WHERE serverId = ? OR id = ?', [tb.id, tb.id]);
                         if (checkRes.rows.length > 0) {
-                            const localId = checkRes.rows.item(0).id;
-                            await tx.executeSql('UPDATE dine_tables SET number = ?, name = ?, capacity = ?, status = ?, serverId = ?, isSynced = 1 WHERE id = ?', [tb.number, tb.name, tb.capacity || 4, tb.status || 'AVAILABLE', tb.id, localId]);
+                            const localTable = checkRes.rows.item(0);
+                            if (Number(localTable.isSynced) === 0) {
+                                await tx.executeSql('UPDATE dine_tables SET serverId = COALESCE(serverId, ?) WHERE id = ?', [tb.id, localTable.id]);
+                            } else {
+                                await tx.executeSql('UPDATE dine_tables SET number = ?, name = ?, capacity = ?, status = ?, serverId = ?, isSynced = 1 WHERE id = ?', [tb.number, tb.name, tb.capacity || 4, tb.status || 'AVAILABLE', tb.id, localTable.id]);
+                            }
                         } else {
                             await tx.executeSql('INSERT INTO dine_tables (number, name, capacity, status, serverId, isSynced) VALUES (?, ?, ?, ?, ?, 1)', [tb.number, tb.name, tb.capacity || 4, tb.status || 'AVAILABLE', tb.id]);
                         }
@@ -238,10 +271,14 @@ export const syncService = {
                         const [prodCheck] = await tx.executeSql('SELECT id FROM products WHERE serverId = ? OR id = ?', [ad.productId, ad.productId]);
                         const localProductId = prodCheck.rows.length > 0 ? prodCheck.rows.item(0).id : ad.productId;
 
-                        const [checkRes] = await tx.executeSql('SELECT id FROM product_addons WHERE serverId = ? OR (productId = ? AND name = ?)', [ad.id, localProductId, ad.name]);
+                        const [checkRes] = await tx.executeSql('SELECT id, isSynced FROM product_addons WHERE serverId = ? OR (productId = ? AND name = ?)', [ad.id, localProductId, ad.name]);
                         if (checkRes.rows.length > 0) {
-                            const localId = checkRes.rows.item(0).id;
-                            await tx.executeSql('UPDATE product_addons SET productId = ?, name = ?, price = ?, serverId = ?, isSynced = 1 WHERE id = ?', [localProductId, ad.name, ad.price, ad.id, localId]);
+                            const localAddon = checkRes.rows.item(0);
+                            if (Number(localAddon.isSynced) === 0) {
+                                await tx.executeSql('UPDATE product_addons SET serverId = COALESCE(serverId, ?) WHERE id = ?', [ad.id, localAddon.id]);
+                            } else {
+                                await tx.executeSql('UPDATE product_addons SET productId = ?, name = ?, price = ?, serverId = ?, isSynced = 1 WHERE id = ?', [localProductId, ad.name, ad.price, ad.id, localAddon.id]);
+                            }
                         } else {
                             await tx.executeSql('INSERT INTO product_addons (productId, name, price, serverId, isSynced) VALUES (?, ?, ?, ?, 1)', [localProductId, ad.name, ad.price, ad.id]);
                         }
@@ -258,7 +295,7 @@ export const syncService = {
                     if (serverCatIds.length > 0) {
                         const placeholders = serverCatIds.map(() => '?').join(',');
                         await tx.executeSql(
-                            `DELETE FROM categories WHERE serverId IS NOT NULL AND serverId NOT IN (${placeholders})`,
+                            `DELETE FROM categories WHERE isSynced = 1 AND serverId IS NOT NULL AND serverId NOT IN (${placeholders})`,
                             serverCatIds
                         );
                     }
@@ -271,12 +308,12 @@ export const syncService = {
                         const placeholders = serverProdIds.map(() => '?').join(',');
                         // First delete addons of products that will be deleted
                         await tx.executeSql(
-                            `DELETE FROM product_addons WHERE productId IN (SELECT id FROM products WHERE serverId IS NOT NULL AND serverId NOT IN (${placeholders}))`,
+                            `DELETE FROM product_addons WHERE isSynced = 1 AND productId IN (SELECT id FROM products WHERE isSynced = 1 AND serverId IS NOT NULL AND serverId NOT IN (${placeholders}))`,
                             serverProdIds
                         );
                         // Then delete the products
                         await tx.executeSql(
-                            `DELETE FROM products WHERE serverId IS NOT NULL AND serverId NOT IN (${placeholders})`,
+                            `DELETE FROM products WHERE isSynced = 1 AND serverId IS NOT NULL AND serverId NOT IN (${placeholders})`,
                             serverProdIds
                         );
                     }
@@ -288,7 +325,7 @@ export const syncService = {
                     if (serverAddonIds.length > 0) {
                         const placeholders = serverAddonIds.map(() => '?').join(',');
                         await tx.executeSql(
-                            `DELETE FROM product_addons WHERE serverId IS NOT NULL AND serverId NOT IN (${placeholders})`,
+                            `DELETE FROM product_addons WHERE isSynced = 1 AND serverId IS NOT NULL AND serverId NOT IN (${placeholders})`,
                             serverAddonIds
                         );
                     }
@@ -300,7 +337,7 @@ export const syncService = {
                     if (serverSuppIds.length > 0) {
                         const placeholders = serverSuppIds.map(() => '?').join(',');
                         await tx.executeSql(
-                            `DELETE FROM suppliers WHERE serverId IS NOT NULL AND serverId NOT IN (${placeholders})`,
+                            `DELETE FROM suppliers WHERE isSynced = 1 AND serverId IS NOT NULL AND serverId NOT IN (${placeholders})`,
                             serverSuppIds
                         );
                     }
@@ -312,11 +349,11 @@ export const syncService = {
                     if (serverPkgIds.length > 0) {
                         const placeholders = serverPkgIds.map(() => '?').join(',');
                         await tx.executeSql(
-                            `DELETE FROM package_items WHERE packageId IN (SELECT id FROM packages WHERE serverId IS NOT NULL AND serverId NOT IN (${placeholders}))`,
+                            `DELETE FROM package_items WHERE packageId IN (SELECT id FROM packages WHERE isSynced = 1 AND serverId IS NOT NULL AND serverId NOT IN (${placeholders}))`,
                             serverPkgIds
                         );
                         await tx.executeSql(
-                            `DELETE FROM packages WHERE serverId IS NOT NULL AND serverId NOT IN (${placeholders})`,
+                            `DELETE FROM packages WHERE isSynced = 1 AND serverId IS NOT NULL AND serverId NOT IN (${placeholders})`,
                             serverPkgIds
                         );
                     }
@@ -328,7 +365,7 @@ export const syncService = {
                     if (serverTableIds.length > 0) {
                         const placeholders = serverTableIds.map(() => '?').join(',');
                         await tx.executeSql(
-                            `DELETE FROM dine_tables WHERE serverId IS NOT NULL AND serverId NOT IN (${placeholders})`,
+                            `DELETE FROM dine_tables WHERE isSynced = 1 AND serverId IS NOT NULL AND serverId NOT IN (${placeholders})`,
                             serverTableIds
                         );
                     }
@@ -435,7 +472,7 @@ export const syncService = {
             // Ambil customers
             let customers: any[] = [];
             try {
-                const [custRes] = await db.executeSql('SELECT * FROM customers WHERE isSynced = 0 OR points > 0');
+                const [custRes] = await db.executeSql('SELECT * FROM customers WHERE isSynced = 0');
                 for (let i = 0; i < custRes.rows.length; i++) {
                     customers.push(custRes.rows.item(i));
                 }
@@ -481,7 +518,7 @@ export const syncService = {
             // Ambil packages + items
             let packages: any[] = [];
             try {
-                const [pkgRes] = await db.executeSql('SELECT * FROM packages');
+                const [pkgRes] = await db.executeSql('SELECT * FROM packages WHERE isSynced = 0');
                 for (let i = 0; i < pkgRes.rows.length; i++) {
                     const pkg = pkgRes.rows.item(i);
                     const [itemsRes] = await db.executeSql(`
@@ -530,12 +567,19 @@ export const syncService = {
             } catch(e) { console.warn('Push: gagal ambil product_addons:', e); }
 
             // Ambil settings lokal untuk di-push ke server
-            const [settingsRes] = await db.executeSql('SELECT * FROM settings');
             const settings: any[] = [];
-            for (let i = 0; i < settingsRes.rows.length; i++) {
-                const row = settingsRes.rows.item(i);
-                if (!LOCAL_ONLY_KEYS.includes(row.key)) {
-                    settings.push({ key: row.key, value: row.value });
+            const [settingsPendingResult] = await db.executeSql(
+                `SELECT value FROM settings WHERE key = 'settings_sync_pending'`
+            );
+            const settingsArePending = settingsPendingResult.rows.length > 0 &&
+                settingsPendingResult.rows.item(0).value === 'true';
+            if (settingsArePending) {
+                const [settingsRes] = await db.executeSql('SELECT * FROM settings');
+                for (let i = 0; i < settingsRes.rows.length; i++) {
+                    const row = settingsRes.rows.item(i);
+                    if (!LOCAL_ONLY_KEYS.includes(row.key)) {
+                        settings.push({ key: row.key, value: row.value });
+                    }
                 }
             }
 
@@ -563,6 +607,23 @@ export const syncService = {
             
             if (res.data.success) {
                 const idMap = res.data.idMap || {};
+                const syncedIds = res.data.syncedIds || {};
+                const warnings = Array.isArray(res.data.warnings) ? res.data.warnings : [];
+                const acknowledgedIds = (
+                    key: string,
+                    rows: any[],
+                    warningEntity: string
+                ): Array<string | number> => {
+                    if (Array.isArray(syncedIds[key])) return syncedIds[key];
+                    const rejected = new Set(
+                        warnings
+                            .filter((warning: any) => warning.entity === warningEntity)
+                            .map((warning: any) => String(warning.id))
+                    );
+                    return rows
+                        .map((row) => row.id)
+                        .filter((id) => !rejected.has(String(id)));
+                };
 
                 // File galeri hanya ada di perangkat. Upload setelah serverId produk tersedia,
                 // lalu simpan kembali path relatif backend agar tetap mengikuti apiBaseUrl aktif.
@@ -606,21 +667,14 @@ export const syncService = {
                     }
                 }
 
-                if (transactions.length > 0) {
-                    const txIds = transactions.map(t => `'${t.id}'`).join(',');
-                    await db.executeSql(`UPDATE transactions SET isSynced = 1 WHERE id IN (${txIds})`);
-                }
-                if (expenses.length > 0) {
-                    const expIds = expenses.map(e => e.id).join(',');
-                    await db.executeSql(`UPDATE expenses SET isSynced = 1 WHERE id IN (${expIds})`);
-                }
-                if (shifts.length > 0) {
-                    const shiftIds = shifts.map(s => `'${s.id}'`).join(',');
-                    await db.executeSql(`UPDATE shifts SET isSynced = 1 WHERE id IN (${shiftIds})`);
-                }
-                if (stockReceipts.length > 0) {
-                    const receiptIds = stockReceipts.map(r => `'${r.id}'`).join(',');
-                    await db.executeSql(`UPDATE stock_receipts SET isSynced = 1 WHERE id IN (${receiptIds})`);
+                await markRowsSynced(db, 'transactions', acknowledgedIds('transactions', transactions, 'transaction'));
+                await markRowsSynced(db, 'expenses', acknowledgedIds('expenses', expenses, 'expense'));
+                await markRowsSynced(db, 'shifts', acknowledgedIds('shifts', shifts, 'shift'));
+                await markRowsSynced(db, 'stock_receipts', acknowledgedIds('stockReceipts', stockReceipts, 'stockReceipt'));
+                if (settings.length > 0) {
+                    await db.executeSql(
+                        `INSERT OR REPLACE INTO settings (key, value) VALUES ('settings_sync_pending', 'false')`
+                    );
                 }
 
                 if (idMap.suppliers) {
@@ -650,7 +704,7 @@ export const syncService = {
                 return {
                     success: true,
                     message: 'Local data pushed to server and IDs mapped successfully',
-                    warnings: Array.isArray(res.data.warnings) ? res.data.warnings : [],
+                    warnings,
                 };
             }
 
@@ -763,11 +817,31 @@ export const syncService = {
                             const localConfirmed = Number(existing.preOrderConfirmed) === 1;
                             const serverConfirmed = tx.preOrderConfirmed === true || Number(tx.preOrderConfirmed) === 1;
                             const mergedConfirmed = localConfirmed || serverConfirmed ? 1 : 0;
-                            const keepPendingSync = localConfirmed && !serverConfirmed && Number(existing.isSynced) === 0;
-                            await db.executeSql(
-                                'UPDATE transactions SET status = ?, preOrderConfirmed = ?, isSynced = ? WHERE id = ?',
-                                [tx.status || 'COMPLETED', mergedConfirmed, keepPendingSync ? 0 : 1, existing.id]
-                            );
+                            const hasPendingLocalChanges = Number(existing.isSynced) === 0;
+                            if (hasPendingLocalChanges) {
+                                // Jangan timpa pembayaran/konfirmasi lokal yang belum berhasil dikirim.
+                                // Konfirmasi dari server tetap boleh bergerak satu arah false -> true.
+                                await db.executeSql(
+                                    'UPDATE transactions SET preOrderConfirmed = ? WHERE id = ?',
+                                    [mergedConfirmed, existing.id]
+                                );
+                            } else {
+                                const paymentStatus = tx.paymentStatus || 'PAID';
+                                const paidAmount = tx.paidAmount ?? (paymentStatus === 'PAID' ? tx.grandTotal : 0);
+                                const remainingAmount = tx.remainingAmount ?? Math.max(0, Number(tx.grandTotal || 0) - Number(paidAmount || 0));
+                                await db.executeSql(
+                                    `UPDATE transactions
+                                     SET status = ?, preOrderConfirmed = ?, paymentMethod = ?, cashAmount = ?,
+                                         changeAmount = ?, paymentStatus = ?, paidAmount = ?, remainingAmount = ?,
+                                         paidAt = ?, isSynced = 1
+                                     WHERE id = ?`,
+                                    [
+                                        tx.status || 'COMPLETED', mergedConfirmed, tx.paymentMethod || 'CASH',
+                                        tx.cashAmount, tx.changeAmount, paymentStatus, paidAmount,
+                                        remainingAmount, tx.paidAt, existing.id,
+                                    ]
+                                );
+                            }
                         }
                     } catch (txErr: any) {
                         console.warn(`[SYNC-HISTORY] Gagal upsert transaksi ${tx.invoiceNumber}:`, txErr?.message);
@@ -787,8 +861,8 @@ export const syncService = {
                         if (checkRes.rows.length === 0) {
                             await db.executeSql(
                                 `INSERT INTO expenses (description, amount, category, type, createdAt, isSynced)
-                                 VALUES (?, ?, ?, 'EXPENSE', ?, 1)`,
-                                [exp.description, exp.amount, exp.category || 'Umum', exp.createdAt]
+                                 VALUES (?, ?, ?, ?, ?, 1)`,
+                                [exp.description, exp.amount, exp.category || 'Umum', exp.type === 'PURCHASE' ? 'PURCHASE' : 'EXPENSE', exp.createdAt]
                             );
                         }
                     } catch (expErr: any) {

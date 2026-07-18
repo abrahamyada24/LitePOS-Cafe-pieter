@@ -73,7 +73,7 @@ export default function TableManagementScreen({ navigation }: any) {
             const cap = parseInt(tableCapacity || '4', 10);
             if (editId) {
                 await db.executeSql(
-                    'UPDATE dine_tables SET number = ?, name = ?, capacity = ? WHERE id = ?',
+                    'UPDATE dine_tables SET number = ?, name = ?, capacity = ?, isSynced = 0 WHERE id = ?',
                     [tableNumber.trim(), tableName.trim() || null, cap, editId]
                 );
             } else {
@@ -114,7 +114,7 @@ export default function TableManagementScreen({ navigation }: any) {
     const handleStatusChange = async (tableId: number, status: TableStatus) => {
         try {
             const db = await getDBConnection();
-            await db.executeSql('UPDATE dine_tables SET status = ? WHERE id = ?', [status, tableId]);
+            await db.executeSql('UPDATE dine_tables SET status = ?, isSynced = 0 WHERE id = ?', [status, tableId]);
             setShowStatusPicker(false);
             setStatusPickerTableId(null);
             loadTables();
