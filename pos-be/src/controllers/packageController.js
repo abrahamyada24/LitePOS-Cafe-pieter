@@ -1,6 +1,18 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
+const parseBoolean = (value, fallback) => {
+    if (value === undefined || value === null || value === '') return fallback;
+    return value === true || value === 1 || value === '1' || value === 'true';
+};
+
+const parseItems = (value, fallback) => {
+    if (value === undefined || value === null || value === '') return fallback;
+    const items = typeof value === 'string' ? JSON.parse(value) : value;
+    if (!Array.isArray(items)) throw new Error('Daftar isi paket tidak valid.');
+    return items;
+};
+
 exports.getAllPackages = async (req, res) => {
     try {
         const packages = await prisma.package.findMany({
@@ -35,19 +47,22 @@ exports.getPackageById = async (req, res) => {
 
 exports.createPackage = async (req, res) => {
     try {
-        const { name, description, price, isActive, items } = req.body;
+        const { name, description, price, isActive } = req.body;
+        const items = parseItems(req.body.items, []);
+        const imageUrl = req.file ? `/uploads/${req.file.filename}` : null;
         
         const newPackage = await prisma.package.create({
             data: {
                 name,
                 description,
+                imageUrl,
                 price: parseFloat(price),
-                isActive: isActive ?? true,
+                isActive: parseBoolean(isActive, true),
                 items: {
-                    create: items?.map(item => ({
+                    create: items.map(item => ({
                         productId: parseInt(item.productId),
                         qty: parseInt(item.qty || 1)
-                    })) || []
+                    }))
                 }
             },
             include: { items: true }
@@ -60,12 +75,13 @@ exports.createPackage = async (req, res) => {
 
 exports.updatePackage = async (req, res) => {
     try {
-        const { name, description, price, isActive, items } = req.body;
+        const { name, description, price, isActive } = req.body;
+        const items = parseItems(req.body.items, undefined);
         const packageId = Number(req.params.id);
 
         const updatedPackage = await prisma.$transaction(async (tx) => {
             // Delete old items
-            if (items) {
+            if (items !== undefined) {
                 await tx.packageItem.deleteMany({ where: { packageId } });
             }
 
@@ -73,11 +89,12 @@ exports.updatePackage = async (req, res) => {
             return await tx.package.update({
                 where: { id: packageId },
                 data: {
-                    name,
-                    description,
-                    price: price ? parseFloat(price) : undefined,
-                    isActive,
-                    ...(items && {
+                    name: name !== undefined ? name : undefined,
+                    description: description !== undefined ? description : undefined,
+                    price: price !== undefined && price !== '' ? parseFloat(price) : undefined,
+                    isActive: isActive !== undefined ? parseBoolean(isActive, true) : undefined,
+                    imageUrl: req.file ? `/uploads/${req.file.filename}` : undefined,
+                    ...(items !== undefined && {
                         items: {
                             create: items.map(item => ({
                                 productId: parseInt(item.productId),

@@ -1,5 +1,6 @@
+/* eslint-disable @next/next/no-img-element */
 import React, { useState, useEffect } from 'react';
-import { X, Plus, Trash2, Search } from 'lucide-react';
+import { X, Plus, Trash2, Search, UploadCloud } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
@@ -11,11 +12,22 @@ export default function PackageModal({ isOpen, onClose, onSave, initialData }) {
         description: '',
         price: '',
         isActive: true,
+        imageFile: null,
         items: [] // { productId, qty, product: { name, price } }
     });
+    const [previewUrl, setPreviewUrl] = useState('');
     const [products, setProducts] = useState([]);
     const [searchProduct, setSearchProduct] = useState('');
     const [isSearchingProduct, setIsSearchingProduct] = useState(false);
+
+    const getImageUrl = (path) => {
+        if (!path) return '';
+        if (path.startsWith('http') || path.startsWith('//')) {
+            return path.startsWith('//') ? `https:${path}` : path;
+        }
+        const cleanPath = path.startsWith('/') ? path.substring(1) : path;
+        return `${API_URL}/${cleanPath}`;
+    };
 
     useEffect(() => {
         if (isOpen) {
@@ -26,16 +38,20 @@ export default function PackageModal({ isOpen, onClose, onSave, initialData }) {
                     description: initialData.description || '',
                     price: initialData.price || '',
                     isActive: initialData.isActive !== false,
+                    imageFile: null,
                     items: initialData.items ? [...initialData.items] : []
                 });
+                setPreviewUrl(getImageUrl(initialData.imageUrl));
             } else {
                 setFormData({
                     name: '',
                     description: '',
                     price: '',
                     isActive: true,
+                    imageFile: null,
                     items: []
                 });
+                setPreviewUrl('');
             }
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -60,6 +76,13 @@ export default function PackageModal({ isOpen, onClose, onSave, initialData }) {
     const handleSubmit = (e) => {
         e.preventDefault();
         onSave(formData);
+    };
+
+    const handleFileChange = (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setFormData(current => ({ ...current, imageFile: file }));
+        setPreviewUrl(URL.createObjectURL(file));
     };
 
     const addItem = (product) => {
@@ -116,6 +139,33 @@ export default function PackageModal({ isOpen, onClose, onSave, initialData }) {
 
                 <div className="overflow-y-auto flex-1 p-6 custom-scrollbar">
                     <form id="packageForm" onSubmit={handleSubmit} className="space-y-6">
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1.5">Gambar Paket</label>
+                            <div className="relative h-44 overflow-hidden rounded-xl border-2 border-dashed border-gray-200 bg-gray-50 transition-colors hover:border-blue-400">
+                                <input
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={handleFileChange}
+                                    className="absolute inset-0 z-20 h-full w-full cursor-pointer opacity-0"
+                                    aria-label="Pilih gambar paket"
+                                />
+                                {previewUrl ? (
+                                    <>
+                                        <img src={previewUrl} alt="Preview gambar paket" className="h-full w-full object-cover" />
+                                        <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity hover:opacity-100">
+                                            <span className="rounded-lg bg-white/90 px-3 py-2 text-xs font-bold text-gray-700">Ganti gambar</span>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div className="flex h-full flex-col items-center justify-center gap-2 text-gray-400">
+                                        <UploadCloud size={36} strokeWidth={1.5} />
+                                        <span className="text-sm font-semibold">Klik untuk upload gambar</span>
+                                        <span className="text-xs">JPG, PNG, atau WEBP (maks. 2 MB)</span>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
                                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">Nama Paket *</label>

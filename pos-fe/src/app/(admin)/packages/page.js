@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 "use client";
 
 import { useState, useEffect } from 'react';
@@ -45,13 +46,23 @@ export default function PackagesPage() {
                 : `${API_URL}/api/packages`;
             const method = isEditing ? 'PUT' : 'POST';
 
+            const payload = new FormData();
+            payload.append('name', formData.name);
+            payload.append('description', formData.description || '');
+            payload.append('price', String(formData.price));
+            payload.append('isActive', String(formData.isActive));
+            payload.append('items', JSON.stringify(formData.items.map(item => ({
+                productId: item.productId,
+                qty: item.qty
+            }))));
+            if (formData.imageFile) payload.append('image', formData.imageFile);
+
             const res = await fetch(url, {
                 method,
                 headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
+                    'Authorization': `Bearer ${token}`
                 },
-                body: JSON.stringify(formData)
+                body: payload
             });
 
             const result = await res.json();
@@ -94,14 +105,13 @@ export default function PackagesPage() {
 
     const handleToggleActive = async (pkg) => {
         try {
-            const updated = { ...pkg, isActive: !pkg.isActive };
             const res = await fetch(`${API_URL}/api/packages/${pkg.id}`, {
                 method: 'PUT',
                 headers: {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify(updated)
+                body: JSON.stringify({ isActive: !pkg.isActive })
             });
             const result = await res.json();
             if (result.success) {
@@ -122,6 +132,15 @@ export default function PackagesPage() {
             currency: 'IDR',
             minimumFractionDigits: 0
         }).format(amount);
+    };
+
+    const getImageUrl = (path) => {
+        if (!path) return '';
+        if (path.startsWith('http') || path.startsWith('//')) {
+            return path.startsWith('//') ? `https:${path}` : path;
+        }
+        const cleanPath = path.startsWith('/') ? path.substring(1) : path;
+        return `${API_URL}/${cleanPath}`;
     };
 
     return (
@@ -185,6 +204,16 @@ export default function PackagesPage() {
                                     </span>
                                 </div>
                             )}
+
+                            <div className="relative z-20 -mx-5 -mt-5 mb-4 h-40 overflow-hidden rounded-t-2xl bg-gray-100">
+                                {pkg.imageUrl ? (
+                                    <img src={getImageUrl(pkg.imageUrl)} alt={pkg.name} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" />
+                                ) : (
+                                    <div className="flex h-full items-center justify-center text-gray-300">
+                                        <PackageIcon size={42} strokeWidth={1.5} />
+                                    </div>
+                                )}
+                            </div>
 
                             <div className="flex justify-between items-start mb-2 relative z-20">
                                 <div>
