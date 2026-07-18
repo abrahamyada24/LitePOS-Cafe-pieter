@@ -792,6 +792,7 @@ exports.getPreOrders = async (req, res) => {
         const preOrders = await prisma.transaction.findMany({
             where: {
                 preOrderDate: { not: null },
+                preOrderConfirmed: false,
                 status: { in: ['PAID', 'COMPLETED'] }
             },
             include: {

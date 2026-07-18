@@ -685,7 +685,7 @@ export const syncService = {
                     try {
                         // Dedup berdasarkan invoiceNumber (unique)
                         const [checkRes] = await db.executeSql(
-                            'SELECT id FROM transactions WHERE invoiceNumber = ?',
+                            'SELECT id, preOrderConfirmed, isSynced FROM transactions WHERE invoiceNumber = ?',
                             [tx.invoiceNumber]
                         );
 
@@ -704,8 +704,8 @@ export const syncService = {
 
                             // Insert transaction
                             await db.executeSql(
-                                `INSERT INTO transactions (id, invoiceNumber, grandTotal, discountAmount, paymentMethod, cashAmount, changeAmount, customerId, customerName, createdAt, status, preOrderDate, paymentStatus, paidAmount, remainingAmount, paidAt, orderType, tableName, isSynced)
-                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+                                `INSERT INTO transactions (id, invoiceNumber, grandTotal, discountAmount, paymentMethod, cashAmount, changeAmount, customerId, customerName, createdAt, status, preOrderDate, paymentStatus, paidAmount, remainingAmount, paidAt, orderType, tableName, preOrderConfirmed, isSynced)
+                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
                                 [
                                     tx.id,
                                     tx.invoiceNumber,
@@ -725,6 +725,7 @@ export const syncService = {
                                     tx.paymentStatus === 'UNPAID' ? null : (tx.paidAt || tx.createdAt),
                                     tx.orderType || 'TAKE_AWAY',
                                     tx.tableName,
+                                    tx.preOrderConfirmed === true || Number(tx.preOrderConfirmed) === 1 ? 1 : 0,
                                 ]
                             );
 
@@ -758,10 +759,14 @@ export const syncService = {
                             }
                         } else {
                             // Transaksi sudah ada — update status jika berubah (misal RETURNED)
-                            const existingId = checkRes.rows.item(0).id;
+                            const existing = checkRes.rows.item(0);
+                            const localConfirmed = Number(existing.preOrderConfirmed) === 1;
+                            const serverConfirmed = tx.preOrderConfirmed === true || Number(tx.preOrderConfirmed) === 1;
+                            const mergedConfirmed = localConfirmed || serverConfirmed ? 1 : 0;
+                            const keepPendingSync = localConfirmed && !serverConfirmed && Number(existing.isSynced) === 0;
                             await db.executeSql(
-                                'UPDATE transactions SET status = ?, isSynced = 1 WHERE id = ?',
-                                [tx.status || 'COMPLETED', existingId]
+                                'UPDATE transactions SET status = ?, preOrderConfirmed = ?, isSynced = ? WHERE id = ?',
+                                [tx.status || 'COMPLETED', mergedConfirmed, keepPendingSync ? 0 : 1, existing.id]
                             );
                         }
                     } catch (txErr: any) {

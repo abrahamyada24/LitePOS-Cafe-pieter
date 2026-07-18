@@ -341,6 +341,7 @@ exports.pushLocalData = async (req, res) => {
         try {
         // Cek jika sudah ada (identity check menggunakan androidId)
         const exists = await prisma.transaction.findUnique({ where: { androidId: tx.id }});
+        const isPreOrderConfirmed = tx.preOrderConfirmed === true || Number(tx.preOrderConfirmed) === 1;
         if (exists && tx.status === 'RETURNED' && exists.status !== 'RETURNED') {
           // ── UPDATE STATUS RETUR ─────────────────────────────────
           // Transaksi sudah ada di server tapi diretur dari Android
@@ -374,6 +375,16 @@ exports.pushLocalData = async (req, res) => {
             }
           }
           savedTransactions++;
+        } else if (exists) {
+          // Konfirmasi pengambilan bersifat satu arah (false -> true), sehingga
+          // data Android yang lebih lama tidak dapat membatalkan konfirmasi web.
+          if (isPreOrderConfirmed && !exists.preOrderConfirmed) {
+            await prisma.transaction.update({
+              where: { id: exists.id },
+              data: { preOrderConfirmed: true, status: 'COMPLETED' }
+            });
+            savedTransactions++;
+          }
         } else if (!exists) {
           // Hitung subTotal jika tidak dikirim (Android mungkin belum kirim)
           const grandTotal = Number(tx.grandTotal);
@@ -436,6 +447,7 @@ exports.pushLocalData = async (req, res) => {
               orderType: tx.orderType || 'TAKE_AWAY',
               tableNumber: tx.tableName || null,
               preOrderDate: tx.preOrderDate ? new Date(tx.preOrderDate) : null,
+              preOrderConfirmed: isPreOrderConfirmed,
               discountAmount: discountAmount,
               createdAt: new Date(tx.createdAt),
               
@@ -876,6 +888,7 @@ exports.getTransactionHistory = async (req, res) => {
       createdAt: tx.createdAt.toISOString(),
       status: tx.status,
       preOrderDate: tx.preOrderDate ? tx.preOrderDate.toISOString() : null,
+      preOrderConfirmed: tx.preOrderConfirmed,
       orderType: tx.orderType,
       tableName: tx.tableNumber,
       items: tx.items.map(item => ({
