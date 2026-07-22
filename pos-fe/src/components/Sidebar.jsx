@@ -81,20 +81,14 @@ export default function Sidebar({ isMobileOpen, setIsMobileOpen }) {
     }
     const fetchPendingSales = async () => {
       try {
-        const token = localStorage.getItem('token');
-        if (!token) return;
         const baseUrl = API_URL.endsWith('/api') ? API_URL.replace(/\/api$/, '') : API_URL;
-        const res = await fetch(`${baseUrl}/api/saved-transactions`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
+        const res = await fetch(`${baseUrl}/api/saved-transactions`);
         const data = await res.json();
         if (data.success) {
           setPendingSalesCount(Array.isArray(data.data) ? data.data.length : 0);
         }
         if (settings?.enableKitchenQueue) {
-          const kitchenRes = await fetch(`${baseUrl}/api/kitchen-orders/summary`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
+          const kitchenRes = await fetch(`${baseUrl}/api/kitchen-orders/summary`);
           const kitchenData = await kitchenRes.json();
           if (kitchenData.success) setKitchenNewCount(Number(kitchenData.data?.NEW || 0));
         } else {
@@ -114,7 +108,7 @@ export default function Sidebar({ isMobileOpen, setIsMobileOpen }) {
   const handleLogout = async () => {
     const confirm = await showAlert.confirm("Keluar Kasir?", "Sesi Anda akan berakhir.");
     if (confirm) {
-      logout();
+      await logout();
       router.push('/login');
     }
   };

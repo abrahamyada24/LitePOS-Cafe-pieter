@@ -1,6 +1,19 @@
 /** @type {import('next').NextConfig} */
 const rawBackendUrl = process.env.API_PROXY_TARGET || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 const backendUrl = rawBackendUrl.replace(/\/api\/?$/i, '').replace(/\/+$/, '');
+const contentSecurityPolicy = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: https://images.unsplash.com https://ik.imagekit.io https://o-cdf.oramiland.com https://image.idntimes.com",
+  "font-src 'self' data:",
+  "connect-src 'self' https://103.150.227.178",
+  "upgrade-insecure-requests",
+].join('; ');
 
 const backendImagePattern = (() => {
   try {
@@ -17,6 +30,20 @@ const backendImagePattern = (() => {
 })();
 
 const nextConfig = {
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: [
+          { key: 'Content-Security-Policy', value: contentSecurityPolicy },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'X-Frame-Options', value: 'DENY' },
+          { key: 'Permissions-Policy', value: 'camera=(self), microphone=(), geolocation=()' },
+        ],
+      },
+    ];
+  },
   async rewrites() {
     return [
       {

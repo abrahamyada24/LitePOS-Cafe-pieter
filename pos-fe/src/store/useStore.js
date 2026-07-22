@@ -11,23 +11,8 @@ export const useStore = create(
       isAuthenticated: false,
 
       getHeaders: () => {
-        let token = get().token;
-
-        if (!token && typeof window !== 'undefined') {
-          token = localStorage.getItem('token');
-        }
-
-        if (!token && typeof window !== 'undefined') {
-          const storage = localStorage.getItem('pos-storage');
-          if (storage) {
-            try {
-              const parsed = JSON.parse(storage);
-              token = parsed.state?.token;
-            } catch (e) { console.error("Gagal parse storage", e); }
-          }
-        }
-
-        return token ? { 'Authorization': `Bearer ${token}` } : null;
+        const token = get().token;
+        return token ? { Authorization: `Bearer ${token}` } : {};
       },
 
       login: async (email, password) => {
@@ -37,34 +22,65 @@ export const useStore = create(
           const res = await fetch(`${baseUrl}/api/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password }),
+            credentials: 'include',
+            body: JSON.stringify({ email, password, clientType: 'WEB', deviceName: 'Web POS' }),
           });
           const data = await res.json();
 
           if (data.success) {
-            localStorage.setItem('token', data.token);
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            localStorage.setItem('litepos_last_activity', String(Date.now()));
             set({
               user: data.user,
-              token: data.token,
+              token: null,
               isAuthenticated: true,
               settings: null
             });
 
-            // Sidebar bergantung pada settings. Ambil konfigurasi terbaru sebelum
-            // halaman dashboard dibuka agar menu fitur tidak memakai cache lama.
-            await get().fetchSettings(data.token);
-            return { success: true };
+            if (!data.user?.mustChangePassword) await get().fetchSettings();
+            return { success: true, mustChangePassword: Boolean(data.user?.mustChangePassword) };
           }
-          return { success: false, message: data.message };
+          return { success: false, message: data.message, code: data.code };
         } catch (error) {
           return { success: false, message: 'Gagal terhubung ke server' };
         }
       },
 
-      logout: () => {
+      logout: async ({ remote = true } = {}) => {
+        if (remote) {
+          try {
+            const baseUrl = API_URL.endsWith('/api') ? API_URL.replace(/\/api$/, '') : API_URL;
+            await fetch(`${baseUrl}/api/auth/logout`, {
+              method: 'POST',
+              credentials: 'include',
+            });
+          } catch (_) { /* sesi lokal tetap dibersihkan */ }
+        }
         set({ user: null, token: null, isAuthenticated: false, cart: [], settings: null, discount: 0, discountType: 'amount', activeShift: null });
         localStorage.removeItem('pos-storage');
         localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        localStorage.removeItem('litepos_last_activity');
+      },
+
+      hydrateSession: async () => {
+        try {
+          const baseUrl = API_URL.endsWith('/api') ? API_URL.replace(/\/api$/, '') : API_URL;
+          const response = await fetch(`${baseUrl}/api/auth/me`, {
+            credentials: 'include',
+            cache: 'no-store',
+          });
+          const data = await response.json();
+          if (!response.ok || !data.success) {
+            await get().logout({ remote: false });
+            return { success: false, code: data.code };
+          }
+          set({ user: data.user, token: null, isAuthenticated: true });
+          return { success: true, user: data.user };
+        } catch (error) {
+          return { success: false, code: 'NETWORK_ERROR' };
+        }
       },
 
       products: [],
@@ -73,23 +89,20 @@ export const useStore = create(
       settings: null,
       isLoading: false,
 
-      fetchSettings: async (tokenOverride = null) => {
-        const token = tokenOverride || get().token || (typeof window !== 'undefined' ? localStorage.getItem('token') : null);
-        if (!token) return { success: false, message: 'Token tidak tersedia' };
-
+      fetchSettings: async () => {
         try {
           const baseUrl = API_URL.endsWith('/api') ? API_URL.replace(/\/api$/, '') : API_URL;
           const response = await fetch(`${baseUrl}/api/settings`, {
             headers: {
-              'Authorization': `Bearer ${token}`,
               'Cache-Control': 'no-cache'
             },
+            credentials: 'include',
             cache: 'no-store'
           });
           const data = await response.json();
 
           if (response.status === 401) {
-            get().logout();
+            await get().logout({ remote: false });
             return { success: false, message: 'Sesi berakhir' };
           }
 
@@ -286,7 +299,6 @@ export const useStore = create(
       name: 'pos-storage',
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
-        token: state.token,
         user: state.user,
         isAuthenticated: state.isAuthenticated,
         cart: state.cart,
@@ -294,6 +306,12 @@ export const useStore = create(
         discount: state.discount,
         discountType: state.discountType,
         activeShift: state.activeShift
+      }),
+      version: 2,
+      migrate: (persistedState) => ({
+        ...persistedState,
+        token: null,
+        isAuthenticated: false,
       }),
     }
   )

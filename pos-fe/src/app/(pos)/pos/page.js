@@ -16,6 +16,7 @@ import ShiftGuardModal from '@/components/pos/ShiftGuardModal';
 
 // Import SweetAlert
 import { showAlert } from '@/utils/swal';
+import { useStore } from '@/store/useStore';
 
 const RAW_API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 const API_URL = RAW_API_URL.endsWith('/api') ? RAW_API_URL.slice(0, -4) : RAW_API_URL;
@@ -23,6 +24,8 @@ const MIDTRANS_CLIENT_KEY = process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY;
 
 export default function POSPage() {
   const router = useRouter(); 
+  const authenticatedUser = useStore((state) => state.user);
+  const logout = useStore((state) => state.logout);
   
   // --- STATE DATA ---
   const [products, setProducts] = useState([]);
@@ -75,11 +78,7 @@ export default function POSPage() {
     const fetchData = async () => {
         try {
             const token = localStorage.getItem('token'); 
-            const userStr = localStorage.getItem('user');
-
-            if (userStr) {
-                setCurrentUser(JSON.parse(userStr));
-            }
+            setCurrentUser(authenticatedUser);
 
             const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
 
@@ -161,7 +160,7 @@ export default function POSPage() {
     return () => {
         if(document.body.contains(script)) document.body.removeChild(script);
     }
-  }, []);
+  }, [authenticatedUser]);
 
   useEffect(() => {
     if (!settingsLoaded) return undefined;
@@ -578,8 +577,7 @@ export default function POSPage() {
         handleLogout={async () => {
             const confirmed = await showAlert.confirm('Keluar Kasir?', 'Sesi kasir akan diakhiri.', 'Ya, Keluar');
             if(confirmed) {
-                localStorage.removeItem('token');
-                localStorage.removeItem('user');
+                await logout();
                 router.push('/login');
             }
         }}

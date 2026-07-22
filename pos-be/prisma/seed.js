@@ -6,68 +6,42 @@ const prisma = new PrismaClient();
 async function main() {
     console.log('Seeding database...');
 
-    // 1. Create Default Owner (Boss)
-    const ownerEmail = 'boss@litepos.com';
-    const ownerPassword = await bcrypt.hash('boss123', 10);
-    const owner = await prisma.user.upsert({
-        where: { email: ownerEmail },
-        update: {
-            name: 'Boss LitePOS',
-            password: ownerPassword,
-            role: 'OWNER',
-            isActive: true,
-        },
-        create: {
-            name: 'Boss LitePOS',
-            email: ownerEmail,
-            password: ownerPassword,
-            role: 'OWNER',
-            isActive: true,
-        },
-    });
-    console.log(`User created or updated: ${owner.email} (OWNER)`);
+    const seedCredentials = [
+        ['SEED_OWNER_PASSWORD', 'boss@litepos.com', 'Boss LitePOS', 'OWNER'],
+        ['SEED_ADMIN_PASSWORD', 'admin@litepos.com', 'Admin LitePOS', 'ADMIN'],
+        ['SEED_CASHIER_PASSWORD', 'cashier@litepos.com', 'Kasir Utama', 'CASHIER'],
+    ];
 
-    // 2. Create Default Admin
-    const adminEmail = 'admin@litepos.com';
-    const adminPassword = await bcrypt.hash('admin123', 10);
-    const admin = await prisma.user.upsert({
-        where: { email: adminEmail },
-        update: {
-            name: 'Admin LitePOS',
-            password: adminPassword,
-            role: 'ADMIN',
-            isActive: true,
-        },
-        create: {
-            name: 'Admin LitePOS',
-            email: adminEmail,
-            password: adminPassword,
-            role: 'ADMIN',
-            isActive: true,
-        },
-    });
-    console.log(`User created or updated: ${admin.email} (ADMIN)`);
+    const missingCredentials = seedCredentials
+        .map(([environmentKey]) => environmentKey)
+        .filter((environmentKey) => !process.env[environmentKey]);
+    if (missingCredentials.length > 0) {
+        throw new Error(`Environment seed password wajib diisi: ${missingCredentials.join(', ')}`);
+    }
 
-    // 3. Create Default Cashier
-    const cashierEmail = 'cashier@litepos.com';
-    const cashierPassword = await bcrypt.hash('cashier123', 10);
-    const cashier = await prisma.user.upsert({
-        where: { email: cashierEmail },
-        update: {
-            name: 'Kasir Utama',
-            password: cashierPassword,
-            role: 'CASHIER',
-            isActive: true,
-        },
-        create: {
-            name: 'Kasir Utama',
-            email: cashierEmail,
-            password: cashierPassword,
-            role: 'CASHIER',
-            isActive: true,
-        },
-    });
-    console.log(`User created or updated: ${cashier.email} (CASHIER)`);
+    for (const [environmentKey, email, name, role] of seedCredentials) {
+        const existingUser = await prisma.user.findUnique({ where: { email } });
+        if (existingUser) {
+            await prisma.user.update({
+                where: { id: existingUser.id },
+                data: { name, role, isActive: true },
+            });
+            console.log(`User already exists; password preserved: ${email} (${role})`);
+            continue;
+        }
+
+        await prisma.user.create({
+            data: {
+                name,
+                email,
+                password: await bcrypt.hash(process.env[environmentKey], 12),
+                role,
+                isActive: true,
+                mustChangePassword: true,
+            },
+        });
+        console.log(`User created and must change password: ${email} (${role})`);
+    }
 
     // 3. Create Default Categories (Optional but helpful)
     const categories = ['Makanan', 'Minuman', 'Dessert', 'Snack'];

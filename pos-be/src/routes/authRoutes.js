@@ -1,7 +1,21 @@
 const express = require('express');
 const router = express.Router();
+const { rateLimit } = require('express-rate-limit');
 const authController = require('../controllers/authController');
 const upload = require('../middlewares/uploadMiddleware');
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  message: {
+    success: false,
+    code: 'LOGIN_RATE_LIMITED',
+    message: 'Terlalu banyak percobaan login. Coba lagi beberapa menit lagi.',
+  },
+});
 const { verifyToken, isAdmin } = require('../middlewares/authMiddleware');
 
 /**
@@ -40,7 +54,7 @@ const { verifyToken, isAdmin } = require('../middlewares/authMiddleware');
  *       401:
  *         description: Email atau Password salah
  */
-router.post('/login', authController.login);
+router.post('/login', loginLimiter, authController.login);
 
 /**
  * @swagger
@@ -76,5 +90,9 @@ router.post('/register', verifyToken, isAdmin, upload.single('image'), authContr
 router.put('/change-password', verifyToken, authController.changePassword);
 
 router.get('/me', verifyToken, authController.me);
+router.post('/logout', verifyToken, authController.logout);
+router.post('/logout-all', verifyToken, authController.logoutAll);
+router.get('/sessions', verifyToken, authController.getSessions);
+router.delete('/sessions/:id', verifyToken, authController.revokeSession);
 
 module.exports = router;

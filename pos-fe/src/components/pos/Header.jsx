@@ -4,9 +4,11 @@ import { Clock3, Search, LogOut } from 'lucide-react';
 import { showAlert } from '@/utils/swal';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { useStore } from '@/store/useStore';
 
 export default function Header({ search, setSearch, currentUser, shiftEnabled, activeShift }) {
     const router = useRouter();
+    const logout = useStore((state) => state.logout);
 
     const handleLogout = async () => {
         const isConfirmed = await showAlert.confirm(
@@ -16,8 +18,7 @@ export default function Header({ search, setSearch, currentUser, shiftEnabled, a
         );
 
         if (isConfirmed) {
-            localStorage.removeItem('token');
-            localStorage.removeItem('user');
+            await logout();
             router.push('/login');
         }
     };

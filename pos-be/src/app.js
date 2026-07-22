@@ -3,6 +3,8 @@ dotenv.config();
 
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
+const helmet = require('helmet');
 const fs = require('fs');
 const { PrismaClient } = require('@prisma/client');
 const { uploadDir } = require('./config/storage');
@@ -70,6 +72,7 @@ const matchesOrigin = (origin, rule) => {
 };
 
 const corsOptions = {
+  credentials: true,
   origin(origin, callback) {
     // Aplikasi Android dan request server-to-server biasanya tidak mengirim Origin.
     if (!origin) return callback(null, true);
@@ -87,7 +90,13 @@ if (isProduction && allowedOrigins.length === 0) {
 
 fs.mkdirSync(uploadDir, { recursive: true });
 
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  hsts: isProduction ? { maxAge: 63072000, includeSubDomains: true, preload: true } : false,
+}));
 app.use(cors(corsOptions));
+app.use(cookieParser());
 app.use(express.json({ limit: '2mb' }));
 
 app.use('/uploads', express.static(uploadDir, { maxAge: '7d' }));

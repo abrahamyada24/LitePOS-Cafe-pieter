@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Mail, Lock, Eye, EyeOff, ArrowRight, AlertCircle, Loader2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -18,6 +18,14 @@ export default function LoginPage() {
 
     const login = useStore(state => state.login);
 
+    useEffect(() => {
+        const notice = sessionStorage.getItem('auth_notice');
+        if (notice) {
+            sessionStorage.removeItem('auth_notice');
+            showAlert.info('Sesi Berakhir', notice);
+        }
+    }, []);
+
     const handleLoginSubmit = async (e) => {
         e.preventDefault();
         setIsLoading(true);
@@ -27,7 +35,7 @@ export default function LoginPage() {
 
             if (result.success) {
                 showAlert.success("Berhasil", "Login berhasil.");
-                router.push('/');
+                router.push(result.mustChangePassword ? '/change-password' : '/');
             } else {
                 showAlert.error("Gagal", result.message || "Login gagal.");
             }

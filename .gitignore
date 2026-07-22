@@ -45,3 +45,5 @@ pos-desktop/release/
 *.key
 *.p12
 *.sql
+
+.vercel

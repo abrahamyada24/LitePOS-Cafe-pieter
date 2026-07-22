@@ -1,61 +1,116 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
+import { useStore } from '@/store/useStore';
+
+const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
+const LAST_ACTIVITY_KEY = 'litepos_last_activity';
 
 export default function AuthGuard({ children }) {
   const router = useRouter();
   const pathname = usePathname();
+  const hydrateSession = useStore((state) => state.hydrateSession);
+  const logout = useStore((state) => state.logout);
   const [isAuthorized, setIsAuthorized] = useState(false);
 
-  useEffect(() => {
-    let token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-    let user = null;
-
-    // Baca dari Zustand persisted storage (pos-storage)
-    if (typeof window !== 'undefined') {
-      const storage = localStorage.getItem('pos-storage');
-      if (storage) {
-        try {
-          const parsed = JSON.parse(storage);
-          if (!token) token = parsed.state?.token;
-          user = parsed.state?.user;
-        } catch (e) { console.error("Gagal parse storage", e); }
-      }
+  const enforceRoleAccess = useCallback((user) => {
+    if (user.mustChangePassword) {
+      router.replace('/change-password');
+      return false;
     }
 
-    if (!token || !user) {
-      router.replace('/login');
-      return;
-    }
-    const role = user.role;
-
-    // Staff / Cashier route access
-    if (role === 'CASHIER') {
+    if (user.role === 'CASHIER') {
       const allowedPaths = ['/', '/pos', '/transactions', '/tables', '/shifts', '/order-meja', '/kitchen'];
-      const isAllowed = allowedPaths.some(p => pathname === p || pathname.startsWith(p + '/'));
+      const isAllowed = allowedPaths.some((path) => pathname === path || pathname.startsWith(`${path}/`));
       if (!isAllowed) {
         router.replace('/');
-        return;
+        return false;
       }
     }
 
-    // Admin route access
-    if (role === 'ADMIN') {
-      if (pathname.startsWith('/settings')) {
-        router.replace('/');
+    if (user.role === 'ADMIN' && pathname.startsWith('/settings')) {
+      router.replace('/');
+      return false;
+    }
+    return true;
+  }, [pathname, router]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const verify = async () => {
+      const result = await hydrateSession();
+      if (cancelled) return;
+      if (!result.success) {
+        sessionStorage.setItem('auth_notice', result.code === 'SESSION_IDLE_TIMEOUT'
+          ? 'Sesi berakhir karena tidak aktif selama 30 menit.'
+          : 'Silakan login kembali.');
+        router.replace('/login');
         return;
       }
-    }
-    setIsAuthorized(true);
+      if (enforceRoleAccess(result.user)) setIsAuthorized(true);
+    };
+    verify();
+    return () => { cancelled = true; };
+  }, [enforceRoleAccess, hydrateSession, router]);
 
-  }, [router, pathname]);
+  useEffect(() => {
+    if (!isAuthorized) return undefined;
+    let timerId;
+
+    const endSession = async () => {
+      await logout();
+      sessionStorage.setItem('auth_notice', 'Sesi berakhir karena tidak aktif selama 30 menit.');
+      router.replace('/login');
+    };
+
+    const scheduleTimeout = () => {
+      window.clearTimeout(timerId);
+      const lastActivity = Number(localStorage.getItem(LAST_ACTIVITY_KEY) || Date.now());
+      const remaining = INACTIVITY_TIMEOUT_MS - (Date.now() - lastActivity);
+      if (remaining <= 0) {
+        endSession();
+        return;
+      }
+      timerId = window.setTimeout(endSession, remaining);
+    };
+
+    const markActivity = () => {
+      localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
+      scheduleTimeout();
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') scheduleTimeout();
+    };
+    const handleStorage = (event) => {
+      if (event.key === LAST_ACTIVITY_KEY) scheduleTimeout();
+    };
+
+    if (!localStorage.getItem(LAST_ACTIVITY_KEY)) markActivity();
+    else scheduleTimeout();
+
+    window.addEventListener('pointerdown', markActivity, { passive: true });
+    window.addEventListener('keydown', markActivity);
+    window.addEventListener('touchstart', markActivity, { passive: true });
+    window.addEventListener('storage', handleStorage);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      window.clearTimeout(timerId);
+      window.removeEventListener('pointerdown', markActivity);
+      window.removeEventListener('keydown', markActivity);
+      window.removeEventListener('touchstart', markActivity);
+      window.removeEventListener('storage', handleStorage);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [isAuthorized, logout, router]);
+
   if (!isAuthorized) {
     return (
       <div className="h-screen w-full flex flex-col items-center justify-center bg-gray-50 text-gray-500 gap-3">
         <Loader2 className="animate-spin text-blue-500" size={48} />
-        <p className="text-sm font-medium">Memeriksa akses...</p>
+        <p className="text-sm font-medium">Memeriksa sesi aman...</p>
       </div>
     );
   }
