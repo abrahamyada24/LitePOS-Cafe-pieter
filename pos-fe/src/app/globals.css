@@ -59,6 +59,49 @@ body {
   color: var(--color-gray-800);
 }
 
+/* Tema web disimpan per perangkat agar Kasir bebas mengubah tampilan tanpa
+   mengubah konfigurasi outlet untuk perangkat lain. */
+html[data-theme='dark'] body,
+html[data-theme='dark'] .bg-gray-50,
+html[data-theme='dark'] [class~='bg-gray-50/50'] {
+  background-color: #0f172a !important;
+}
+
+html[data-theme='dark'] .bg-white {
+  background-color: #111827 !important;
+}
+
+html[data-theme='dark'] .bg-gray-100,
+html[data-theme='dark'] [class~='bg-gray-50/50'] {
+  background-color: #1f2937 !important;
+}
+
+html[data-theme='dark'] .text-gray-900,
+html[data-theme='dark'] .text-gray-800,
+html[data-theme='dark'] .text-gray-700 {
+  color: #f3f4f6 !important;
+}
+
+html[data-theme='dark'] .text-gray-600,
+html[data-theme='dark'] .text-gray-500,
+html[data-theme='dark'] .text-gray-400 {
+  color: #9ca3af !important;
+}
+
+html[data-theme='dark'] .border-gray-100,
+html[data-theme='dark'] .border-gray-200,
+html[data-theme='dark'] .border-gray-300 {
+  border-color: #374151 !important;
+}
+
+html[data-theme='dark'] input,
+html[data-theme='dark'] textarea,
+html[data-theme='dark'] select {
+  background-color: #111827 !important;
+  border-color: #374151 !important;
+  color: #f3f4f6 !important;
+}
+
 
 
 

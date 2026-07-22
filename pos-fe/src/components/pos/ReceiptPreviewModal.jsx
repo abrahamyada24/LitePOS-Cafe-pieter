@@ -1,10 +1,16 @@
 "use client";
 
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Printer, X } from 'lucide-react';
+import { DEFAULT_DEVICE_PREFERENCES, getDevicePreferences, getPaperWidthMm } from '@/utils/devicePreferences';
 
 export default function ReceiptPreviewModal({ isOpen, onClose, transaction, store, formatNumber }) {
     const receiptRef = useRef(null);
+    const [devicePreferences, setDevicePreferences] = useState(DEFAULT_DEVICE_PREFERENCES);
+
+    useEffect(() => {
+        if (isOpen) setDevicePreferences(getDevicePreferences());
+    }, [isOpen]);
 
     if (!isOpen || !transaction) return null;
 
@@ -20,14 +26,17 @@ export default function ReceiptPreviewModal({ isOpen, onClose, transaction, stor
         hour: '2-digit',
         minute: '2-digit',
     });
+    const paperWidthMm = getPaperWidthMm(devicePreferences);
+    const logoMaxWidthMm = paperWidthMm === 80 ? 58 : 42;
 
     const handlePrint = () => {
         if (typeof window === 'undefined') return;
 
         if (window.electronAPI?.printReceipt && receiptRef.current) {
             const html = `<!doctype html><html><head><meta charset="utf-8"><style>
-                @page { margin: 0; }
-                body { width: 58mm; margin: 0; padding: 3mm; box-sizing: border-box; font-family: monospace; color: #000; }
+                @page { size: ${paperWidthMm}mm auto; margin: 0; }
+                body { width: ${paperWidthMm}mm; margin: 0; padding: ${devicePreferences.printMarginMm}mm; box-sizing: border-box; font-family: monospace; color: #000; }
+                .receipt-logo { display: block; width: auto; height: auto; max-width: ${logoMaxWidthMm}mm; max-height: 16mm; margin: 0 auto 2mm; object-fit: contain; }
             </style></head><body>${receiptRef.current.innerHTML}</body></html>`;
             window.electronAPI.printReceipt(html);
             return;
@@ -43,7 +52,7 @@ export default function ReceiptPreviewModal({ isOpen, onClose, transaction, stor
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
             <style jsx global>{`
                 @media print {
-                    @page { margin: 0; }
+                    @page { size: ${paperWidthMm}mm auto; margin: 0; }
                     html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }
                     body * { visibility: hidden !important; }
                     #pos-receipt-print, #pos-receipt-print * { visibility: visible !important; }
@@ -51,12 +60,21 @@ export default function ReceiptPreviewModal({ isOpen, onClose, transaction, stor
                         position: absolute !important;
                         left: 0 !important;
                         top: 0 !important;
-                        width: 58mm !important;
-                        padding: 3mm !important;
+                        width: ${paperWidthMm}mm !important;
+                        padding: ${devicePreferences.printMarginMm}mm !important;
                         box-sizing: border-box !important;
                         box-shadow: none !important;
                         color: #000 !important;
                         background: #fff !important;
+                    }
+                    #pos-receipt-print .receipt-logo {
+                        display: block !important;
+                        width: auto !important;
+                        height: auto !important;
+                        max-width: ${logoMaxWidthMm}mm !important;
+                        max-height: 16mm !important;
+                        margin: 0 auto 2mm !important;
+                        object-fit: contain !important;
                     }
                 }
             `}</style>
@@ -64,8 +82,8 @@ export default function ReceiptPreviewModal({ isOpen, onClose, transaction, stor
             <div className="flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
                 <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
                     <div>
-                        <h2 className="font-bold text-gray-900">Preview Struk 58 mm</h2>
-                        <p className="text-[11px] text-gray-400">Pilih kertas 58 mm dan margin none pada dialog printer.</p>
+                        <h2 className="font-bold text-gray-900">Preview Struk {paperWidthMm} mm</h2>
+                        <p className="text-[11px] text-gray-400">Pilih kertas {paperWidthMm} mm pada dialog printer.</p>
                     </div>
                     <button aria-label="Tutup preview struk" onClick={onClose} className="rounded-full bg-gray-100 p-2 text-gray-500 hover:bg-gray-200">
                         <X size={18} />
@@ -76,15 +94,29 @@ export default function ReceiptPreviewModal({ isOpen, onClose, transaction, stor
                     <div
                         id="pos-receipt-print"
                         ref={receiptRef}
-                        className="mx-auto w-[58mm] bg-white p-[3mm] font-mono text-[10px] leading-tight text-black shadow-md"
-                        style={{ overflowWrap: 'anywhere' }}
+                        className="mx-auto bg-white font-mono text-[10px] leading-tight text-black shadow-md"
+                        style={{
+                            overflowWrap: 'anywhere',
+                            width: `${paperWidthMm}mm`,
+                            padding: `${devicePreferences.printMarginMm}mm`,
+                            boxSizing: 'border-box',
+                        }}
                     >
                         <div className="mb-3 text-center">
                             {store?.logoUrl && (
                                 <img
                                     src={store.logoUrl.startsWith('http') ? store.logoUrl : `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}${store.logoUrl}`}
                                     alt="Logo toko"
-                                    className="mx-auto mb-2 h-10 max-w-[42mm] object-contain grayscale"
+                                    className="receipt-logo grayscale"
+                                    style={{
+                                        display: 'block',
+                                        width: 'auto',
+                                        height: 'auto',
+                                        maxWidth: `${logoMaxWidthMm}mm`,
+                                        maxHeight: '16mm',
+                                        margin: '0 auto 2mm',
+                                        objectFit: 'contain',
+                                    }}
                                 />
                             )}
                             <div className="text-[14px] font-black uppercase">{store?.storeName || 'LITEPOS'}</div>

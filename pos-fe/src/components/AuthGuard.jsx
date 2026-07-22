@@ -23,7 +23,7 @@ export default function AuthGuard({ children }) {
     }
 
     if (user.role === 'CASHIER') {
-      const allowedPaths = ['/', '/pos', '/transactions', '/tables', '/shifts', '/order-meja', '/kitchen', '/license'];
+      const allowedPaths = ['/', '/pos', '/transactions', '/tables', '/shifts', '/order-meja', '/kitchen', '/settings', '/license'];
       const isAllowed = allowedPaths.some((path) => pathname === path || pathname.startsWith(`${path}/`));
       if (!isAllowed) {
         router.replace('/');
@@ -31,10 +31,6 @@ export default function AuthGuard({ children }) {
       }
     }
 
-    if (user.role === 'ADMIN' && pathname.startsWith('/settings')) {
-      router.replace('/');
-      return false;
-    }
     return true;
   }, [pathname, router]);
 

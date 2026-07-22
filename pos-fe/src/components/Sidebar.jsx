@@ -219,9 +219,7 @@ export default function Sidebar({ isMobileOpen, setIsMobileOpen }) {
               </div>
             )}
 
-            {user?.role === 'OWNER' && (
-              <SidebarItem icon={Settings} label="Pengaturan" href="/settings" />
-            )}
+            <SidebarItem icon={Settings} label="Pengaturan" href="/settings" />
             <SidebarItem icon={BadgeCheck} label="Lisensi Outlet" href="/license" />
           </div>
 

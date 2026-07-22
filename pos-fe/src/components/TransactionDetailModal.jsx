@@ -2,20 +2,24 @@
 
 import { useState, useEffect } from 'react';
 import { X, Calendar, User, CreditCard, Printer, ShoppingBag, Store, FileText, MapPin, UtensilsCrossed } from 'lucide-react';
+import { DEFAULT_DEVICE_PREFERENCES, getDevicePreferences, getPaperWidthMm } from '@/utils/devicePreferences';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
 export default function TransactionDetailModal({ isOpen, onClose, transaction }) {
     const [storeSettings, setStoreSettings] = useState(null);
+    const [devicePreferences, setDevicePreferences] = useState(DEFAULT_DEVICE_PREFERENCES);
 
     // Fetch store settings for receipt header
     useEffect(() => {
         if (isOpen) {
+            setDevicePreferences(getDevicePreferences());
             const fetchSettings = async () => {
                 try {
                     const token = localStorage.getItem('token');
                     const res = await fetch(`${API_URL}/api/settings`, {
-                        headers: { 'Authorization': `Bearer ${token}` }
+                        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+                        credentials: 'include',
                     });
                     const data = await res.json();
                     if (data.success && data.data) {
@@ -45,6 +49,11 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction })
     const storeName = storeSettings?.storeName || 'TOKO';
     const storeAddress = storeSettings?.address || '';
     const storePhone = storeSettings?.phone || '';
+    const storeLogo = storeSettings?.logoUrl
+        ? (storeSettings.logoUrl.startsWith('http') ? storeSettings.logoUrl : `${API_URL}${storeSettings.logoUrl}`)
+        : '';
+    const paperWidthMm = getPaperWidthMm(devicePreferences);
+    const logoMaxWidthMm = paperWidthMm === 80 ? 58 : 42;
 
     // Payment info
     const paymentType = payments?.[0]?.paymentType || 'TUNAI';
@@ -70,18 +79,28 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction })
             position: absolute;
             left: 0;
             top: 0;
-            width: 80mm;
-            padding: 5mm;
+            width: ${paperWidthMm}mm;
+            padding: ${devicePreferences.printMarginMm}mm;
             background: white;
             color: black;
             font-family: 'Courier New', Courier, monospace;
             line-height: 1.2;
           }
+
+          #receipt-print .receipt-logo {
+            display: block !important;
+            width: auto !important;
+            height: auto !important;
+            max-width: ${logoMaxWidthMm}mm !important;
+            max-height: 16mm !important;
+            margin: 0 auto 3mm !important;
+            object-fit: contain !important;
+          }
           
           .no-print { display: none !important; }
           
           @page {
-            size: auto;
+            size: ${paperWidthMm}mm auto;
             margin: 0mm;
           }
         }
@@ -228,6 +247,22 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction })
                 {/* --- RECEIPT TEMPLATE (STRUK FISIK) --- */}
                 <div id="receipt-print" className="hidden">
                     <div style={{ textAlign: 'center', marginBottom: '15px' }}>
+                        {storeLogo && (
+                            <img
+                                className="receipt-logo"
+                                src={storeLogo}
+                                alt="Logo toko"
+                                style={{
+                                    display: 'block',
+                                    width: 'auto',
+                                    height: 'auto',
+                                    maxWidth: `${logoMaxWidthMm}mm`,
+                                    maxHeight: '16mm',
+                                    margin: '0 auto 3mm',
+                                    objectFit: 'contain',
+                                }}
+                            />
+                        )}
                         <h3 style={{ margin: '0', fontSize: '16px', fontWeight: 'bold' }}>{storeName.toUpperCase()}</h3>
                         {storeAddress && <p style={{ fontSize: '9px', margin: '2px 0' }}>{storeAddress}</p>}
                         {storePhone && <p style={{ fontSize: '9px', margin: '0' }}>Telp: {storePhone}</p>}

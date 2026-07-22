@@ -4,17 +4,26 @@ import { useState, useEffect } from 'react';
 import { 
   Save, Store, CreditCard, ShieldCheck, UploadCloud, 
   Receipt, Printer, Smartphone, DollarSign, Loader2, Image as ImageIcon,
-  Truck, Plus, X, Trash2, Gift, Layout, PackageSearch, QrCode, ChefHat
+  Truck, Plus, X, Trash2, Gift, Layout, PackageSearch, QrCode, ChefHat,
+  Moon, Info
 } from 'lucide-react';
 import { useStore } from '../../../store/useStore';
 import { showAlert } from '../../../utils/swal';
+import {
+  DEFAULT_DEVICE_PREFERENCES,
+  getDevicePreferences,
+  getPaperWidthMm,
+  saveDevicePreferences,
+} from '../../../utils/devicePreferences';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
 export default function SettingsPage() {
-  const { settings, fetchDataMaster, fetchSettings } = useStore();
-  const [activeTab, setActiveTab] = useState('general');
+  const { settings, fetchDataMaster, fetchSettings, user } = useStore();
+  const canManageBusinessSettings = user?.role === 'OWNER' || user?.role === 'ADMIN';
+  const [activeTab, setActiveTab] = useState(canManageBusinessSettings ? 'general' : 'theme');
   const [isLoading, setIsLoading] = useState(false);
+  const [devicePreferences, setDevicePreferences] = useState(DEFAULT_DEVICE_PREFERENCES);
 
   const [form, setForm] = useState({
     storeName: '',
@@ -61,9 +70,19 @@ export default function SettingsPage() {
   });
 
   useEffect(() => {
-    fetchDataMaster(); 
-    fetchLoyaltyConfig();
+    fetchDataMaster();
+    if (canManageBusinessSettings) fetchLoyaltyConfig();
+  }, [canManageBusinessSettings]);
+
+  useEffect(() => {
+    setDevicePreferences(getDevicePreferences());
   }, []);
+
+  useEffect(() => {
+    if (!canManageBusinessSettings && !['theme', 'printer', 'about'].includes(activeTab)) {
+      setActiveTab('theme');
+    }
+  }, [activeTab, canManageBusinessSettings]);
 
   const fetchLoyaltyConfig = async () => {
     try {
@@ -138,6 +157,10 @@ export default function SettingsPage() {
   };
 
   const handleSaveSettings = async () => {
+    if (!canManageBusinessSettings) {
+      showAlert.error('Akses ditolak', 'Pengaturan outlet hanya dapat diubah oleh Admin atau Owner.');
+      return;
+    }
     setIsLoading(true);
     try {
         const token = localStorage.getItem('token');
@@ -174,6 +197,15 @@ export default function SettingsPage() {
         setIsLoading(false);
     }
   };
+
+  const updateDevicePreferences = (nextValue) => {
+    setDevicePreferences(saveDevicePreferences(nextValue));
+  };
+
+  const printableLogoUrl = settings?.logoUrl
+    ? (settings.logoUrl.startsWith('http') ? settings.logoUrl : `${API_URL}${settings.logoUrl}`)
+    : '';
+  const paperWidthMm = getPaperWidthMm(devicePreferences);
 
   const handleSaveLoyalty = async () => {
     setIsLoading(true);
@@ -246,12 +278,52 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-6 pb-20">
+      <style jsx global>{`
+        @media print {
+          @page { size: ${paperWidthMm}mm auto; margin: 0; }
+          body * { visibility: hidden !important; }
+          #settings-printer-test, #settings-printer-test * { visibility: visible !important; }
+          #settings-printer-test {
+            display: block !important;
+            position: absolute !important;
+            inset: 0 auto auto 0 !important;
+            width: ${paperWidthMm}mm !important;
+            padding: ${devicePreferences.printMarginMm}mm !important;
+            box-sizing: border-box !important;
+            background: #fff !important;
+            color: #000 !important;
+            font-family: monospace !important;
+          }
+          #settings-printer-test .receipt-logo {
+            display: block !important;
+            width: auto !important;
+            height: auto !important;
+            max-width: ${paperWidthMm === 80 ? 58 : 42}mm !important;
+            max-height: 16mm !important;
+            margin: 0 auto 3mm !important;
+            object-fit: contain !important;
+          }
+        }
+      `}</style>
+
+      <div id="settings-printer-test" className="hidden text-[10px] leading-tight">
+        {printableLogoUrl && (
+          <img className="receipt-logo" src={printableLogoUrl} alt="Logo toko" />
+        )}
+        <div className="text-center text-sm font-bold">{settings?.storeName || 'LITEPOS'}</div>
+        <div className="my-2 border-t border-dashed border-black" />
+        <div>TEST PRINT — {paperWidthMm} MM</div>
+        <div>Rasio logo dipertahankan otomatis</div>
+        <div className="my-2 border-t border-dashed border-black" />
+        <div className="text-center">Printer browser siap digunakan</div>
+      </div>
+
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold text-gray-800">Pengaturan</h2>
           <p className="text-gray-400 text-sm">Kelola profil toko, pembayaran, dan sistem.</p>
         </div>
-        {activeTab !== 'security' && (
+        {canManageBusinessSettings && !['security', 'theme', 'printer', 'about'].includes(activeTab) && (
             <button 
                 onClick={activeTab === 'loyalty' ? handleSaveLoyalty : handleSaveSettings}
                 disabled={isLoading}
@@ -264,12 +336,15 @@ export default function SettingsPage() {
       </div>
 
       <div className="flex gap-2 border-b border-gray-100 pb-2 overflow-x-auto no-scrollbar">
-        <TabButton id="general" label="Profil Toko" icon={Store} />
-        <TabButton id="payment" label="Pembayaran" icon={CreditCard} />
-        <TabButton id="system" label="Sistem & Struk" icon={Receipt} />
-        <TabButton id="takeaway" label="Layanan Take Away" icon={Truck} />
-        <TabButton id="loyalty" label="Poin Pelanggan" icon={Gift} />
-        <TabButton id="security" label="Keamanan" icon={ShieldCheck} />
+        {canManageBusinessSettings && <TabButton id="general" label="Profil Toko" icon={Store} />}
+        {canManageBusinessSettings && <TabButton id="payment" label="Pembayaran" icon={CreditCard} />}
+        {canManageBusinessSettings && <TabButton id="system" label="Sistem & Struk" icon={Receipt} />}
+        {canManageBusinessSettings && <TabButton id="takeaway" label="Layanan Take Away" icon={Truck} />}
+        {canManageBusinessSettings && <TabButton id="loyalty" label="Poin Pelanggan" icon={Gift} />}
+        {canManageBusinessSettings && <TabButton id="security" label="Keamanan" icon={ShieldCheck} />}
+        <TabButton id="theme" label="Tema" icon={Moon} />
+        <TabButton id="printer" label="Printer" icon={Printer} />
+        <TabButton id="about" label="Tentang Aplikasi" icon={Info} />
       </div>
 
       {activeTab === 'general' && (
@@ -439,20 +514,6 @@ export default function SettingsPage() {
                             <input type="checkbox" className="sr-only peer" checked={form.showImages} onChange={() => handleToggle('showImages')} />
                             <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
                         </label>
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2 font-bold">Tema Aplikasi</label>
-                        <select 
-                            name="theme" 
-                            value={form.theme} 
-                            onChange={handleChange}
-                            className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:border-blue-500 transition-all text-sm"
-                        >
-                            <option value="light">Terang (Light)</option>
-                            <option value="dark">Gelap (Dark)</option>
-                            <option value="system">Ikuti Sistem HP</option>
-                        </select>
                     </div>
 
                 </div>
@@ -734,6 +795,84 @@ export default function SettingsPage() {
                     </div>
                 </div>
             </div>
+        </div>
+      )}
+
+      {activeTab === 'theme' && (
+        <div className="max-w-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="card-base p-6">
+            <h3 className="font-bold text-gray-800 mb-2 flex items-center gap-2">
+              <Moon size={20} className="text-indigo-500" /> Tema Perangkat
+            </h3>
+            <p className="text-sm text-gray-500 mb-5">Tema hanya berlaku di browser ini dan tidak mengubah perangkat kasir lain.</p>
+            <label className="block text-sm font-bold text-gray-700 mb-2">Tampilan aplikasi</label>
+            <select
+              value={devicePreferences.theme}
+              onChange={(event) => updateDevicePreferences({ theme: event.target.value })}
+              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:border-blue-500 transition-all text-sm"
+            >
+              <option value="light">Terang</option>
+              <option value="dark">Gelap</option>
+              <option value="system">Ikuti sistem perangkat</option>
+            </select>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'printer' && (
+        <div className="max-w-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="card-base p-6 space-y-6">
+            <div>
+              <h3 className="font-bold text-gray-800 mb-2 flex items-center gap-2">
+                <Printer size={20} className="text-teal-600" /> Printer Perangkat
+              </h3>
+              <p className="text-sm text-gray-500">Browser memilih printer fisik melalui dialog cetak. Ukuran berikut disimpan khusus di perangkat ini.</p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-2">Lebar kertas</label>
+                <select
+                  value={devicePreferences.paperWidth}
+                  onChange={(event) => updateDevicePreferences({ paperWidth: event.target.value })}
+                  className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:border-blue-500 text-sm"
+                >
+                  <option value="58">58 mm</option>
+                  <option value="80">80 mm</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-2">Margin struk</label>
+                <select
+                  value={devicePreferences.printMarginMm}
+                  onChange={(event) => updateDevicePreferences({ printMarginMm: Number(event.target.value) })}
+                  className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:border-blue-500 text-sm"
+                >
+                  <option value={0}>Tanpa margin</option>
+                  <option value={2}>2 mm</option>
+                  <option value={3}>3 mm</option>
+                  <option value={5}>5 mm</option>
+                </select>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="w-full sm:w-auto rounded-xl bg-teal-600 px-5 py-3 text-sm font-bold text-white hover:bg-teal-700 flex items-center justify-center gap-2"
+            >
+              <Printer size={17} /> Test Print
+            </button>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'about' && (
+        <div className="max-w-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="card-base p-8 text-center">
+            <img src="/logo.png" alt="LitePOS" className="mx-auto mb-4 h-20 w-20 object-contain" />
+            <h3 className="text-2xl font-black text-gray-800">LitePOS</h3>
+            <p className="mt-1 text-sm text-gray-500">Point of Sale untuk operasional outlet</p>
+            <p className="mt-5 text-xs text-gray-400">Pengaturan tema dan printer disimpan per perangkat.</p>
+          </div>
         </div>
       )}
 

@@ -5,11 +5,25 @@ import Sidebar from "@/components/Sidebar";
 import AuthGuard from "@/components/AuthGuard";
 import Link from "next/link";
 import { useStore } from "@/store/useStore";
+import { applyWebTheme, getDevicePreferences } from "@/utils/devicePreferences";
 
 export default function AdminLayout({ children }) {
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const fetchSettings = useStore(state => state.fetchSettings);
   const isAuthenticated = useStore(state => state.isAuthenticated);
+
+  useEffect(() => {
+    const applySavedTheme = () => applyWebTheme(getDevicePreferences().theme);
+    const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
+
+    applySavedTheme();
+    systemTheme.addEventListener('change', applySavedTheme);
+    window.addEventListener('litepos-device-preferences', applySavedTheme);
+    return () => {
+      systemTheme.removeEventListener('change', applySavedTheme);
+      window.removeEventListener('litepos-device-preferences', applySavedTheme);
+    };
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated) return undefined;
