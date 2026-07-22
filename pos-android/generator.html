@@ -1,164 +1,69 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="id">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Generator Kode Aktivasi - LitePOS</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Generator Lisensi LitePOS Dipindahkan</title>
     <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #f4f7f6;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-        }
-        .container {
-            background-color: white;
-            padding: 40px;
-            border-radius: 12px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
-            width: 100%;
-            max-width: 400px;
-            text-align: center;
-        }
-        h2 {
-            margin-top: 0;
-            color: #2c3e50;
-        }
-        .form-group {
-            text-align: left;
-            margin-bottom: 20px;
-        }
-        label {
-            display: block;
-            font-weight: bold;
-            margin-bottom: 8px;
-            color: #34495e;
-            font-size: 14px;
-        }
-        input {
-            width: 100%;
-            padding: 12px;
-            border: 1px solid #ccd1d9;
-            border-radius: 8px;
-            box-sizing: border-box;
-            font-size: 16px;
-            font-family: monospace;
-        }
-        input:focus {
-            outline: none;
-            border-color: #3498db;
-            box-shadow: 0 0 5px rgba(52, 152, 219, 0.3);
-        }
-        button {
-            background-color: #2980b9;
-            color: white;
-            border: none;
-            padding: 14px;
-            width: 100%;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: bold;
-            cursor: pointer;
-            transition: background 0.3s;
-        }
-        button:hover {
-            background-color: #2471a3;
-        }
-        .result {
-            margin-top: 25px;
-            padding: 20px;
-            background-color: #e8f8f5;
-            border: 2px dashed #1abc9c;
-            border-radius: 8px;
-            display: none;
-        }
-        .result.show {
-            display: block;
-        }
-        .result-code {
-            font-size: 28px;
-            font-weight: 900;
-            color: #16a085;
-            letter-spacing: 2px;
-            margin: 10px 0;
-        }
-        .copy-btn {
-            background-color: #1abc9c;
-            padding: 8px 15px;
-            font-size: 12px;
-            margin-top: 10px;
-            width: auto;
-        }
-        .copy-btn:hover {
-            background-color: #16a085;
-        }
+        :root{--blue:#0757d9;--dark:#0b1739;--muted:#687793;--line:#dbe5f2;--green:#10865b;--orange:#f66b13}
+        *{box-sizing:border-box}body{min-height:100vh;margin:0;padding:24px;display:grid;place-items:center;background:radial-gradient(circle at top right,#dbeaff,transparent 38%),#f5f8fd;color:var(--dark);font-family:Inter,"Segoe UI",sans-serif}.card{width:min(500px,100%);padding:34px;border:1px solid var(--line);border-radius:22px;background:#fff;box-shadow:0 25px 70px rgba(23,64,128,.15)}.brand{display:flex;align-items:center;gap:12px;margin-bottom:22px}.brand-icon{display:grid;place-items:center;width:48px;height:48px;border-radius:14px;color:#fff;background:linear-gradient(135deg,var(--blue),#0d87eb);font-size:24px}.brand strong,.brand span{display:block}.brand strong{font-size:1.25rem}.brand span{color:var(--muted);font-size:.78rem}h1{margin:0 0 8px;font-size:1.8rem;letter-spacing:-.04em}p{margin:0 0 25px;color:var(--muted);font-size:.9rem;line-height:1.55}.periods{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:22px}.periods span{padding:13px;border:1px solid var(--line);border-radius:11px;background:#f8fbff;text-align:center;font-size:.82rem;font-weight:800}.field{display:grid;gap:7px;margin-bottom:14px}.field label{font-size:.82rem;font-weight:800}.field input{width:100%;min-height:50px;padding:11px 13px;border:1px solid #c7d4e6;border-radius:11px;color:var(--dark);background:#f8fafc;font:700 .9rem ui-monospace,SFMono-Regular,Consolas,monospace}.field small{color:var(--muted);font-size:.74rem;line-height:1.5}.primary{width:100%;min-height:50px;border:0;border-radius:11px;color:#fff;background:linear-gradient(135deg,var(--blue),#0b7bea);font-weight:900;cursor:pointer}.notice{margin-top:20px;padding:13px;border-left:4px solid var(--orange);border-radius:8px;color:#74502f;background:#fff7ed;font-size:.75rem;line-height:1.5}.notice strong{color:#9b470d}@media(max-width:520px){body{padding:13px}.card{padding:25px 20px}.periods{grid-template-columns:1fr}}
     </style>
 </head>
 <body>
+<main class="card">
+    <div class="brand"><div class="brand-icon">LP</div><div><strong>LitePOS</strong><span>Server License Tool</span></div></div>
+    <h1>Generator Dipindahkan</h1>
+    <p>Kode 4 karakter dari generator offline lama sudah tidak berlaku. Lisensi sekarang terhubung ke outlet server agar satu aktivasi berlaku untuk website dan seluruh Android yang login.</p>
 
-<div class="container">
-    <h2>🔑 Generator Kode Aktivasi</h2>
-    <p style="color: #7f8c8d; font-size: 14px; margin-bottom: 30px;">Gunakan tools offline ini untuk membuat kode buka gembok aplikasi pelanggan Anda.</p>
-
-    <div class="form-group">
-        <label>ID Mesin / Toko (Dari Pelanggan)</label>
-        <input type="text" id="storeId" placeholder="Misal: TK-1A2B3C" autocomplete="off" oninput="this.value = this.value.toUpperCase()">
+    <div class="periods" aria-label="Pilihan masa aktif">
+        <span>1 bulan</span><span>3 bulan</span><span>6 bulan</span><span>1 tahun</span>
     </div>
 
-    <div class="form-group">
-        <label>Tambahan Hari (Masa Aktif)</label>
-        <input type="number" id="days" placeholder="Misal: 30" value="30">
+    <div class="field">
+        <label for="command">Jalankan dari folder backend LitePOS</label>
+        <input id="command" value="npm run license:issue" readonly>
+        <small>Generator server akan menampilkan empat pilihan masa aktif di atas dan menyimpan kode sekali pakai ke database.</small>
     </div>
+    <button class="primary" id="copyButton" type="button">Salin Perintah Generator</button>
 
-    <button onclick="generateCode()">Generate Kode</button>
-
-    <div class="result" id="resultBox">
-        <div style="font-size: 13px; color: #2c3e50; font-weight: bold;">KODE AKTIVASI:</div>
-        <div class="result-code" id="resultCode"></div>
-        <button class="copy-btn" onclick="copyToClipboard()">📋 Salin Kode</button>
-    </div>
-</div>
+    <div class="notice"><strong>Aman.</strong> Kode dibuat secara acak, disimpan sebagai hash, hanya dapat digunakan satu kali, dan tidak terikat HP.</div>
+</main>
 
 <script>
-    function generateSignature(storeId, days) {
-        // Algoritma persis dengan yang ada di LockScreen.tsx
-        const str = storeId + days + "LITE_SECRET_2026";
-        let hash = 5381;
-        for (let i = 0; i < str.length; i++) {
-            hash = ((hash << 5) + hash) + str.charCodeAt(i);
-        }
-        // Pastikan format menjadi 4 karakter Hex uppercase
-        return Math.abs(hash).toString(16).toUpperCase().substring(0, 4).padStart(4, '0');
-    }
+    (() => {
+        'use strict';
+        const command = document.getElementById('command');
+        const copyButton = document.getElementById('copyButton');
 
-    function generateCode() {
-        const storeId = document.getElementById('storeId').value.trim().toUpperCase();
-        const days = document.getElementById('days').value.trim();
+        const fallbackCopy = (text) => {
+            const input = document.createElement('textarea');
+            input.value = text;
+            input.setAttribute('readonly', '');
+            input.style.position = 'fixed';
+            input.style.opacity = '0';
+            document.body.appendChild(input);
+            input.select();
+            const copied = document.execCommand('copy');
+            input.remove();
+            return copied;
+        };
 
-        if (!storeId || !days || isNaN(days) || parseInt(days) <= 0) {
-            alert("Harap masukkan ID Toko dan jumlah hari yang valid!");
-            return;
-        }
-
-        const signature = generateSignature(storeId, days);
-        const finalCode = signature; // Hanya signature saja, durasi hari disembunyikan
-
-        document.getElementById('resultCode').innerText = finalCode;
-        document.getElementById('resultBox').classList.add('show');
-    }
-
-    function copyToClipboard() {
-        const code = document.getElementById('resultCode').innerText;
-        navigator.clipboard.writeText(code).then(() => {
-            alert("Kode disalin ke clipboard!");
-        }).catch(err => {
-            console.error('Failed to copy', err);
+        copyButton.addEventListener('click', async () => {
+            const text = command.value;
+            let copied = false;
+            if (navigator.clipboard && window.isSecureContext) {
+                try {
+                    await navigator.clipboard.writeText(text);
+                    copied = true;
+                } catch (_) {
+                    copied = false;
+                }
+            }
+            if (!copied) copied = fallbackCopy(text);
+            copyButton.textContent = copied ? 'Perintah Tersalin' : 'Pilih Perintah dan Salin Manual';
+            window.setTimeout(() => { copyButton.textContent = 'Salin Perintah Generator'; }, 1800);
         });
-    }
+    })();
 </script>
-
 </body>
 </html>
