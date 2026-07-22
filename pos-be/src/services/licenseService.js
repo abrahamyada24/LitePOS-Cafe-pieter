@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { verifyManualLicenseCode } = require('./manualLicenseCode');
 
 const STORE_LICENSE_ID = 1;
 const TRIAL_DURATION_DAYS = 14;
@@ -90,46 +91,78 @@ const getLicenseStatus = async (prisma, { useCache = true } = {}) => {
 
 const activateLicense = async ({ prisma, code, userEmail }) => {
   const normalizedCode = normalizeActivationCode(code);
-  if (normalizedCode.length < 16) {
+  const now = new Date();
+  const manualCode = verifyManualLicenseCode(code, now);
+  if (!manualCode && normalizedCode.length < 16) {
     const error = new Error('Format kode aktivasi tidak valid.');
     error.code = 'INVALID_LICENSE_CODE';
     throw error;
   }
 
-  const now = new Date();
   const codeHash = hashActivationCode(normalizedCode);
-  const result = await prisma.$transaction(async (tx) => {
-    const activation = await tx.licenseActivation.findUnique({ where: { codeHash } });
-    if (!activation || activation.redeemedAt || (activation.validUntil && activation.validUntil <= now)) {
-      const error = new Error('Kode aktivasi tidak valid, sudah dipakai, atau kedaluwarsa.');
-      error.code = 'INVALID_LICENSE_CODE';
-      throw error;
+  let result;
+  try {
+    result = await prisma.$transaction(async (tx) => {
+      const activation = await tx.licenseActivation.findUnique({ where: { codeHash } });
+      if (
+        activation?.redeemedAt
+        || (!manualCode && (!activation || (activation.validUntil && activation.validUntil <= now)))
+        || (manualCode && activation)
+      ) {
+        const error = new Error('Kode aktivasi tidak valid, sudah dipakai, atau kedaluwarsa.');
+        error.code = 'INVALID_LICENSE_CODE';
+        throw error;
+      }
+
+      const durationDays = manualCode?.durationDays || activation.durationDays;
+      const plan = manualCode ? 'PREMIUM' : activation.plan;
+      const current = await ensureStoreLicense(tx);
+      const baseDate = current.expiresAt && current.expiresAt > now ? current.expiresAt : now;
+      const expiresAt = addDays(baseDate, durationDays);
+      const license = await tx.storeLicense.update({
+        where: { id: STORE_LICENSE_ID },
+        data: {
+          plan,
+          state: 'ACTIVE',
+          expiresAt,
+          activatedAt: now,
+          activationSource: manualCode ? 'LOCAL_GENERATOR' : 'ACTIVATION_CODE',
+        },
+      });
+
+      if (manualCode) {
+        await tx.licenseActivation.create({
+          data: {
+            codeHash,
+            plan,
+            durationDays,
+            validUntil: manualCode.validUntil,
+            note: `Generator lokal: ${manualCode.periodLabel}`,
+            redeemedAt: now,
+            redeemedByEmail: userEmail,
+            licenseId: license.id,
+          },
+        });
+      } else {
+        await tx.licenseActivation.update({
+          where: { id: activation.id },
+          data: {
+            redeemedAt: now,
+            redeemedByEmail: userEmail,
+            licenseId: license.id,
+          },
+        });
+      }
+      return license;
+    });
+  } catch (error) {
+    if (error.code === 'P2002') {
+      const invalidError = new Error('Kode aktivasi tidak valid, sudah dipakai, atau kedaluwarsa.');
+      invalidError.code = 'INVALID_LICENSE_CODE';
+      throw invalidError;
     }
-
-    const current = await ensureStoreLicense(tx);
-    const baseDate = current.expiresAt && current.expiresAt > now ? current.expiresAt : now;
-    const expiresAt = addDays(baseDate, activation.durationDays);
-    const license = await tx.storeLicense.update({
-      where: { id: STORE_LICENSE_ID },
-      data: {
-        plan: activation.plan,
-        state: 'ACTIVE',
-        expiresAt,
-        activatedAt: now,
-        activationSource: 'ACTIVATION_CODE',
-      },
-    });
-
-    await tx.licenseActivation.update({
-      where: { id: activation.id },
-      data: {
-        redeemedAt: now,
-        redeemedByEmail: userEmail,
-        licenseId: license.id,
-      },
-    });
-    return license;
-  });
+    throw error;
+  }
 
   invalidateLicenseCache();
   return serializeLicense(result);

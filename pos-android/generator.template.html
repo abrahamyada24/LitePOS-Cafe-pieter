@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="id">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Generator Lisensi Lokal LitePOS</title>
+    <style>
+        :root{--blue:#0757d9;--dark:#0b1739;--muted:#687793;--line:#dbe5f2;--green:#10865b;--orange:#f66b13}
+        *{box-sizing:border-box}body{min-height:100vh;margin:0;padding:24px;display:grid;place-items:center;background:radial-gradient(circle at top right,#dbeaff,transparent 38%),#f5f8fd;color:var(--dark);font-family:Inter,"Segoe UI",sans-serif}.card{width:min(540px,100%);padding:34px;border:1px solid var(--line);border-radius:22px;background:#fff;box-shadow:0 25px 70px rgba(23,64,128,.15)}.brand{display:flex;align-items:center;gap:12px;margin-bottom:22px}.brand-icon{display:grid;place-items:center;width:48px;height:48px;border-radius:14px;color:#fff;background:linear-gradient(135deg,var(--blue),#0d87eb);font-size:24px}.brand strong,.brand span{display:block}.brand strong{font-size:1.25rem}.brand span{color:var(--muted);font-size:.78rem}h1{margin:0 0 8px;font-size:1.8rem;letter-spacing:-.04em}p{margin:0 0 25px;color:var(--muted);font-size:.9rem;line-height:1.55}.field{display:grid;gap:7px;margin-bottom:18px}.field label{font-size:.82rem;font-weight:800}.field select{width:100%;min-height:50px;padding:11px 13px;border:1px solid #c7d4e6;border-radius:11px;color:var(--dark);background:#fff;font:700 1rem Inter,"Segoe UI",sans-serif}.field select:focus{outline:3px solid rgba(7,87,217,.13);border-color:var(--blue)}.field small{color:var(--muted);font-size:.74rem}.primary,.copy{width:100%;min-height:50px;border:0;border-radius:11px;color:#fff;background:linear-gradient(135deg,var(--blue),#0b7bea);font-weight:900;cursor:pointer}.primary:hover{filter:brightness(.96)}.result{display:none;margin-top:22px;padding:22px;border:1px solid #9edbc5;border-radius:15px;background:#effbf6}.result.show{display:block}.result span{display:block;color:#34705c;font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em}.code{margin:9px 0 13px;color:var(--green);font:800 .78rem ui-monospace,SFMono-Regular,Consolas,monospace;line-height:1.6;overflow-wrap:anywhere;user-select:all}.result-meta{margin-bottom:14px;color:#4f7769;font-size:.78rem;line-height:1.5}.copy{min-height:42px;background:var(--green)}.notice{margin-top:20px;padding:13px;border-left:4px solid var(--orange);border-radius:8px;color:#74502f;background:#fff7ed;font-size:.75rem;line-height:1.5}.notice strong{color:#9b470d}@media(max-width:520px){body{padding:13px}.card{padding:25px 20px}}
+    </style>
+</head>
+<body>
+<main class="card">
+    <div class="brand"><div class="brand-icon">LP</div><div><strong>LitePOS</strong><span>Local License Generator</span></div></div>
+    <h1>Generator Kode Aktivasi</h1>
+    <p>File ini berjalan sepenuhnya di browser PC Anda. Tidak perlu login atau membuka terminal server.</p>
+
+    <form id="generatorForm">
+        <div class="field">
+            <label for="period">Masa aktif</label>
+            <select id="period" name="period" required>
+                <option value="1">1 bulan</option>
+                <option value="2">3 bulan</option>
+                <option value="3">6 bulan</option>
+                <option value="4">1 tahun</option>
+            </select>
+            <small>Kode dapat dimasukkan melalui website atau Android oleh akun Owner.</small>
+        </div>
+        <button class="primary" type="submit">Buat Kode Aktivasi</button>
+    </form>
+
+    <section class="result" id="resultBox" aria-live="polite">
+        <span>Kode aktivasi sekali pakai</span>
+        <div class="code" id="resultCode"></div>
+        <div class="result-meta" id="resultMeta"></div>
+        <button class="copy" id="copyButton" type="button">Salin Kode</button>
+    </section>
+
+    <div class="notice"><strong>Rahasia lokal.</strong> Jangan unggah atau kirim file generator ini. Berikan hanya kode aktivasi yang dihasilkan.</div>
+</main>
+
+<script>
+    (() => {
+        'use strict';
+
+        const PRIVATE_KEY = __PRIVATE_JWK__;
+        const VALID_FOR_SECONDS = 30 * 24 * 60 * 60;
+        const labels = new Map([['1', '1 bulan'], ['2', '3 bulan'], ['3', '6 bulan'], ['4', '1 tahun']]);
+        const form = document.getElementById('generatorForm');
+        const periodInput = document.getElementById('period');
+        const resultBox = document.getElementById('resultBox');
+        const resultCode = document.getElementById('resultCode');
+        const resultMeta = document.getElementById('resultMeta');
+        const copyButton = document.getElementById('copyButton');
+
+        const toHex = (bytes) => Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('').toUpperCase();
+
+        const generateCode = async (periodCode) => {
+            if (!window.crypto?.subtle) throw new Error('Browser ini tidak mendukung Web Crypto. Gunakan Chrome atau Edge terbaru.');
+            const privateKey = await window.crypto.subtle.importKey(
+                'jwk',
+                PRIVATE_KEY,
+                { name: 'ECDSA', namedCurve: 'P-256' },
+                false,
+                ['sign'],
+            );
+            const issuedAt = Math.floor(Date.now() / 1000);
+            const payload = new Uint8Array(18);
+            const view = new DataView(payload.buffer);
+            view.setUint8(0, 1);
+            view.setUint8(1, Number(periodCode));
+            view.setUint32(2, issuedAt, false);
+            view.setUint32(6, issuedAt + VALID_FOR_SECONDS, false);
+            window.crypto.getRandomValues(payload.subarray(10));
+
+            const signature = new Uint8Array(await window.crypto.subtle.sign(
+                { name: 'ECDSA', hash: 'SHA-256' },
+                privateKey,
+                payload,
+            ));
+            if (signature.length !== 64) throw new Error('Format tanda tangan browser tidak didukung.');
+            return `LP1-${toHex(payload)}-${toHex(signature)}`;
+        };
+
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const button = form.querySelector('button[type="submit"]');
+            button.disabled = true;
+            button.textContent = 'Membuat kode...';
+            try {
+                const code = await generateCode(periodInput.value);
+                resultCode.textContent = code;
+                resultMeta.textContent = `${labels.get(periodInput.value)} · dapat diaktivasi maksimal 30 hari sejak dibuat`;
+                resultBox.classList.add('show');
+            } catch (error) {
+                window.alert(error.message || 'Kode belum dapat dibuat.');
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Buat Kode Aktivasi';
+            }
+        });
+
+        const fallbackCopy = (text) => {
+            const input = document.createElement('textarea');
+            input.value = text;
+            input.setAttribute('readonly', '');
+            input.style.position = 'fixed';
+            input.style.opacity = '0';
+            document.body.appendChild(input);
+            input.select();
+            const copied = document.execCommand('copy');
+            input.remove();
+            return copied;
+        };
+
+        copyButton.addEventListener('click', async () => {
+            const code = resultCode.textContent.trim();
+            if (!code) return;
+            let copied = false;
+            if (navigator.clipboard && window.isSecureContext) {
+                try {
+                    await navigator.clipboard.writeText(code);
+                    copied = true;
+                } catch (_) {
+                    copied = false;
+                }
+            }
+            if (!copied) copied = fallbackCopy(code);
+            copyButton.textContent = copied ? 'Kode Tersalin' : 'Pilih Kode dan Salin Manual';
+            window.setTimeout(() => { copyButton.textContent = 'Salin Kode'; }, 1800);
+        });
+    })();
+</script>
+</body>
+</html>
