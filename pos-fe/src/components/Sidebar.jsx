@@ -5,7 +5,7 @@ import {
   LayoutDashboard, ShoppingCart, Users, Settings,
   ChevronDown, Box, ClipboardList, UserCircle, LogOut, Utensils,
   Wallet, Clock, PackageCheck, ClipboardCheck, UtensilsCrossed, Truck, Gift,
-  PlayCircle, Pause, AlertCircle, QrCode, ChefHat
+  PlayCircle, Pause, AlertCircle, QrCode, ChefHat, BadgeCheck
 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -222,6 +222,7 @@ export default function Sidebar({ isMobileOpen, setIsMobileOpen }) {
             {user?.role === 'OWNER' && (
               <SidebarItem icon={Settings} label="Pengaturan" href="/settings" />
             )}
+            <SidebarItem icon={BadgeCheck} label="Lisensi Outlet" href="/license" />
           </div>
 
           {/* User Profile Area - Persis seperti Header (Clean & Mewah) */}

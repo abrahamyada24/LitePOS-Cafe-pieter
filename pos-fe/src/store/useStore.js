@@ -9,6 +9,7 @@ export const useStore = create(
       user: null,
       token: null,
       isAuthenticated: false,
+      license: null,
 
       getHeaders: () => {
         const token = get().token;
@@ -57,7 +58,7 @@ export const useStore = create(
             });
           } catch (_) { /* sesi lokal tetap dibersihkan */ }
         }
-        set({ user: null, token: null, isAuthenticated: false, cart: [], settings: null, discount: 0, discountType: 'amount', activeShift: null });
+        set({ user: null, token: null, isAuthenticated: false, license: null, cart: [], settings: null, discount: 0, discountType: 'amount', activeShift: null });
         localStorage.removeItem('pos-storage');
         localStorage.removeItem('token');
         localStorage.removeItem('user');
@@ -88,6 +89,24 @@ export const useStore = create(
       customers: [],
       settings: null,
       isLoading: false,
+
+      fetchLicenseStatus: async () => {
+        try {
+          const baseUrl = API_URL.endsWith('/api') ? API_URL.replace(/\/api$/, '') : API_URL;
+          const response = await fetch(`${baseUrl}/api/license/status`, {
+            credentials: 'include',
+            cache: 'no-store',
+          });
+          const data = await response.json();
+          if (!response.ok || !data.success) {
+            return { success: false, message: data.message || 'Status lisensi tidak tersedia.' };
+          }
+          set({ license: data.data });
+          return { success: true, data: data.data };
+        } catch (error) {
+          return { success: false, message: 'Tidak dapat memeriksa lisensi outlet.' };
+        }
+      },
 
       fetchSettings: async () => {
         try {
@@ -306,6 +325,7 @@ export const useStore = create(
         discount: state.discount,
         discountType: state.discountType,
         activeShift: state.activeShift
+        ,license: state.license
       }),
       version: 2,
       migrate: (persistedState) => ({

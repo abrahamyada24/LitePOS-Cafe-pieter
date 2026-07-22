@@ -19,6 +19,16 @@ enum AuthClientType {
   ANDROID
 }
 
+enum LicensePlan {
+  TRIAL
+  PREMIUM
+}
+
+enum LicenseState {
+  ACTIVE
+  SUSPENDED
+}
+
 enum TransactionStatus {
   PENDING
   PAID
@@ -102,6 +112,41 @@ model AuthSession {
   @@index([userId, revokedAt])
   @@index([lastSeenAt])
   @@map("auth_sessions")
+}
+
+model StoreLicense {
+  id                    Int                 @id @default(1)
+  licenseNumber         String              @unique @map("license_number") @db.VarChar(40)
+  plan                  LicensePlan         @default(TRIAL)
+  state                 LicenseState        @default(ACTIVE)
+  startsAt              DateTime            @default(now()) @map("starts_at")
+  expiresAt             DateTime?           @map("expires_at")
+  activatedAt           DateTime?           @map("activated_at")
+  activationSource      String              @default("AUTO_TRIAL") @map("activation_source") @db.VarChar(40)
+  legacyStoreId         String?             @map("legacy_store_id") @db.VarChar(100)
+  offlineGraceDays      Int                 @default(7) @map("offline_grace_days")
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt @map("updated_at")
+  activationRedemptions LicenseActivation[]
+
+  @@map("store_licenses")
+}
+
+model LicenseActivation {
+  id              String        @id @default(uuid())
+  codeHash        String        @unique @map("code_hash") @db.VarChar(64)
+  plan            LicensePlan   @default(PREMIUM)
+  durationDays    Int           @map("duration_days")
+  validUntil      DateTime?     @map("valid_until")
+  note            String?       @db.VarChar(255)
+  createdAt       DateTime      @default(now()) @map("created_at")
+  redeemedAt      DateTime?     @map("redeemed_at")
+  redeemedByEmail String?       @map("redeemed_by_email") @db.VarChar(255)
+  licenseId       Int?          @map("license_id")
+  license         StoreLicense? @relation(fields: [licenseId], references: [id])
+
+  @@index([redeemedAt])
+  @@map("license_activations")
 }
 
 model Category {

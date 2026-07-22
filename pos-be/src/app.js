@@ -26,6 +26,8 @@ const swaggerSpecs = require('./config/swagger');
 
 // Existing routes
 const authRoutes = require('./routes/authRoutes');
+const licenseRoutes = require('./routes/licenseRoutes');
+const { requireActiveLicense } = require('./middlewares/licenseMiddleware');
 const productRoutes = require('./routes/productRoutes');
 const customerRoutes = require('./routes/customerRoutes');
 const transactionRoutes = require('./routes/transactionRoutes');
@@ -107,6 +109,8 @@ if (!isProduction || process.env.ENABLE_API_DOCS === 'true') {
 
 // Existing API routes
 app.use('/api/auth', authRoutes);
+app.use('/api/license', licenseRoutes);
+app.use('/api', requireActiveLicense);
 app.use('/api/products', productRoutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/transactions', transactionRoutes);
