@@ -128,6 +128,7 @@ export default function Sidebar({ isMobileOpen, setIsMobileOpen }) {
   const enableDineTable = settings?.enableDineTable;
   const enableTableOrder = settings?.enableTableOrder;
   const enableKitchenQueue = settings?.enableKitchenQueue;
+  const enableShift = settings?.enableShift;
 
   return (
     <>
@@ -203,7 +204,7 @@ export default function Sidebar({ isMobileOpen, setIsMobileOpen }) {
 
             <div className="pt-4 pb-2">
               <p className="px-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 italic">Operasional</p>
-              <SidebarItem icon={Clock} label="Shift" href="/shifts" />
+              {enableShift && <SidebarItem icon={Clock} label="Shift" href="/shifts" />}
               {enableKitchenQueue && (
                 <SidebarItem icon={ChefHat} label="Antrean Dapur" href="/kitchen" badge={kitchenNewCount} />
               )}

@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const { Parser } = require('json2csv');
+const { calculateShiftSummary } = require('../services/shiftSummaryService');
 const prisma = new PrismaClient();
 
 /**
@@ -287,35 +288,32 @@ exports.getShiftReport = async (req, res) => {
             const shift = await prisma.shift.findUnique({ where: { id: shiftId } });
             if (!shift) return res.status(404).json({ success: false, message: "Shift tidak ditemukan" });
 
+            const shiftEnd = shift.closedAt || new Date();
             const shiftTransactions = await prisma.transaction.findMany({
                 where: {
-                    createdAt: {
-                        gte: shift.openedAt,
-                        lte: shift.closedAt || new Date()
-                    },
+                    OR: [
+                        { shiftId: shift.id },
+                        { shiftId: null, createdAt: { gte: shift.openedAt, lte: shiftEnd } }
+                    ],
                     status: { in: ['PAID', 'COMPLETED'] }
                 },
                 include: { payments: true }
             });
-
-            const totalSales = shiftTransactions.reduce((sum, t) => sum + Number(t.grandTotal), 0);
-            const cashSales = shiftTransactions
-                .filter(t => t.payments.some(p => p.paymentType === 'CASH'))
-                .reduce((sum, t) => sum + Number(t.grandTotal), 0);
-            const qrisSales = shiftTransactions
-                .filter(t => t.payments.some(p => p.paymentType === 'QRIS'))
-                .reduce((sum, t) => sum + Number(t.grandTotal), 0);
+            const expenses = await prisma.expense.findMany({
+                where: {
+                    OR: [
+                        { shiftId: shift.id },
+                        { shiftId: null, createdAt: { gte: shift.openedAt, lte: shiftEnd } }
+                    ]
+                }
+            });
+            const summary = calculateShiftSummary({ shift, transactions: shiftTransactions, expenses });
 
             return res.json({
                 success: true,
                 data: {
                     shift,
-                    totalSales,
-                    transactionCount: shiftTransactions.length,
-                    cashSales,
-                    qrisSales,
-                    expectedCash: Number(shift.openingCash) + cashSales,
-                    difference: shift.closingCash ? Number(shift.closingCash) - (Number(shift.openingCash) + cashSales) : null
+                    ...summary
                 }
             });
         }

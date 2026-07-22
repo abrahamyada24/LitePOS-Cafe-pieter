@@ -422,6 +422,10 @@ export default function Dashboard() {
         setActiveShift(null);
         setCloseShiftModal(false);
         setClosingCash('');
+        showAlert.success(
+          'Shift berhasil ditutup',
+          `Tunai ${formatRp(json.data.cashSales)} • Pengeluaran ${formatRp(json.data.cashExpenses)} • Selisih ${formatRp(json.data.difference)}`
+        );
       } else {
         showAlert.error('Gagal menutup shift', json.message || 'Coba lagi.');
       }
@@ -531,12 +535,14 @@ export default function Dashboard() {
       </div>
 
       {/* ── Shift Management Banner ── */}
-      <ShiftBanner
-        shift={activeShift}
-        loading={shiftLoading}
-        onOpenShift={() => setOpenShiftModal(true)}
-        onCloseShift={() => setCloseShiftModal(true)}
-      />
+      {settings?.enableShift === true && (
+        <ShiftBanner
+          shift={activeShift}
+          loading={shiftLoading}
+          onOpenShift={() => setOpenShiftModal(true)}
+          onCloseShift={() => setCloseShiftModal(true)}
+        />
+      )}
 
       {/* ── Pending Sales Alert ── */}
       <PendingSalesAlert count={savedTrxCount} />

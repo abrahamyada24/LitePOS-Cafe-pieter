@@ -146,6 +146,7 @@ model Customer {
 model Transaction {
   id                Int               @id @default(autoincrement())
   androidId         String?           @unique @map("android_id") @db.VarChar(100)
+  shiftId           String?           @map("shift_id")
   userId            Int               @map("user_id")
   customerId        Int?              @map("customer_id")
   customerName      String?           @map("customer_name") @db.VarChar(255)
@@ -166,9 +167,11 @@ model Transaction {
   updatedAt         DateTime          @updatedAt @map("updated_at")
   user              User              @relation(fields: [userId], references: [id])
   customer          Customer?         @relation(fields: [customerId], references: [id])
+  shift             Shift?            @relation(fields: [shiftId], references: [id])
   items             TransactionItem[]
   payments          Payment[]
 
+  @@index([shiftId, status])
   @@map("transactions")
 }
 
@@ -260,24 +263,29 @@ model LoyaltyConfig {
 
 model Expense {
   id          Int      @id @default(autoincrement())
+  shiftId     String?  @map("shift_id")
   description String   @db.Text
   amount      Decimal  @db.Decimal(15, 2)
   category    String   @default("Umum") @db.VarChar(100)
   type        String   @default("EXPENSE") @db.VarChar(20)
   createdAt   DateTime @default(now()) @map("created_at")
+  shift       Shift?   @relation(fields: [shiftId], references: [id])
 
+  @@index([shiftId, createdAt])
   @@map("expenses")
 }
 
 model Shift {
-  id          String      @id @default(uuid())
-  userId      Int         @map("user_id")
-  userName    String      @map("user_name") @db.VarChar(255)
-  openedAt    DateTime    @map("opened_at")
-  closedAt    DateTime?   @map("closed_at")
-  openingCash Decimal     @default(0) @map("opening_cash") @db.Decimal(15, 2)
-  closingCash Decimal?    @map("closing_cash") @db.Decimal(15, 2)
-  status      ShiftStatus @default(OPEN)
+  id           String        @id @default(uuid())
+  userId       Int           @map("user_id")
+  userName     String        @map("user_name") @db.VarChar(255)
+  openedAt     DateTime      @map("opened_at")
+  closedAt     DateTime?     @map("closed_at")
+  openingCash  Decimal       @default(0) @map("opening_cash") @db.Decimal(15, 2)
+  closingCash  Decimal?      @map("closing_cash") @db.Decimal(15, 2)
+  status       ShiftStatus   @default(OPEN)
+  transactions Transaction[]
+  expenses     Expense[]
 
   @@map("shifts")
 }

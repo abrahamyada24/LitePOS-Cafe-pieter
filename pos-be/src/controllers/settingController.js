@@ -82,6 +82,20 @@ exports.updateSettings = async (req, res) => {
     if (dataToUpdate.enableTableOrder !== true && dataToUpdate.enableDineTable === false) dataToUpdate.enableTableOrder = false;
     if (req.body.takeawayOptions !== undefined) dataToUpdate.takeawayOptions = req.body.takeawayOptions;
 
+    if (dataToUpdate.enableShift === false) {
+      const activeShift = await prisma.shift.findFirst({
+        where: { status: 'OPEN' },
+        select: { id: true, userName: true }
+      });
+      if (activeShift) {
+        return res.status(409).json({
+          success: false,
+          code: 'ACTIVE_SHIFT_MUST_BE_CLOSED',
+          message: `Tutup shift aktif milik ${activeShift.userName} sebelum menonaktifkan fitur shift.`
+        });
+      }
+    }
+
     /**
      * LOGIKA PENYIMPANAN LOGO LOKAL:
      * Menggunakan req.file.filename untuk mendapatkan nama file unik di folder uploads.

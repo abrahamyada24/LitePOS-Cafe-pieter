@@ -1,11 +1,11 @@
 "use client";
 
-import { Search, Utensils, LogOut } from 'lucide-react';
+import { Clock3, Search, LogOut } from 'lucide-react';
 import { showAlert } from '@/utils/swal';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
-export default function Header({ search, setSearch, currentUser }) {
+export default function Header({ search, setSearch, currentUser, shiftEnabled, activeShift }) {
     const router = useRouter();
 
     const handleLogout = async () => {
@@ -43,6 +43,21 @@ export default function Header({ search, setSearch, currentUser }) {
                         className="pl-9 pr-4 py-2 bg-gray-100 border-none rounded-lg lg:rounded-xl text-xs lg:text-sm w-full focus:ring-2 focus:ring-blue-100 focus:bg-white transition-all outline-none font-medium placeholder:text-gray-400"
                     />
                 </div>
+
+                {shiftEnabled && activeShift && (
+                    <Link
+                        href="/shifts"
+                        className="hidden sm:flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-700"
+                        title={`Shift dibuka oleh ${activeShift.userName}`}
+                    >
+                        <span className="relative flex h-2.5 w-2.5">
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                        </span>
+                        <Clock3 size={15} />
+                        <span className="text-xs font-bold">Shift Aktif</span>
+                    </Link>
+                )}
 
                 <div className="hidden lg:flex items-center gap-3 border-l border-gray-100 pl-4">
                     <div className="text-right hidden xl:block">

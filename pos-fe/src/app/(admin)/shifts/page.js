@@ -1,6 +1,6 @@
 "use client";
 import React, { useEffect, useState } from 'react';
-import { Clock, Play, Square, Loader2, DollarSign, ShoppingCart } from 'lucide-react';
+import { Clock, Play, Square, Loader2, DollarSign, ShoppingCart, Power } from 'lucide-react';
 import { showAlert } from '@/utils/swal';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
@@ -8,6 +8,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 export default function ShiftsPage() {
     const [shifts, setShifts] = useState([]);
     const [currentShift, setCurrentShift] = useState(null);
+    const [featureEnabled, setFeatureEnabled] = useState(true);
     const [loading, setLoading] = useState(true);
     const [openingCash, setOpeningCash] = useState('');
     const [closingCash, setClosingCash] = useState('');
@@ -29,7 +30,10 @@ export default function ShiftsPage() {
             const shiftData = await shiftRes.json();
             const currentData = await currentRes.json();
             if (shiftData.success) setShifts(shiftData.data);
-            if (currentData.success) setCurrentShift(currentData.data);
+            if (currentData.success) {
+                setCurrentShift(currentData.data);
+                setFeatureEnabled(currentData.enabled !== false);
+            }
         } catch (e) { console.error(e); }
         if (!silent) setLoading(false);
     };
@@ -85,7 +89,11 @@ export default function ShiftsPage() {
                     <h1 className="text-2xl font-extrabold text-gray-800 tracking-tight">Manajemen Shift</h1>
                     <p className="text-sm text-gray-500 mt-1">Buka dan tutup shift kasir</p>
                 </div>
-                {currentShift ? (
+                {!featureEnabled ? (
+                    <span className="flex items-center gap-2 rounded-xl bg-gray-100 px-4 py-2.5 text-sm font-bold text-gray-500">
+                        <Power size={17} /> Shift Nonaktif
+                    </span>
+                ) : currentShift ? (
                     <button onClick={() => setShowCloseModal(true)} className="flex items-center gap-2 px-5 py-2.5 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-all shadow-lg">
                         <Square size={18} /> Tutup Shift
                     </button>
@@ -96,7 +104,15 @@ export default function ShiftsPage() {
                 )}
             </div>
 
-            {currentShift && (
+            {!featureEnabled && (
+                <div className="rounded-2xl border border-gray-200 bg-gray-50 p-6 text-center">
+                    <Power className="mx-auto mb-3 text-gray-400" size={34} />
+                    <h2 className="font-bold text-gray-700">Fitur shift sedang dinonaktifkan</h2>
+                    <p className="mt-1 text-sm text-gray-500">Kasir POS tetap dapat digunakan tanpa membuka shift.</p>
+                </div>
+            )}
+
+            {featureEnabled && currentShift && (
                 <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-2xl p-6">
                     <div className="flex items-center gap-3 mb-3">
                         <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse"></div>

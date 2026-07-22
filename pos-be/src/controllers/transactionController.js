@@ -56,6 +56,21 @@ exports.createTransaction = async (req, res) => {
         }
 
         const result = await prisma.$transaction(async (tx) => {
+            const setting = await tx.storeSetting.findFirst();
+            const shiftEnabled = setting?.enableShift !== false;
+            const activeShift = shiftEnabled
+                ? await tx.shift.findFirst({
+                    where: { status: 'OPEN' },
+                    orderBy: { openedAt: 'desc' }
+                })
+                : null;
+
+            if (shiftEnabled && !activeShift) {
+                const shiftError = new Error('Buka shift terlebih dahulu sebelum memproses transaksi.');
+                shiftError.code = 'SHIFT_REQUIRED';
+                throw shiftError;
+            }
+
             let subTotal = 0;
             const transactionItemsData = [];
             const itemDetailsForMidtrans = [];
@@ -155,7 +170,6 @@ exports.createTransaction = async (req, res) => {
             }
 
             // Hitung pajak
-            const setting = await tx.storeSetting.findFirst();
             const taxRate = setting?.taxRate ? Number(setting.taxRate) / 100 : 0;
 
             // Calculate discount (support percent and amount modes)
@@ -226,6 +240,7 @@ exports.createTransaction = async (req, res) => {
             // Buat transaksi
             const newTransaction = await tx.transaction.create({
                 data: {
+                    shiftId: activeShift?.id || null,
                     userId: req.user.id,
                     customerId: customerId ? parseInt(customerId) : null,
                     customerName: takeawayOption ? `${customerName || 'Umum'} (${takeawayOption})` : (customerName || null),
@@ -375,8 +390,9 @@ exports.createTransaction = async (req, res) => {
 
     } catch (error) {
         console.error('[ERROR] Transaction Error:', error.message);
-        res.status(400).json({
+        res.status(error.code === 'SHIFT_REQUIRED' ? 409 : 400).json({
             success: false,
+            code: error.code || 'TRANSACTION_FAILED',
             message: error.message
         });
     }

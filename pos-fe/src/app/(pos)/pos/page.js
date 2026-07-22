@@ -12,6 +12,7 @@ import MemberModal from '@/components/pos/MemberModal';
 import PaymentModal from '@/components/pos/PaymentModal';
 import ReceiptPreviewModal from '@/components/pos/ReceiptPreviewModal';
 import TableModal from '@/components/pos/TableModal';
+import ShiftGuardModal from '@/components/pos/ShiftGuardModal';
 
 // Import SweetAlert
 import { showAlert } from '@/utils/swal';
@@ -30,6 +31,12 @@ export default function POSPage() {
   const [tables, setTables] = useState([]);
   const [currentUser, setCurrentUser] = useState(null); 
   const [storeSettings, setStoreSettings] = useState(null);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [activeShift, setActiveShift] = useState(null);
+  const [shiftRequiredByServer, setShiftRequiredByServer] = useState(false);
+  const [shiftLoading, setShiftLoading] = useState(true);
+  const [isOpeningShift, setIsOpeningShift] = useState(false);
+  const [openingCash, setOpeningCash] = useState('');
   
   // --- STATE UI ---
   const [cart, setCart] = useState([]);
@@ -130,11 +137,16 @@ export default function POSPage() {
                         setTaxRate(Number(settingsData.data.taxRate) / 100);
                     }
                 }
-            } catch (e) { console.error('Failed to fetch settings', e); }
+            } catch (e) {
+                console.error('Failed to fetch settings', e);
+            } finally {
+                setSettingsLoaded(true);
+            }
 
         } catch (error) {
             console.error("Error fetching data:", error);
             showAlert.error("Gagal Memuat Data", "Cek koneksi backend.");
+            setSettingsLoaded(true);
         }
     };
 
@@ -150,6 +162,44 @@ export default function POSPage() {
         if(document.body.contains(script)) document.body.removeChild(script);
     }
   }, []);
+
+  useEffect(() => {
+    if (!settingsLoaded) return undefined;
+    if (storeSettings?.enableShift !== true) {
+      setActiveShift(null);
+      setShiftLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const loadCurrentShift = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const response = await fetch(`${API_URL}/api/shifts/current`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: 'no-store'
+        });
+        const data = await response.json();
+        if (!cancelled && response.ok && data.success) setActiveShift(data.data || null);
+      } catch (error) {
+        console.error('Failed to fetch current shift', error);
+      } finally {
+        if (!cancelled) setShiftLoading(false);
+      }
+    };
+
+    setShiftLoading(true);
+    loadCurrentShift();
+    const intervalId = window.setInterval(loadCurrentShift, 15000);
+    const handleFocus = () => loadCurrentShift();
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [settingsLoaded, storeSettings?.enableShift]);
 
   useEffect(() => {
     if (tableOrderRestoreStarted.current) return;
@@ -356,7 +406,14 @@ export default function POSPage() {
 
           const data = await res.json();
 
-          if (!data.success) throw new Error(data.message);
+          if (!data.success) {
+              if (data.code === 'SHIFT_REQUIRED') {
+                  setShiftRequiredByServer(true);
+                  setActiveShift(null);
+                  setShiftLoading(false);
+              }
+              throw new Error(data.message);
+          }
           const receiptTransaction = buildReceiptTransaction(data.data, type, payload.customerName);
 
           if (pendingOrderContext?.orderCode) {
@@ -394,6 +451,31 @@ export default function POSPage() {
       } finally {
           setIsProcessing(false);
       }
+  };
+
+  const handleOpenShift = async () => {
+    setIsOpeningShift(true);
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_URL}/api/shifts/open`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ openingCash: Number(openingCash) || 0 })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.message || data.error || 'Shift tidak dapat dibuka.');
+      setActiveShift(data.data);
+      setShiftRequiredByServer(false);
+      setOpeningCash('');
+      showAlert.success('Shift dibuka', `Kas awal Rp ${Number(data.data.openingCash || 0).toLocaleString('id-ID')}.`);
+    } catch (error) {
+      showAlert.error('Gagal membuka shift', error.message || 'Coba lagi.');
+    } finally {
+      setIsOpeningShift(false);
+    }
   };
 
   const handlePaymentOpen = () => {
@@ -444,6 +526,8 @@ export default function POSPage() {
             search={search} 
             setSearch={setSearch} 
             currentUser={currentUser} 
+            shiftEnabled={storeSettings?.enableShift === true || shiftRequiredByServer}
+            activeShift={activeShift}
         />
 
         <CategoryFilter 
@@ -502,6 +586,16 @@ export default function POSPage() {
       />
 
       {/* --- MODALS --- */}
+
+      <ShiftGuardModal
+         visible={!settingsLoaded || ((storeSettings?.enableShift === true || shiftRequiredByServer) && (shiftLoading || !activeShift))}
+         checking={!settingsLoaded || (shiftLoading && !shiftRequiredByServer)}
+         opening={isOpeningShift}
+         openingCash={openingCash}
+         setOpeningCash={setOpeningCash}
+         onOpenShift={handleOpenShift}
+         currentUser={currentUser}
+      />
       
       <MemberModal 
          isOpen={isMemberModalOpen}

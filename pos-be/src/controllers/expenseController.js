@@ -38,8 +38,14 @@ exports.createExpense = async (req, res) => {
             return res.status(400).json({ success: false, message: "Deskripsi dan jumlah wajib diisi" });
         }
 
+        const setting = await prisma.storeSetting.findFirst({ select: { enableShift: true } });
+        const activeShift = setting?.enableShift !== false
+            ? await prisma.shift.findFirst({ where: { status: 'OPEN' }, orderBy: { openedAt: 'desc' } })
+            : null;
+
         const expense = await prisma.expense.create({
             data: {
+                shiftId: activeShift?.id || null,
                 description,
                 amount: parseFloat(amount),
                 category: category || 'Umum',
