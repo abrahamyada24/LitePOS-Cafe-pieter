@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { Package, Utensils } from 'lucide-react';
+import { Minus, Package, Plus, Utensils } from 'lucide-react';
 
 const ProductSkeleton = () => (
     <div className="bg-white rounded-xl lg:rounded-2xl p-2 lg:p-3 border border-gray-100 flex flex-col h-full animate-pulse">
@@ -18,8 +18,10 @@ const ProductSkeleton = () => (
     </div>
 );
 
-const ProductCard = ({ product, addToCart, getImageUrl }) => {
+const ProductCard = ({ product, cart, addToCart, updateQty, getImageUrl }) => {
     const [isLoaded, setIsLoaded] = useState(false);
+    const cartItem = cart.find(item => String(item.id) === String(product.id));
+    const selectedQty = Number(cartItem?.qty || 0);
 
     useEffect(() => {
         const timer = setTimeout(() => setIsLoaded(true), 300);
@@ -31,7 +33,7 @@ const ProductCard = ({ product, addToCart, getImageUrl }) => {
     return (
         <div
             onClick={() => addToCart(product)}
-            className={`group bg-white rounded-xl lg:rounded-2xl p-2 lg:p-3 cursor-pointer hover:shadow-xl hover:shadow-gray-200/50 hover:-translate-y-1 transition-all duration-300 border border-gray-100 flex flex-col h-full relative overflow-hidden animate-in fade-in duration-500 ${product.stock <= 0 && !product.isUnlimitedStock ? 'opacity-60 grayscale cursor-not-allowed' : ''}`}
+            className={`group rounded-xl lg:rounded-2xl p-2 lg:p-3 cursor-pointer hover:shadow-xl hover:shadow-gray-200/50 hover:-translate-y-1 transition-all duration-300 border flex flex-col h-full relative overflow-hidden animate-in fade-in duration-500 ${selectedQty > 0 ? 'border-blue-400 bg-blue-50/60 shadow-sm shadow-blue-100' : 'border-gray-100 bg-white'} ${product.stock <= 0 && !product.isUnlimitedStock ? 'opacity-60 grayscale cursor-not-allowed' : ''}`}
         >
             <div className="relative h-28 lg:h-36 w-full rounded-lg lg:rounded-xl overflow-hidden mb-2 lg:mb-3 bg-gray-100">
                 {product.imageUrl ? (
@@ -72,16 +74,49 @@ const ProductCard = ({ product, addToCart, getImageUrl }) => {
                             Rp {Number(product.price).toLocaleString('id-ID')}
                         </p>
                     </div>
-                    <span className={`text-[10px] font-medium ${product.stock < 5 && !product.isUnlimitedStock ? 'text-red-500' : 'text-gray-400'}`}>
-                        Stok: {product.isUnlimitedStock ? '∞' : product.stock}
-                    </span>
+                    {selectedQty > 0 ? (
+                        <div
+                            className="flex h-9 items-center overflow-hidden rounded-lg border border-blue-200 bg-white shadow-sm"
+                            onClick={(event) => event.stopPropagation()}
+                        >
+                            <button
+                                type="button"
+                                aria-label={`Kurangi ${product.name}`}
+                                onClick={(event) => {
+                                    event.stopPropagation();
+                                    updateQty(product.id, -1);
+                                }}
+                                className="flex h-full w-9 items-center justify-center text-blue-700 transition-colors hover:bg-blue-50"
+                            >
+                                <Minus size={15} strokeWidth={2.5} />
+                            </button>
+                            <span className="flex h-full min-w-9 items-center justify-center border-x border-blue-100 bg-blue-50 px-2 text-sm font-black text-blue-800">
+                                {selectedQty}
+                            </span>
+                            <button
+                                type="button"
+                                aria-label={`Tambah ${product.name}`}
+                                onClick={(event) => {
+                                    event.stopPropagation();
+                                    updateQty(product.id, 1);
+                                }}
+                                className="flex h-full w-9 items-center justify-center bg-blue-600 text-white transition-colors hover:bg-blue-700"
+                            >
+                                <Plus size={15} strokeWidth={2.5} />
+                            </button>
+                        </div>
+                    ) : (
+                        <span className={`text-[10px] font-medium ${product.stock < 5 && !product.isUnlimitedStock ? 'text-red-500' : 'text-gray-400'}`}>
+                            Stok: {product.isUnlimitedStock ? '∞' : product.stock}
+                        </span>
+                    )}
                 </div>
             </div>
         </div>
     );
 };
 
-export default function ProductGrid({ products, addToCart, getImageUrl }) {
+export default function ProductGrid({ products, cart, addToCart, updateQty, getImageUrl }) {
     if (products.length === 0) {
         return   (
             <div className="h-full flex flex-col items-center justify-center text-gray-400">
@@ -97,7 +132,9 @@ export default function ProductGrid({ products, addToCart, getImageUrl }) {
                 <ProductCard
                     key={product.id}
                     product={product}
+                    cart={cart}
                     addToCart={addToCart}
+                    updateQty={updateQty}
                     getImageUrl={getImageUrl}
                 />
             ))}

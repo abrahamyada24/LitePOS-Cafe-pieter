@@ -538,7 +538,9 @@ export default function POSPage() {
         <div className="flex-1 overflow-y-auto px-4 lg:px-6 py-4 lg:py-6 bg-gray-50/50 pb-32 lg:pb-6">
             <ProductGrid 
                 products={filteredProducts} 
+                cart={cart}
                 addToCart={addToCart} 
+                updateQty={updateQty}
                 getImageUrl={getImageUrl} 
             />
         </div>

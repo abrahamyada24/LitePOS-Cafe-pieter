@@ -5,8 +5,10 @@ import { useRouter, usePathname } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 
-const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
+const INACTIVITY_TIMEOUT_HOURS = 16;
+const INACTIVITY_TIMEOUT_MS = INACTIVITY_TIMEOUT_HOURS * 60 * 60 * 1000;
 const LAST_ACTIVITY_KEY = 'litepos_last_activity';
+const INACTIVITY_NOTICE = `Sesi berakhir karena tidak aktif selama ${INACTIVITY_TIMEOUT_HOURS} jam.`;
 
 export default function AuthGuard({ children }) {
   const router = useRouter();
@@ -41,7 +43,7 @@ export default function AuthGuard({ children }) {
       if (cancelled) return;
       if (!result.success) {
         sessionStorage.setItem('auth_notice', result.code === 'SESSION_IDLE_TIMEOUT'
-          ? 'Sesi berakhir karena tidak aktif selama 30 menit.'
+          ? INACTIVITY_NOTICE
           : 'Silakan login kembali.');
         router.replace('/login');
         return;
@@ -68,7 +70,7 @@ export default function AuthGuard({ children }) {
 
     const endSession = async () => {
       await logout();
-      sessionStorage.setItem('auth_notice', 'Sesi berakhir karena tidak aktif selama 30 menit.');
+      sessionStorage.setItem('auth_notice', INACTIVITY_NOTICE);
       router.replace('/login');
     };
 

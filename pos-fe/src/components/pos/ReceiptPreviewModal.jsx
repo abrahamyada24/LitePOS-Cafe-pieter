@@ -3,10 +3,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { Printer, X } from 'lucide-react';
 import { DEFAULT_DEVICE_PREFERENCES, getDevicePreferences, getPaperWidthMm } from '@/utils/devicePreferences';
+import { useStore } from '@/store/useStore';
 
 export default function ReceiptPreviewModal({ isOpen, onClose, transaction, store, formatNumber }) {
     const receiptRef = useRef(null);
     const [devicePreferences, setDevicePreferences] = useState(DEFAULT_DEVICE_PREFERENCES);
+    const license = useStore((state) => state.license);
 
     useEffect(() => {
         if (isOpen) setDevicePreferences(getDevicePreferences());
@@ -28,6 +30,7 @@ export default function ReceiptPreviewModal({ isOpen, onClose, transaction, stor
     });
     const paperWidthMm = getPaperWidthMm(devicePreferences);
     const logoMaxWidthMm = paperWidthMm === 80 ? 58 : 42;
+    const showLitePosBranding = !(license?.isActive && license?.plan === 'PREMIUM');
 
     const handlePrint = () => {
         if (typeof window === 'undefined') return;
@@ -170,7 +173,9 @@ export default function ReceiptPreviewModal({ isOpen, onClose, transaction, stor
                         <div className="whitespace-pre-wrap text-center">
                             {store?.receiptFooter || 'Terima kasih atas kunjungan Anda'}
                         </div>
-                        <div className="mt-2 text-center text-[8px]">Powered by LitePOS</div>
+                        {showLitePosBranding && (
+                            <div className="mt-2 text-center text-[8px]">Powered by LitePOS</div>
+                        )}
                     </div>
                 </div>
 
