@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, Clock, Play, Trash2, ShoppingCart, Loader2 } from 'lucide-react';
 import { showAlert } from '@/utils/swal';
+import { getPosPendingTransactions } from '@/utils/savedTransactions';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -20,14 +21,7 @@ export default function SavedTransactionModal({ isOpen, onClose, onResume, onCha
             });
             const data = await res.json();
             if (data.success) {
-                setSavedTransactions((data.data || []).filter(transaction => {
-                    try {
-                        const parsed = JSON.parse(transaction.cartData);
-                        return Array.isArray(parsed) || (parsed && parsed.source !== 'TABLE_QR');
-                    } catch {
-                        return false;
-                    }
-                }));
+                setSavedTransactions(getPosPendingTransactions(data.data));
             }
         } catch (error) {
             console.error("Failed to load saved transactions:", error);

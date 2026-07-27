@@ -17,6 +17,7 @@ import ShiftGuardModal from '@/components/pos/ShiftGuardModal';
 
 // Import SweetAlert
 import { showAlert } from '@/utils/swal';
+import { getPosPendingTransactions } from '@/utils/savedTransactions';
 import { useStore } from '@/store/useStore';
 
 const RAW_API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
@@ -87,14 +88,7 @@ export default function POSPage() {
       const data = await response.json();
       if (!response.ok || !data.success) return;
 
-      const posSavedTransactions = (data.data || []).filter(transaction => {
-        try {
-          const parsed = JSON.parse(transaction.cartData);
-          return Array.isArray(parsed) || (parsed && parsed.source !== 'TABLE_QR');
-        } catch {
-          return false;
-        }
-      });
+      const posSavedTransactions = getPosPendingTransactions(data.data);
       setSavedTransactionCount(posSavedTransactions.length);
     } catch (error) {
       console.error('Failed to count saved transactions', error);
@@ -196,6 +190,16 @@ export default function POSPage() {
       if (document.body.contains(script)) document.body.removeChild(script);
     };
   }, [settingsLoaded, storeSettings?.enableQris]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('openSaved') !== '1') return;
+
+    setIsSavedTransactionModalOpen(true);
+    params.delete('openSaved');
+    const query = params.toString();
+    window.history.replaceState({}, '', `${window.location.pathname}${query ? `?${query}` : ''}`);
+  }, []);
 
   useEffect(() => {
     if (!settingsLoaded) return undefined;

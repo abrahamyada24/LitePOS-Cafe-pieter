@@ -11,6 +11,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useStore } from '../store/useStore';
 import { showAlert } from '../utils/swal';
+import { getPosPendingTransactions } from '../utils/savedTransactions';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -82,13 +83,15 @@ export default function Sidebar({ isMobileOpen, setIsMobileOpen }) {
     const fetchPendingSales = async () => {
       try {
         const baseUrl = API_URL.endsWith('/api') ? API_URL.replace(/\/api$/, '') : API_URL;
-        const res = await fetch(`${baseUrl}/api/saved-transactions`);
+        const token = localStorage.getItem('token');
+        const headers = token ? { Authorization: `Bearer ${token}` } : {};
+        const res = await fetch(`${baseUrl}/api/saved-transactions`, { headers });
         const data = await res.json();
         if (data.success) {
-          setPendingSalesCount(Array.isArray(data.data) ? data.data.length : 0);
+          setPendingSalesCount(getPosPendingTransactions(data.data).length);
         }
         if (settings?.enableKitchenQueue) {
-          const kitchenRes = await fetch(`${baseUrl}/api/kitchen-orders/summary`);
+          const kitchenRes = await fetch(`${baseUrl}/api/kitchen-orders/summary`, { headers });
           const kitchenData = await kitchenRes.json();
           if (kitchenData.success) setKitchenNewCount(Number(kitchenData.data?.NEW || 0));
         } else {

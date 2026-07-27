@@ -12,6 +12,7 @@ import {
 import Link from 'next/link';
 import { useStore } from '../../store/useStore';
 import { showAlert } from '../../utils/swal';
+import { getPosPendingTransactions } from '../../utils/savedTransactions';
 
 const SalesChart = lazy(() => import('../../components/SalesChart'));
 
@@ -197,15 +198,15 @@ function PendingSalesAlert({ count }) {
             <Timer size={18} className="text-yellow-600" />
           </div>
           <div>
-            <p className="font-bold text-yellow-800 text-sm">🕐 {count} Transaksi Tertunda</p>
-            <p className="text-yellow-600 text-xs mt-0.5">Ada pesanan yang belum diselesaikan</p>
+            <p className="font-bold text-yellow-800 text-sm">🕐 {count} Penjualan Pending</p>
+            <p className="text-yellow-600 text-xs mt-0.5">Keranjang kasir tersimpan dan belum dibayar</p>
           </div>
         </div>
         <Link
-          href="/pos"
+          href="/pos?openSaved=1"
           className="flex items-center gap-1.5 px-4 py-2 bg-yellow-500 text-white rounded-xl text-sm font-bold hover:bg-yellow-600 transition-colors shadow-sm"
         >
-          Lanjutkan
+          Buka di POS
           <ArrowRight size={14} />
         </Link>
       </div>
@@ -345,8 +346,7 @@ export default function Dashboard() {
         if (savedRes.status === 'fulfilled' && savedRes.value.ok) {
           const savedJson = await savedRes.value.json();
           if (savedJson.success) {
-            const data = savedJson.data;
-            setSavedTrxCount(Array.isArray(data) ? data.length : 0);
+            setSavedTrxCount(getPosPendingTransactions(savedJson.data).length);
           }
         }
 
