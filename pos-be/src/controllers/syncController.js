@@ -68,7 +68,7 @@ exports.getMasterData = async (req, res) => {
       prisma.category.findMany(),
       prisma.product.findMany(),
       prisma.productAddon.findMany(),
-      prisma.user.findMany({ select: { id: true, name: true, email: true, role: true } }),
+      prisma.user.findMany({ select: { id: true, name: true, email: true, username: true, role: true } }),
       prisma.customer.findMany(),
       prisma.supplier.findMany(),
       prisma.package.findMany(),

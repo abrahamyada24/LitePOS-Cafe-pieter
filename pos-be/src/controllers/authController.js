@@ -12,6 +12,11 @@ const {
   revokeAllUserSessions,
   revokeSession,
 } = require('../services/authSessionService');
+const {
+  generateUniqueUsername,
+  normalizeUsername,
+  validateUsername,
+} = require('../services/usernameService');
 
 const prisma = new PrismaClient();
 const PASSWORD_HASH_ROUNDS = 12;
@@ -28,6 +33,7 @@ const publicUser = (user) => ({
   id: user.id,
   name: user.name,
   email: user.email,
+  username: user.username,
   role: user.role,
   imageUrl: user.imageUrl,
   mustChangePassword: Boolean(user.mustChangePassword),
@@ -36,14 +42,15 @@ const publicUser = (user) => ({
 const genericLoginFailure = (res) => res.status(401).json({
   success: false,
   code: 'INVALID_CREDENTIALS',
-  message: 'Email atau password salah.',
+  message: 'Email/username atau password salah.',
 });
 
 exports.register = async (req, res) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, username, password, role } = req.body;
     const normalizedName = String(name || '').trim();
     const normalizedEmail = String(email || '').trim().toLowerCase();
+    const requestedUsername = normalizeUsername(username);
     const normalizedRole = String(role || 'CASHIER').toUpperCase();
     const passwordError = validatePassword(password);
 
@@ -51,11 +58,22 @@ exports.register = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Nama, email, dan password wajib diisi.' });
     }
     if (passwordError) return res.status(400).json({ success: false, message: passwordError });
+    if (requestedUsername) {
+      const usernameError = validateUsername(requestedUsername);
+      if (usernameError) return res.status(400).json({ success: false, message: usernameError });
+    }
     if (!['ADMIN', 'CASHIER'].includes(normalizedRole)) {
       return res.status(400).json({ success: false, message: 'Role user tidak valid.' });
     }
 
-    const existingUser = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: normalizedEmail },
+          ...(requestedUsername ? [{ username: requestedUsername }] : []),
+        ],
+      },
+    });
     if (existingUser) {
       return res.status(400).json({ success: false, message: 'Data pengguna tidak dapat dibuat.' });
     }
@@ -64,6 +82,7 @@ exports.register = async (req, res) => {
       data: {
         name: normalizedName,
         email: normalizedEmail,
+        username: requestedUsername || await generateUniqueUsername(prisma, normalizedEmail || normalizedName),
         password: await bcrypt.hash(String(password), PASSWORD_HASH_ROUNDS),
         role: normalizedRole,
         imageUrl: req.file ? `/uploads/${req.file.filename}` : null,
@@ -83,13 +102,20 @@ exports.register = async (req, res) => {
 
 exports.login = async (req, res) => {
   try {
-    const { email, password, clientType, deviceName } = req.body;
-    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const { identifier, email, password, clientType, deviceName } = req.body;
+    const normalizedIdentifier = String(identifier || email || '').trim().toLowerCase();
     const normalizedClientType = String(clientType || 'WEB').toUpperCase() === 'ANDROID' ? 'ANDROID' : 'WEB';
 
-    if (!normalizedEmail || !password) return genericLoginFailure(res);
+    if (!normalizedIdentifier || !password) return genericLoginFailure(res);
 
-    const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: normalizedIdentifier },
+          { username: normalizedIdentifier },
+        ],
+      },
+    });
     if (!user) {
       await bcrypt.compare(String(password), DUMMY_PASSWORD_HASH);
       return genericLoginFailure(res);
@@ -240,13 +266,14 @@ exports.revokeSession = async (req, res) => {
   return res.json({ success: true, message: 'Sesi berhasil dicabut.' });
 };
 
-exports.me = async (req, res) => res.json({
-  success: true,
-  user: {
-    id: req.user.id,
-    name: req.user.name,
-    email: req.user.email,
-    role: req.user.role,
-    mustChangePassword: req.user.mustChangePassword,
-  },
-});
+exports.me = async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+    if (!user || !user.isActive) {
+      return res.status(404).json({ success: false, message: 'Pengguna tidak ditemukan atau tidak aktif.' });
+    }
+    return res.json({ success: true, user: publicUser(user) });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Data pengguna belum dapat dimuat.' });
+  }
+};

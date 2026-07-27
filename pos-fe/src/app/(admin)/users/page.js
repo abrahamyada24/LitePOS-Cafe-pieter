@@ -1,13 +1,18 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { Plus, Search, Edit, Trash2, Mail, ShieldCheck, User } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Mail, ShieldCheck, User, AtSign } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import UserModal from '@/components/UserModal';
 import { showAlert } from '@/utils/swal';
+import { useStore } from '@/store/useStore';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
 export default function UsersPage() {
+    const router = useRouter();
+    const currentUser = useStore(state => state.user);
+    const logout = useStore(state => state.logout);
     const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
@@ -20,7 +25,8 @@ export default function UsersPage() {
             const token = localStorage.getItem('token');
 
             const res = await fetch(`${API_URL}/api/users`, {
-                headers: { 'Authorization': `Bearer ${token}` }
+                headers: { 'Authorization': `Bearer ${token}` },
+                credentials: 'include'
             });
             const json = await res.json();
 
@@ -58,7 +64,8 @@ export default function UsersPage() {
                 const token = localStorage.getItem('token');
                 const res = await fetch(`${API_URL}/api/users/${id}`, {
                     method: 'DELETE',
-                    headers: { 'Authorization': `Bearer ${token}` }
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    credentials: 'include'
                 });
                 const json = await res.json();
 
@@ -77,10 +84,12 @@ export default function UsersPage() {
         const data = new FormData();
         data.append('name', formData.name);
         data.append('email', formData.email);
+        data.append('username', formData.username);
         data.append('role', formData.role);
         data.append('isActive', formData.isActive);
 
         if (formData.password) data.append('password', formData.password);
+        if (formData.currentPassword) data.append('currentPassword', formData.currentPassword);
         if (formData.imageFile) data.append('image', formData.imageFile);
 
         try {
@@ -97,6 +106,7 @@ export default function UsersPage() {
             const res = await fetch(url, {
                 method: method,
                 headers: { 'Authorization': `Bearer ${token}` },
+                credentials: 'include',
                 body: data
             });
 
@@ -105,8 +115,15 @@ export default function UsersPage() {
                 throw new Error(json.message || "Gagal menyimpan");
             }
 
-            fetchUsers();
             setIsModalOpen(false);
+            if (editingUser?.id === currentUser?.id) {
+                await logout({ remote: false });
+                sessionStorage.setItem('auth_notice', 'Data akun berhasil diubah. Silakan login kembali memakai email atau username terbaru.');
+                router.replace('/login');
+                return;
+            }
+            await fetchUsers();
+            showAlert.success('Berhasil', editingUser ? 'Data pengguna diperbarui.' : 'Pengguna baru dibuat.');
         } catch (error) {
             showAlert.error('Gagal menyimpan pegawai', error.message);
         }
@@ -114,7 +131,8 @@ export default function UsersPage() {
 
     const filteredUsers = users.filter(u =>
         u.name.toLowerCase().includes(search.toLowerCase()) ||
-        u.email.toLowerCase().includes(search.toLowerCase())
+        u.email.toLowerCase().includes(search.toLowerCase()) ||
+        String(u.username || '').toLowerCase().includes(search.toLowerCase())
     );
 
     const getImageUrl = (path) => path ? (path.startsWith('http') ? path : `${API_URL}${path}`) : null;
@@ -186,6 +204,9 @@ export default function UsersPage() {
 
                             <div className="flex items-center gap-1 text-gray-400 text-xs">
                                 <Mail size={12} /> {user.email}
+                            </div>
+                            <div className="flex items-center gap-1 text-gray-400 text-xs mt-1">
+                                <AtSign size={12} /> {user.username || 'belum diatur'}
                             </div>
                         </div>
 

@@ -1,13 +1,15 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { X, UploadCloud, Save, ImageIcon, ShieldCheck, Mail, Lock } from 'lucide-react';
+import { X, UploadCloud, Save, Mail, Lock, AtSign } from 'lucide-react';
 
 export default function UserModal({ isOpen, onClose, onSave, initialData }) {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
+    username: '',
     password: '',
+    currentPassword: '',
     role: 'CASHIER',
     isActive: true,
     imageFile: null
@@ -23,7 +25,9 @@ export default function UserModal({ isOpen, onClose, onSave, initialData }) {
         setFormData({
           name: initialData.name,
           email: initialData.email,
+          username: initialData.username || '',
           password: '',
+          currentPassword: '',
           role: initialData.role,
           isActive: initialData.isActive,
           imageFile: null
@@ -33,7 +37,9 @@ export default function UserModal({ isOpen, onClose, onSave, initialData }) {
         setFormData({
           name: '',
           email: '',
+          username: '',
           password: '',
+          currentPassword: '',
           role: 'CASHIER',
           isActive: true,
           imageFile: null
@@ -55,6 +61,11 @@ export default function UserModal({ isOpen, onClose, onSave, initialData }) {
     e.preventDefault();
     onSave(formData);
   };
+
+  const ownerIdentityChanged = Boolean(initialData?.role === 'OWNER' && (
+    formData.email.trim().toLowerCase() !== String(initialData.email || '').trim().toLowerCase() ||
+    formData.username.trim().toLowerCase() !== String(initialData.username || '').trim().toLowerCase()
+  ));
 
   if (!isOpen) return null;
 
@@ -128,7 +139,7 @@ export default function UserModal({ isOpen, onClose, onSave, initialData }) {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Email (Username)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
                   <div className="relative">
                     <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
                     <input
@@ -136,11 +147,30 @@ export default function UserModal({ isOpen, onClose, onSave, initialData }) {
                       type="email"
                       value={formData.email}
                       onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                      className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-500 disabled:bg-gray-100"
+                      className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-500"
                       placeholder="email@toko.com"
-                      disabled={!!initialData}
                     />
                   </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
+                  <div className="relative">
+                    <AtSign className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                    <input
+                      required
+                      type="text"
+                      value={formData.username}
+                      onChange={(e) => setFormData({ ...formData, username: e.target.value.toLowerCase() })}
+                      pattern="[a-z0-9][a-z0-9._-]{2,49}"
+                      title="3-50 karakter: huruf kecil, angka, titik, garis bawah, atau tanda hubung"
+                      autoCapitalize="none"
+                      autoComplete="username"
+                      className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-500"
+                      placeholder="contoh: boss.toko"
+                    />
+                  </div>
+                  <p className="mt-1 text-xs text-gray-400">Bisa dipakai untuk login di website dan Android.</p>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
@@ -173,6 +203,25 @@ export default function UserModal({ isOpen, onClose, onSave, initialData }) {
                     </div>
                   </div>
                 </div>
+
+                {ownerIdentityChanged && (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                    <label className="block text-sm font-medium text-amber-900 mb-1">Password Owner saat ini</label>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-amber-500" size={16} />
+                      <input
+                        required
+                        type="password"
+                        value={formData.currentPassword}
+                        onChange={(e) => setFormData({ ...formData, currentPassword: e.target.value })}
+                        className="w-full pl-9 pr-4 py-2 border border-amber-200 rounded-lg focus:outline-none focus:border-amber-500 bg-white"
+                        placeholder="Konfirmasi tanpa OTP"
+                        autoComplete="current-password"
+                      />
+                    </div>
+                    <p className="mt-1 text-xs text-amber-700">Setelah email atau username berubah, semua perangkat perlu login ulang.</p>
+                  </div>
+                )}
               </div>
             </div>
           </div>

@@ -13,7 +13,7 @@ export default function LoginPage() {
     const router = useRouter();
     const [isLoading, setIsLoading] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
-    const [email, setEmail] = useState('');
+    const [identifier, setIdentifier] = useState('');
     const [password, setPassword] = useState('');
 
     const login = useStore(state => state.login);
@@ -31,7 +31,7 @@ export default function LoginPage() {
         setIsLoading(true);
 
         try {
-            const result = await login(email, password);
+            const result = await login(identifier, password);
 
             if (result.success) {
                 showAlert.success("Berhasil", "Login berhasil.");
@@ -60,14 +60,16 @@ export default function LoginPage() {
 
             <form className="space-y-6 mt-6" onSubmit={handleLoginSubmit}>
                 <div className="group relative transition-all">
-                    <div className={`flex items-center gap-3 px-4 py-3.5 rounded-2xl border-2 transition-all ${email ? 'border-blue-500 bg-blue-50/10' : 'border-gray-100 bg-white group-hover:border-gray-300'}`}>
+                    <div className={`flex items-center gap-3 px-4 py-3.5 rounded-2xl border-2 transition-all ${identifier ? 'border-blue-500 bg-blue-50/10' : 'border-gray-100 bg-white group-hover:border-gray-300'}`}>
                         <Mail className="w-5 h-5 text-gray-400" />
                         <input
-                            type="email"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
+                            type="text"
+                            value={identifier}
+                            onChange={(e) => setIdentifier(e.target.value)}
+                            autoCapitalize="none"
+                            autoComplete="username"
                             className="flex-1 bg-transparent outline-none text-gray-800 font-medium placeholder:text-gray-300"
-                            placeholder="Email Address"
+                            placeholder="Email atau username"
                             required
                         />
                     </div>

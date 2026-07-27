@@ -16,7 +16,7 @@ export const useStore = create(
         return token ? { Authorization: `Bearer ${token}` } : {};
       },
 
-      login: async (email, password) => {
+      login: async (identifier, password) => {
         try {
           // Fix URL parsing to avoid double /api/api
           const baseUrl = API_URL.endsWith('/api') ? API_URL.replace(/\/api$/, '') : API_URL;
@@ -24,7 +24,13 @@ export const useStore = create(
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
-            body: JSON.stringify({ email, password, clientType: 'WEB', deviceName: 'Web POS' }),
+            body: JSON.stringify({
+              identifier,
+              email: identifier,
+              password,
+              clientType: 'WEB',
+              deviceName: 'Web POS'
+            }),
           });
           const data = await res.json();
 

@@ -2,11 +2,13 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const bcrypt = require('bcryptjs');
 const { validatePassword } = require('../config/auth');
+const { normalizeUsername, validateUsername } = require('../services/usernameService');
 
 const publicUserSelect = {
   id: true,
   name: true,
   email: true,
+  username: true,
   role: true,
   imageUrl: true,
   isActive: true,
@@ -37,7 +39,7 @@ exports.getAllUsers = async (req, res) => {
 exports.updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, email, role, password, isActive } = req.body;
+    const { name, email, username, role, password, currentPassword, isActive } = req.body;
     const userId = Number(id);
 
     if (!Number.isInteger(userId)) {
@@ -52,8 +54,32 @@ exports.updateUser = async (req, res) => {
 
     const dataToUpdate = {};
 
-    if (name) dataToUpdate.name = name;
+    if (name) dataToUpdate.name = String(name).trim();
     if (email) dataToUpdate.email = String(email).trim().toLowerCase();
+    if (username !== undefined) {
+      const normalizedUsername = normalizeUsername(username);
+      const usernameError = validateUsername(normalizedUsername);
+      if (usernameError) return res.status(400).json({ success: false, message: usernameError });
+      dataToUpdate.username = normalizedUsername;
+    }
+
+    const ownerIdentityChanged = targetUser.role === 'OWNER' && (
+      (dataToUpdate.email && dataToUpdate.email !== targetUser.email) ||
+      (dataToUpdate.username && dataToUpdate.username !== targetUser.username)
+    );
+    if (ownerIdentityChanged) {
+      if (!currentPassword) {
+        return res.status(400).json({
+          success: false,
+          message: 'Password Owner saat ini wajib diisi untuk mengganti email atau username.',
+        });
+      }
+      const requester = await prisma.user.findUnique({ where: { id: req.user.id } });
+      const passwordMatches = requester && await bcrypt.compare(String(currentPassword), requester.password);
+      if (!passwordMatches) {
+        return res.status(401).json({ success: false, message: 'Password Owner saat ini salah.' });
+      }
+    }
     if (role) {
       const normalizedRole = String(role).toUpperCase();
       if (!['OWNER', 'ADMIN', 'CASHIER'].includes(normalizedRole)) {
@@ -101,7 +127,14 @@ exports.updateUser = async (req, res) => {
 
     res.json({ success: true, message: "Data pengguna diperbarui", data: user });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    if (error?.code === 'P2002') {
+      const field = Array.isArray(error.meta?.target) ? error.meta.target.join(',') : String(error.meta?.target || '');
+      return res.status(409).json({
+        success: false,
+        message: field.includes('username') ? 'Username sudah digunakan.' : 'Email sudah digunakan.',
+      });
+    }
+    res.status(500).json({ success: false, message: 'Data pengguna belum dapat diperbarui.' });
   }
 };
 
