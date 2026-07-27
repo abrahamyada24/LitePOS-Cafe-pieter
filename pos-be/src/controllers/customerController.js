@@ -4,6 +4,7 @@ const prisma = new PrismaClient();
 // Helper: Generate ID Member Otomatis (Format: MBR-0001)
 const generateMemberId = async () => {
   const lastCustomer = await prisma.customer.findFirst({
+    where: { memberId: { startsWith: 'MBR-' } },
     orderBy: { id: 'desc' }
   });
 
@@ -65,6 +66,11 @@ exports.getAllCustomers = async (req, res) => {
 exports.createCustomer = async (req, res) => {
   try {
     const { name, phone, email, displayType } = req.body;
+    const validName = name && String(name).trim();
+
+    if (!validName) {
+      return res.status(400).json({ success: false, message: "Nama pelanggan wajib diisi." });
+    }
 
     /**
      * LOGIKA PENYIMPANAN LOKAL:
@@ -73,8 +79,12 @@ exports.createCustomer = async (req, res) => {
     const imageUrl = req.file ? `/uploads/${req.file.filename}` : null;
     const memberId = await generateMemberId();
 
-    const validPhone = phone && phone.trim() !== "" ? phone : null;
-    const validEmail = email && email.trim() !== "" ? email : null;
+    const validPhone = phone && String(phone).trim() !== "" ? String(phone).trim() : null;
+    const validEmail = email && String(email).trim() !== "" ? String(email).trim() : null;
+
+    if (validPhone && validPhone.length > 20) {
+      return res.status(400).json({ success: false, message: "Nomor HP maksimal 20 karakter." });
+    }
 
     if (validPhone) {
       const exist = await prisma.customer.findUnique({ where: { phone: validPhone } });
@@ -84,7 +94,7 @@ exports.createCustomer = async (req, res) => {
     const customer = await prisma.customer.create({
       data: {
         memberId,
-        name,
+        name: validName,
         phone: validPhone,
         email: validEmail,
         imageUrl,

@@ -253,14 +253,26 @@ exports.pushLocalData = async (req, res) => {
     if (customers && Array.isArray(customers)) {
         for (const cust of customers) {
             try {
-                let serverCust = await prisma.customer.findUnique({ where: { androidId: cust.id }});
+                const androidId = parseInt(cust.id);
+                const requestedServerId = parseInt(cust.serverId);
+                const normalizedPhone = nonEmptyString(cust.phone);
+                const normalizedName = nonEmptyString(cust.name) || 'Pelanggan';
+                let serverCust = !isNaN(requestedServerId)
+                    ? await prisma.customer.findUnique({ where: { id: requestedServerId } })
+                    : null;
+                if (!serverCust && !isNaN(androidId)) {
+                    serverCust = await prisma.customer.findUnique({ where: { androidId } });
+                }
+                if (!serverCust && normalizedPhone) {
+                    serverCust = await prisma.customer.findUnique({ where: { phone: normalizedPhone } });
+                }
                 if (!serverCust) {
                     serverCust = await prisma.customer.create({
                         data: {
-                            androidId: cust.id,
+                            androidId: isNaN(androidId) ? null : androidId,
                             memberId: cust.memberId || `CUST-A${cust.id}-${Date.now()}`,
-                            name: cust.name,
-                            phone: cust.phone || null,
+                            name: normalizedName,
+                            phone: normalizedPhone,
                             loyaltyDiscount: Number(cust.loyaltyDiscount || 0),
                             points: parseInt(cust.points || 0)
                         }
@@ -270,9 +282,10 @@ exports.pushLocalData = async (req, res) => {
                     await prisma.customer.update({
                         where: { id: serverCust.id },
                         data: {
+                            name: normalizedName,
                             points: parseInt(cust.points || 0),
                             loyaltyDiscount: Number(cust.loyaltyDiscount || 0),
-                            phone: cust.phone || serverCust.phone
+                            phone: normalizedPhone || serverCust.phone
                         }
                     });
                 }
@@ -497,10 +510,31 @@ exports.pushLocalData = async (req, res) => {
 
           // Resolve customerId dari androidId ke serverId
           let resolvedCustomerId = null;
-          if (tx.customerId) {
+          if (tx.customerServerId) {
+              const serverCustomerId = parseInt(tx.customerServerId);
+              if (!isNaN(serverCustomerId)) {
+                  const customer = await prisma.customer.findUnique({ where: { id: serverCustomerId } });
+                  resolvedCustomerId = customer ? customer.id : null;
+              }
+          }
+          if (!resolvedCustomerId && tx.customerId) {
               const parsedCustId = parseInt(tx.customerId);
               if (!isNaN(parsedCustId)) {
-                  const customer = await prisma.customer.findUnique({ where: { androidId: parsedCustId }});
+                  const mappedCustomer = customerIdMap.find(item => Number(item.androidId) === parsedCustId);
+                  if (mappedCustomer) {
+                      resolvedCustomerId = mappedCustomer.serverId;
+                  } else {
+                      const customer = await prisma.customer.findUnique({ where: { androidId: parsedCustId }});
+                      resolvedCustomerId = customer ? customer.id : null;
+                  }
+              }
+          }
+          // Kompatibilitas dengan versi Android lama yang mengirim serverId
+          // melalui customerId tanpa field customerServerId.
+          if (!resolvedCustomerId && tx.customerId) {
+              const legacyServerId = parseInt(tx.customerId);
+              if (!isNaN(legacyServerId)) {
+                  const customer = await prisma.customer.findUnique({ where: { id: legacyServerId } });
                   resolvedCustomerId = customer ? customer.id : null;
               }
           }

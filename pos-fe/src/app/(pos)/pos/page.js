@@ -516,6 +516,36 @@ export default function POSPage() {
       setMemberSearch('');
   }
 
+  const handleCreateMember = async (formData) => {
+      try {
+          const token = localStorage.getItem('token');
+          const body = new FormData();
+          body.append('name', formData.name);
+          body.append('phone', formData.phone || '');
+          body.append('email', formData.email || '');
+          body.append('displayType', 'normal');
+
+          const response = await fetch(`${API_URL}/api/customers`, {
+              method: 'POST',
+              headers: token ? { Authorization: `Bearer ${token}` } : {},
+              credentials: 'include',
+              body,
+          });
+          const data = await response.json();
+          if (!response.ok || !data.success) {
+              throw new Error(data.message || data.error || 'Pelanggan gagal disimpan.');
+          }
+
+          setMembers(current => [data.data, ...current.filter(member => member.id !== data.data.id)]);
+          handleMemberSelect(data.data);
+          showAlert.success('Pelanggan ditambahkan', `${data.data.name} langsung dipilih untuk transaksi ini.`);
+          return data.data;
+      } catch (error) {
+          showAlert.error('Gagal menambah pelanggan', error.message || 'Coba lagi.');
+          return null;
+      }
+  }
+
   return (
     <div className="flex flex-col lg:flex-row h-screen bg-gray-50 overflow-hidden font-sans text-gray-800">
       
@@ -605,6 +635,7 @@ export default function POSPage() {
          filteredMembers={filteredMembers}
          handleMemberSelect={handleMemberSelect}
          getImageUrl={getImageUrl}
+         onCreateMember={handleCreateMember}
       />
 
       <PaymentModal 
