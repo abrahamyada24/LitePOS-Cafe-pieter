@@ -6,7 +6,7 @@ import { showAlert } from '@/utils/swal';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
-export default function SavedTransactionModal({ isOpen, onClose, onResume, formatNumber }) {
+export default function SavedTransactionModal({ isOpen, onClose, onResume, onChanged, formatNumber }) {
     const [savedTransactions, setSavedTransactions] = useState([]);
     const [loading, setLoading] = useState(true);
 
@@ -20,7 +20,14 @@ export default function SavedTransactionModal({ isOpen, onClose, onResume, forma
             });
             const data = await res.json();
             if (data.success) {
-                setSavedTransactions(data.data);
+                setSavedTransactions((data.data || []).filter(transaction => {
+                    try {
+                        const parsed = JSON.parse(transaction.cartData);
+                        return Array.isArray(parsed) || (parsed && parsed.source !== 'TABLE_QR');
+                    } catch {
+                        return false;
+                    }
+                }));
             }
         } catch (error) {
             console.error("Failed to load saved transactions:", error);
@@ -54,6 +61,7 @@ export default function SavedTransactionModal({ isOpen, onClose, onResume, forma
             const data = await res.json();
             if (!res.ok || !data.success) throw new Error(data.message || data.error);
             await loadSavedTransactions();
+            onChanged?.();
             showAlert.success('Transaksi dihapus', 'Pesanan tersimpan berhasil dibatalkan.');
         } catch (error) {
             showAlert.error('Gagal menghapus transaksi', error.message || 'Coba lagi.');
@@ -145,7 +153,10 @@ export default function SavedTransactionModal({ isOpen, onClose, onResume, forma
                                                     <Trash2 size={20} />
                                                 </button>
                                                 <button 
-                                                    onClick={() => onResume(tx)}
+                                                    onClick={(event) => {
+                                                        event.stopPropagation();
+                                                        onResume(tx);
+                                                    }}
                                                     className="p-2.5 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-xl transition-all flex items-center gap-2 font-bold"
                                                 >
                                                     <Play size={18} />

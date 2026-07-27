@@ -432,8 +432,8 @@ export default function SettingsPage() {
                         <div className="flex items-center gap-4">
                             <div className="p-3 bg-blue-100 text-blue-600 rounded-xl"><Smartphone size={24} /></div>
                             <div>
-                                <p className="font-bold text-gray-800">QRIS (Midtrans)</p>
-                                <p className="text-xs text-gray-500">Scan barcode otomatis</p>
+                                <p className="font-bold text-gray-800">Midtrans (Payment Gateway)</p>
+                                <p className="text-xs text-gray-500">Aktifkan hanya setelah akun dan API key Midtrans siap</p>
                             </div>
                         </div>
                         <label className="relative inline-flex items-center cursor-pointer">

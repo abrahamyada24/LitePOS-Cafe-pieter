@@ -6,7 +6,7 @@ export default function PaymentModal({
     isOpen, onClose, paymentStep, setPaymentStep, paymentMethod, setPaymentMethod,
     cashGiven, setCashGiven, handleCashInput, isCashSufficient, change, deficit,
     handleProcessTransaction, resetTransaction, isProcessing, hasReceipt, onOpenReceipt,
-    grandTotal, formatNumber
+    grandTotal, formatNumber, midtransEnabled = false
 }) {
 
     const DENOMINATIONS = [1000, 2000, 5000, 10000, 20000, 50000, 100000];
@@ -74,23 +74,25 @@ export default function PaymentModal({
                                         <CreditCard size={24} />
                                     </div>
                                     <div className="text-left">
-                                        <span className="block font-bold text-gray-800">Transfer Bank</span>
-                                        <span className="text-[10px] text-gray-400">Bayar via transfer bank / e-wallet</span>
+                                        <span className="block font-bold text-gray-800">Transfer Bank (Manual)</span>
+                                        <span className="text-[10px] text-gray-400">Kasir konfirmasi setelah dana diterima</span>
                                     </div>
                                 </button>
 
-                                <button
-                                    onClick={() => handleProcessTransaction('QRIS')}
-                                    className="w-full p-4 border border-gray-200 rounded-2xl flex items-center gap-4 hover:border-blue-500 hover:bg-blue-50 transition-all group"
-                                >
-                                    <div className="p-3 bg-gray-100 text-gray-500 rounded-xl group-hover:bg-blue-100 group-hover:text-blue-600">
-                                        <QrCode size={24} />
-                                    </div>
-                                    <div className="text-left">
-                                        <span className="block font-bold text-gray-800">QRIS (Midtrans)</span>
-                                        <span className="text-[10px] text-gray-400">Scan otomatis via Midtrans</span>
-                                    </div>
-                                </button>
+                                {midtransEnabled && (
+                                    <button
+                                        onClick={() => handleProcessTransaction('QRIS')}
+                                        className="w-full p-4 border border-gray-200 rounded-2xl flex items-center gap-4 hover:border-blue-500 hover:bg-blue-50 transition-all group"
+                                    >
+                                        <div className="p-3 bg-gray-100 text-gray-500 rounded-xl group-hover:bg-blue-100 group-hover:text-blue-600">
+                                            <QrCode size={24} />
+                                        </div>
+                                        <div className="text-left">
+                                            <span className="block font-bold text-gray-800">QRIS (Midtrans)</span>
+                                            <span className="text-[10px] text-gray-400">Scan otomatis via payment gateway</span>
+                                        </div>
+                                    </button>
+                                )}
 
                                 <button
                                     onClick={() => handleProcessTransaction('QRIS_MANUAL')}
@@ -100,8 +102,8 @@ export default function PaymentModal({
                                         <QrCode size={24} />
                                     </div>
                                     <div className="text-left">
-                                        <span className="block font-bold text-gray-800">QRIS (Manual)</span>
-                                        <span className="text-[10px] text-gray-400">Pencatatan QRIS statis toko</span>
+                                        <span className="block font-bold text-gray-800">QRIS Manual</span>
+                                        <span className="text-[10px] text-gray-400">Kasir konfirmasi pembayaran QRIS statis</span>
                                     </div>
                                 </button>
                             </div>

@@ -2,6 +2,7 @@ const { PrismaClient } = require('@prisma/client');
 const midtransClient = require('midtrans-client');
 const { getProductPrice } = require('../utils/productDiscount');
 const { reserveQueue } = require('../utils/orderQueue');
+const { normalizePaymentType, resolvePaymentMethod } = require('../services/paymentMethodService');
 const prisma = new PrismaClient();
 
 // Inisialisasi Midtrans Snap
@@ -55,8 +56,17 @@ exports.createTransaction = async (req, res) => {
             return res.status(400).json({ success: false, message: "Keranjang kosong!" });
         }
 
+        const requestedPaymentType = normalizePaymentType(payment?.type);
+        if (!requestedPaymentType) {
+            return res.status(400).json({ success: false, message: "Metode pembayaran wajib dipilih." });
+        }
+
         const result = await prisma.$transaction(async (tx) => {
             const setting = await tx.storeSetting.findFirst();
+            const { paymentType, isGatewayPayment, isInstantPayment } = resolvePaymentMethod(
+                requestedPaymentType,
+                { midtransEnabled: setting?.enableQris === true }
+            );
             const shiftEnabled = setting?.enableShift !== false;
             const activeShift = shiftEnabled
                 ? await tx.shift.findFirst({
@@ -210,11 +220,10 @@ exports.createTransaction = async (req, res) => {
                 });
             }
 
-            const isInstantPayment = payment.type === 'CASH' || payment.type === 'QRIS_MANUAL';
             const initialStatus = isInstantPayment ? 'PAID' : 'PENDING';
             const paymentStatus = isInstantPayment ? 'SETTLEMENT' : 'PENDING';
 
-            // HANYA KURANGI STOCK JIKA PAYMENT = CASH ATAU QRIS_MANUAL
+            // Pembayaran manual langsung dikonfirmasi kasir dan mengurangi stok.
             if (isInstantPayment) {
                 for (const { product, qty } of stockDeductions.values()) {
                     // Skip stock deduction for unlimited stock products
@@ -231,7 +240,7 @@ exports.createTransaction = async (req, res) => {
                             type: 'OUT',
                             qty,
                             source: 'SALE',
-                            description: `Penjualan ${payment.type} - ${invoiceNumber}`
+                            description: `Penjualan ${paymentType} - ${invoiceNumber}`
                         }
                     });
                 }
@@ -260,7 +269,7 @@ exports.createTransaction = async (req, res) => {
                     items: { create: transactionItemsData },
                     payments: {
                         create: {
-                            paymentType: payment.type,
+                            paymentType,
                             amount: grandTotal,
                             paymentStatus: paymentStatus
                         }
@@ -352,8 +361,8 @@ exports.createTransaction = async (req, res) => {
             let midtransToken = null;
             let midtransUrl = null;
 
-            // Buat transaksi Midtrans jika bukan CASH / QRIS_MANUAL
-            if (!isInstantPayment) {
+            // Hanya QRIS otomatis yang boleh membuat transaksi Midtrans.
+            if (isGatewayPayment) {
                 const parameter = {
                     transaction_details: {
                         order_id: invoiceNumber,

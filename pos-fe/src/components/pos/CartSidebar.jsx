@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from 'react';
-import { ArrowLeft, LogOut, X, UserPlus, ShoppingCart, Utensils, Minus, Plus, User, ChevronRight, Truck, Tag, Save, ShoppingBag, MessageSquare } from 'lucide-react';
+import { ArrowLeft, LogOut, X, UserPlus, ShoppingCart, Utensils, Minus, Plus, User, ChevronRight, Truck, Tag, Save, ShoppingBag, MessageSquare, Loader2 } from 'lucide-react';
 import { showAlert } from '@/utils/swal';
 
 export default function CartSidebar({ 
@@ -38,6 +38,7 @@ export default function CartSidebar({
     onOpenDiscountModal,
     onRemoveDiscount,
     onSaveTransaction,
+    isSavingTransaction,
     savedTransactionCount,
     onOpenSavedTransactions,
     onUpdateItemNotes
@@ -326,12 +327,13 @@ export default function CartSidebar({
             <div className="flex gap-2">
                 {/* Save Transaction Button */}
                 <button 
-                    disabled={cart.length === 0}
+                    disabled={cart.length === 0 || isSavingTransaction || Boolean(pendingOrderContext)}
                     onClick={onSaveTransaction}
                     className="py-4 px-4 bg-white border border-gray-200 text-gray-600 rounded-xl font-bold text-sm hover:bg-gray-50 hover:border-gray-300 disabled:bg-gray-100 disabled:text-gray-300 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-1.5 active:scale-95"
                     title="Simpan Pesanan"
                 >
-                    <Save size={16} /> Simpan
+                    {isSavingTransaction ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                    {isSavingTransaction ? 'Menyimpan' : 'Simpan'}
                 </button>
                 
                 {/* Payment Button */}

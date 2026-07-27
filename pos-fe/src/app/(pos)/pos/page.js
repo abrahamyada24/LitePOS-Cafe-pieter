@@ -11,6 +11,7 @@ import CartSidebar from '@/components/pos/CartSidebar';
 import MemberModal from '@/components/pos/MemberModal';
 import PaymentModal from '@/components/pos/PaymentModal';
 import ReceiptPreviewModal from '@/components/pos/ReceiptPreviewModal';
+import SavedTransactionModal from '@/components/pos/SavedTransactionModal';
 import TableModal from '@/components/pos/TableModal';
 import ShiftGuardModal from '@/components/pos/ShiftGuardModal';
 
@@ -62,6 +63,10 @@ export default function POSPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [completedTransaction, setCompletedTransaction] = useState(null);
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
+  const [isSavedTransactionModalOpen, setIsSavedTransactionModalOpen] = useState(false);
+  const [savedTransactionCount, setSavedTransactionCount] = useState(0);
+  const [isSavingTransaction, setIsSavingTransaction] = useState(false);
+  const [activeSavedTransactionId, setActiveSavedTransactionId] = useState(null);
 
   // Table & Order Type States
   const [orderType, setOrderType] = useState('TAKE_AWAY');
@@ -72,6 +77,29 @@ export default function POSPage() {
   const [takeawayOption, setTakeawayOption] = useState('');
   const [taxRate, setTaxRate] = useState(0);
   const tableOrderRestoreStarted = useRef(false);
+
+  const refreshSavedTransactionCount = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_URL}/api/saved-transactions`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) return;
+
+      const posSavedTransactions = (data.data || []).filter(transaction => {
+        try {
+          const parsed = JSON.parse(transaction.cartData);
+          return Array.isArray(parsed) || (parsed && parsed.source !== 'TABLE_QR');
+        } catch {
+          return false;
+        }
+      });
+      setSavedTransactionCount(posSavedTransactions.length);
+    } catch (error) {
+      console.error('Failed to count saved transactions', error);
+    }
+  };
 
   // --- 1. FETCH DATA ---
   useEffect(() => {
@@ -150,17 +178,24 @@ export default function POSPage() {
     };
 
     fetchData();
+    refreshSavedTransactionCount();
 
-    // Load Midtrans
+  }, [authenticatedUser]);
+
+  useEffect(() => {
+    if (!settingsLoaded || storeSettings?.enableQris !== true || !MIDTRANS_CLIENT_KEY) {
+      return undefined;
+    }
+
     const script = document.createElement('script');
     script.src = 'https://app.sandbox.midtrans.com/snap/snap.js';
-    script.setAttribute('data-client-key', MIDTRANS_CLIENT_KEY); 
+    script.setAttribute('data-client-key', MIDTRANS_CLIENT_KEY);
     document.body.appendChild(script);
 
     return () => {
-        if(document.body.contains(script)) document.body.removeChild(script);
-    }
-  }, [authenticatedUser]);
+      if (document.body.contains(script)) document.body.removeChild(script);
+    };
+  }, [settingsLoaded, storeSettings?.enableQris]);
 
   useEffect(() => {
     if (!settingsLoaded) return undefined;
@@ -415,6 +450,19 @@ export default function POSPage() {
           }
           const receiptTransaction = buildReceiptTransaction(data.data, type, payload.customerName);
 
+          if (activeSavedTransactionId) {
+              try {
+                  await fetch(`${API_URL}/api/saved-transactions/${activeSavedTransactionId}?action=accepted`, {
+                      method: 'DELETE',
+                      headers: { Authorization: token ? `Bearer ${token}` : '' }
+                  });
+                  setActiveSavedTransactionId(null);
+                  refreshSavedTransactionCount();
+              } catch (cleanupError) {
+                  console.error('Failed to remove completed saved transaction', cleanupError);
+              }
+          }
+
           if (pendingOrderContext?.orderCode) {
               sessionStorage.removeItem('table-order-to-process');
               sessionStorage.removeItem('table-order-accepted-id');
@@ -489,6 +537,94 @@ export default function POSPage() {
     setIsReceiptModalOpen(false);
     setIsPaymentModalOpen(true);
   }
+
+  const handleSaveTransaction = async () => {
+    if (cart.length === 0 || isSavingTransaction || pendingOrderContext) return;
+
+    setIsSavingTransaction(true);
+    try {
+      const token = localStorage.getItem('token');
+      const customerName = selectedMember?.name || guestCustomerName.trim() || 'Umum';
+      const timeLabel = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+      const cartData = {
+        source: 'POS_PENDING',
+        items: cart,
+        selectedMember: selectedMember || null,
+        guestCustomerName: guestCustomerName.trim() || '',
+        orderType,
+        tableNumber: selectedTable?.number || null,
+        preOrderDate: preOrderDate || null,
+        takeawayOption: takeawayOption || null,
+        subTotal,
+        taxAmount,
+        grandTotal,
+      };
+
+      const response = await fetch(`${API_URL}/api/saved-transactions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({
+          name: `Pending ${customerName} - ${timeLabel}`,
+          cartData,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.message || data.error || 'Pesanan belum tersimpan.');
+
+      if (activeSavedTransactionId) {
+        try {
+          await fetch(`${API_URL}/api/saved-transactions/${activeSavedTransactionId}?action=accepted`, {
+            method: 'DELETE',
+            headers: { Authorization: token ? `Bearer ${token}` : '' },
+          });
+        } catch (cleanupError) {
+          console.error('Failed to replace previous saved transaction', cleanupError);
+        }
+      }
+
+      setCart([]);
+      setSelectedMember(null);
+      setGuestCustomerName('');
+      setSelectedTable(null);
+      setOrderType('TAKE_AWAY');
+      setPreOrderDate('');
+      setTakeawayOption('');
+      setActiveSavedTransactionId(null);
+      setMobileView('menu');
+      await refreshSavedTransactionCount();
+      showAlert.success('Penjualan pending tersimpan', 'Pesanan dapat dilanjutkan dari ikon transaksi tersimpan.');
+    } catch (error) {
+      showAlert.error('Gagal menyimpan penjualan', error.message || 'Coba lagi.');
+    } finally {
+      setIsSavingTransaction(false);
+    }
+  };
+
+  const handleResumeSavedTransaction = (transaction) => {
+    try {
+      const parsed = JSON.parse(transaction.cartData);
+      const payload = Array.isArray(parsed) ? { items: parsed } : parsed;
+      const restoredItems = Array.isArray(payload.items) ? payload.items : [];
+      if (restoredItems.length === 0) throw new Error('Isi pesanan kosong.');
+
+      setCart(restoredItems);
+      setSelectedMember(payload.selectedMember || null);
+      setGuestCustomerName(payload.guestCustomerName || '');
+      setOrderType(payload.orderType || 'TAKE_AWAY');
+      setSelectedTable(payload.tableNumber ? { number: payload.tableNumber } : null);
+      setPreOrderDate(payload.preOrderDate || '');
+      setTakeawayOption(payload.takeawayOption || '');
+      setActiveSavedTransactionId(transaction.id);
+      setIsSavedTransactionModalOpen(false);
+      if (window.innerWidth < 1024) setMobileView('cart');
+      showAlert.success('Penjualan dilanjutkan', transaction.name);
+    } catch (error) {
+      showAlert.error('Gagal membuka penjualan', error.message || 'Data pesanan tidak valid.');
+    }
+  };
 
   const resetTransaction = () => {
       setIsPaymentModalOpen(false);
@@ -605,6 +741,10 @@ export default function POSPage() {
         setTakeawayOption={setTakeawayOption}
         taxRate={taxRate}
         pendingOrderContext={pendingOrderContext}
+        onSaveTransaction={handleSaveTransaction}
+        isSavingTransaction={isSavingTransaction}
+        savedTransactionCount={savedTransactionCount}
+        onOpenSavedTransactions={() => setIsSavedTransactionModalOpen(true)}
         // Logout sekarang dihandle Header, tapi jika butuh di mobile menu:
         handleLogout={async () => {
             const confirmed = await showAlert.confirm('Keluar Kasir?', 'Sesi kasir akan diakhiri.', 'Ya, Keluar');
@@ -657,6 +797,15 @@ export default function POSPage() {
          hasReceipt={Boolean(completedTransaction)}
          onOpenReceipt={() => setIsReceiptModalOpen(true)}
          grandTotal={grandTotal}
+         formatNumber={formatNumber}
+         midtransEnabled={storeSettings?.enableQris === true && Boolean(MIDTRANS_CLIENT_KEY)}
+      />
+
+      <SavedTransactionModal
+         isOpen={isSavedTransactionModalOpen}
+         onClose={() => setIsSavedTransactionModalOpen(false)}
+         onResume={handleResumeSavedTransaction}
+         onChanged={refreshSavedTransactionCount}
          formatNumber={formatNumber}
       />
 

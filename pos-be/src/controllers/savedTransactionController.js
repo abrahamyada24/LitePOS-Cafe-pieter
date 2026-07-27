@@ -24,7 +24,7 @@ exports.getSavedTransactions = async (req, res) => {
 // 2. SAVE TRANSACTION (Cart as Pending)
 exports.saveTransaction = async (req, res) => {
     try {
-        const { name, cartData, userId } = req.body;
+        const { name, cartData } = req.body;
 
         if (!name || !cartData) {
             return res.status(400).json({ success: false, message: "Nama dan data keranjang wajib diisi" });
@@ -34,7 +34,7 @@ exports.saveTransaction = async (req, res) => {
             data: {
                 name,
                 cartData: typeof cartData === 'string' ? cartData : JSON.stringify(cartData),
-                userId: parseInt(userId)
+                userId: req.user.id
             }
         });
 
