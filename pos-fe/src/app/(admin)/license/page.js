@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from 'react';
-import { BadgeCheck, CalendarDays, CheckCircle2, Clock3, Copy, KeyRound, Loader2, MonitorSmartphone, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, BadgeCheck, CalendarDays, CheckCircle2, Clock3, Copy, KeyRound, Loader2, MonitorSmartphone, ShieldAlert, Trash2, X } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import { showAlert } from '@/utils/swal';
 
@@ -19,6 +19,10 @@ export default function LicensePage() {
   const [activationCode, setActivationCode] = useState('');
   const [loading, setLoading] = useState(true);
   const [activating, setActivating] = useState(false);
+  const [showResetDialog, setShowResetDialog] = useState(false);
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetPhrase, setResetPhrase] = useState('');
+  const [resetting, setResetting] = useState(false);
   const isOwner = user?.role === 'OWNER';
 
   const refresh = async () => {
@@ -48,6 +52,53 @@ export default function LicensePage() {
       showAlert.error('Aktivasi gagal', error.message);
     } finally {
       setActivating(false);
+    }
+  };
+
+  const closeResetDialog = () => {
+    if (resetting) return;
+    setShowResetDialog(false);
+    setResetPassword('');
+    setResetPhrase('');
+  };
+
+  const resetAllData = async () => {
+    if (!resetPassword || resetPhrase.trim() !== 'RESET OUTLET') {
+      return showAlert.warning('Konfirmasi belum lengkap', 'Masukkan password Owner dan ketik RESET OUTLET dengan tepat.');
+    }
+
+    const confirmed = await showAlert.confirmDanger(
+      'Konfirmasi terakhir',
+      'Semua data operasional akan dihapus permanen dari website dan seluruh Android.',
+      'Ya, Reset Semua'
+    );
+    if (!confirmed) return;
+
+    setResetting(true);
+    try {
+      const response = await fetch(`${baseUrl}/api/license/reset-data`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          password: resetPassword,
+          confirmation: resetPhrase.trim(),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.message || 'Reset data gagal.');
+
+      setShowResetDialog(false);
+      setResetPassword('');
+      setResetPhrase('');
+      showAlert.success(
+        'Data berhasil dibersihkan',
+        'Seluruh data operasional telah dihapus. Akun, lisensi, dan pengaturan toko tetap tersimpan.'
+      );
+    } catch (error) {
+      showAlert.error('Reset data gagal', error.message);
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -127,6 +178,98 @@ export default function LicensePage() {
           <p className="text-sm text-gray-500 mt-3">Hanya akun Owner yang dapat memasukkan kode aktivasi. Hubungi Owner outlet.</p>
         )}
       </div>
+
+      {isOwner && (
+        <div className="rounded-3xl border border-red-200 bg-red-50 p-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-5">
+            <div className="flex items-start gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-red-100 text-red-600 grid place-items-center shrink-0">
+                <Trash2 size={22} />
+              </div>
+              <div>
+                <h3 className="font-black text-gray-900">Reset Semua Data</h3>
+                <p className="text-sm text-gray-600 mt-1 max-w-2xl">
+                  Bersihkan seluruh data latihan di server dan Android. Akun pengguna, lisensi, sesi login, dan pengaturan toko tidak ikut dihapus.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowResetDialog(true)}
+              className="px-5 py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold flex items-center justify-center gap-2 shrink-0"
+            >
+              <Trash2 size={18} /> Reset Data
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showResetDialog && (
+        <div className="fixed inset-0 z-50 bg-gray-950/60 backdrop-blur-sm grid place-items-center p-4">
+          <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl p-6 relative">
+            <button
+              onClick={closeResetDialog}
+              disabled={resetting}
+              className="absolute right-5 top-5 p-2 rounded-xl text-gray-400 hover:bg-gray-100 disabled:opacity-50"
+              aria-label="Tutup"
+            >
+              <X size={19} />
+            </button>
+
+            <div className="w-12 h-12 rounded-2xl bg-red-100 text-red-600 grid place-items-center">
+              <AlertTriangle size={25} />
+            </div>
+            <h2 className="text-xl font-black text-gray-900 mt-4">Reset seluruh data outlet?</h2>
+            <p className="text-sm text-gray-600 mt-2 leading-6">
+              Transaksi, pembayaran, shift, pengeluaran, stok, katalog, pelanggan, supplier, paket, meja, pesanan tersimpan, dan antrean dapur akan dihapus permanen.
+            </p>
+
+            <div className="mt-5">
+              <label className="block text-xs font-black text-gray-600 mb-2">Password Owner</label>
+              <input
+                type="password"
+                value={resetPassword}
+                onChange={(event) => setResetPassword(event.target.value)}
+                disabled={resetting}
+                autoComplete="current-password"
+                placeholder="Masukkan password"
+                className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:border-red-500 disabled:bg-gray-100"
+              />
+            </div>
+
+            <div className="mt-4">
+              <label className="block text-xs font-black text-gray-600 mb-2">
+                Ketik <span className="text-red-600">RESET OUTLET</span>
+              </label>
+              <input
+                value={resetPhrase}
+                onChange={(event) => setResetPhrase(event.target.value.toUpperCase())}
+                disabled={resetting}
+                autoComplete="off"
+                placeholder="RESET OUTLET"
+                className="w-full px-4 py-3 border border-gray-200 rounded-xl font-bold tracking-wide focus:outline-none focus:border-red-500 disabled:bg-gray-100"
+              />
+            </div>
+
+            <div className="mt-6 flex flex-col-reverse sm:flex-row gap-3">
+              <button
+                onClick={closeResetDialog}
+                disabled={resetting}
+                className="flex-1 px-5 py-3 rounded-xl bg-gray-100 text-gray-700 font-bold disabled:opacity-50"
+              >
+                Batal
+              </button>
+              <button
+                onClick={resetAllData}
+                disabled={resetting || !resetPassword || resetPhrase.trim() !== 'RESET OUTLET'}
+                className="flex-1 px-5 py-3 rounded-xl bg-red-600 text-white font-bold disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {resetting ? <Loader2 className="animate-spin" size={18} /> : <Trash2 size={18} />}
+                {resetting ? 'Mereset...' : 'Lanjutkan'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

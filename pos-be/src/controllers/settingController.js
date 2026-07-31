@@ -1,4 +1,5 @@
 const { PrismaClient } = require('@prisma/client');
+const { normalizeShiftReminderSettings } = require('../services/shiftReminderService');
 const prisma = new PrismaClient();
 
 /**
@@ -75,6 +76,28 @@ exports.updateSettings = async (req, res) => {
     if (theme !== undefined) dataToUpdate.theme = theme;
     if (req.body.enablePreOrder !== undefined) dataToUpdate.enablePreOrder = req.body.enablePreOrder === 'true' || req.body.enablePreOrder === true;
     if (req.body.enableShift !== undefined) dataToUpdate.enableShift = req.body.enableShift === 'true' || req.body.enableShift === true;
+    if (req.body.enableShiftReminder !== undefined) dataToUpdate.enableShiftReminder = req.body.enableShiftReminder === 'true' || req.body.enableShiftReminder === true;
+    if (req.body.shiftDurationMinutes !== undefined) {
+      const parsed = Number(req.body.shiftDurationMinutes);
+      if (!Number.isFinite(parsed) || parsed < 30 || parsed > 2880) {
+        return res.status(400).json({ success: false, message: 'Durasi shift harus antara 30 menit dan 48 jam.' });
+      }
+      dataToUpdate.shiftDurationMinutes = Math.round(parsed);
+    }
+    if (req.body.shiftReminderMinutes !== undefined) {
+      const parsed = Number(req.body.shiftReminderMinutes);
+      if (!Number.isFinite(parsed) || parsed < 0 || parsed > 240) {
+        return res.status(400).json({ success: false, message: 'Pengingat shift harus antara 0 dan 240 menit.' });
+      }
+      dataToUpdate.shiftReminderMinutes = Math.round(parsed);
+    }
+    if (req.body.shiftDayCutoff !== undefined) {
+      const cutoff = String(req.body.shiftDayCutoff);
+      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(cutoff)) {
+        return res.status(400).json({ success: false, message: 'Jam pengingat pergantian hari tidak valid.' });
+      }
+      dataToUpdate.shiftDayCutoff = cutoff;
+    }
     if (req.body.enableDineTable !== undefined) dataToUpdate.enableDineTable = req.body.enableDineTable === 'true' || req.body.enableDineTable === true;
     if (req.body.enableTableOrder !== undefined) dataToUpdate.enableTableOrder = req.body.enableTableOrder === 'true' || req.body.enableTableOrder === true;
     if (req.body.enableKitchenQueue !== undefined) dataToUpdate.enableKitchenQueue = req.body.enableKitchenQueue === 'true' || req.body.enableKitchenQueue === true;
@@ -114,7 +137,14 @@ exports.updateSettings = async (req, res) => {
       }
     });
 
-    res.json({ success: true, message: "Pengaturan berhasil disimpan", data: updated });
+    res.json({
+      success: true,
+      message: "Pengaturan berhasil disimpan",
+      data: {
+        ...updated,
+        ...normalizeShiftReminderSettings(updated)
+      }
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

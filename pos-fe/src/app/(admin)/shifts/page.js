@@ -1,7 +1,13 @@
 "use client";
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Clock, Play, Square, Loader2, DollarSign, ShoppingCart, Power } from 'lucide-react';
 import { showAlert } from '@/utils/swal';
+import {
+    DEFAULT_SHIFT_REMINDER_SETTINGS,
+    formatShiftDateTime,
+    getOpeningExpectedCloseAt,
+    getShiftReminder,
+} from '@/utils/shiftReminder';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -14,6 +20,9 @@ export default function ShiftsPage() {
     const [closingCash, setClosingCash] = useState('');
     const [showOpenModal, setShowOpenModal] = useState(false);
     const [showCloseModal, setShowCloseModal] = useState(false);
+    const [reminderSettings, setReminderSettings] = useState(DEFAULT_SHIFT_REMINDER_SETTINGS);
+    const reminderGateRef = useRef({ key: '', nextAt: 0 });
+    const suppressNextReminderRef = useRef(false);
 
     const getToken = () => typeof window !== 'undefined' ? localStorage.getItem('token') : '';
     const getUser = () => { try { return JSON.parse(localStorage.getItem('pos-storage') || '{}')?.state?.user; } catch { return null; } };
@@ -33,6 +42,15 @@ export default function ShiftsPage() {
             if (currentData.success) {
                 setCurrentShift(currentData.data);
                 setFeatureEnabled(currentData.enabled !== false);
+                setReminderSettings(currentData.reminderSettings || DEFAULT_SHIFT_REMINDER_SETTINGS);
+                const params = new URLSearchParams(window.location.search);
+                if (currentData.data && params.get('close') === '1') {
+                    suppressNextReminderRef.current = true;
+                    setShowCloseModal(true);
+                    params.delete('close');
+                    const query = params.toString();
+                    window.history.replaceState({}, '', `${window.location.pathname}${query ? `?${query}` : ''}`);
+                }
             }
         } catch (e) { console.error(e); }
         if (!silent) setLoading(false);
@@ -54,13 +72,44 @@ export default function ShiftsPage() {
         };
     }, []);
 
+    useEffect(() => {
+        if (!currentShift) {
+            reminderGateRef.current = { key: '', nextAt: 0 };
+            return;
+        }
+        if (suppressNextReminderRef.current) {
+            suppressNextReminderRef.current = false;
+            return;
+        }
+        const reminder = getShiftReminder(currentShift, reminderSettings);
+        if (!reminder) return;
+        const key = `${currentShift.id}:${reminder.phase}`;
+        const now = Date.now();
+        if (reminderGateRef.current.key === key && reminderGateRef.current.nextAt > now) return;
+        reminderGateRef.current = { key, nextAt: now + 15 * 60 * 1000 };
+
+        showAlert.confirm(reminder.title, reminder.message, 'Tutup Shift Sekarang', 'Ingatkan 15 Menit').then(confirmed => {
+            if (confirmed) setShowCloseModal(true);
+        });
+    }, [currentShift, reminderSettings]);
+
     const handleOpenShift = async (e) => {
         e.preventDefault();
         const user = getUser();
         try {
+            const openingCashAmount = Number(openingCash) || 0;
+            const expectedCloseAt = getOpeningExpectedCloseAt(reminderSettings);
+            const confirmed = await showAlert.confirm(
+                'Konfirmasi buka shift',
+                `Kas awal ${formatRp(openingCashAmount)}. Target tutup ${formatShiftDateTime(expectedCloseAt)}.`,
+                'Ya, Buka Shift',
+                'Ubah Nominal'
+            );
+            if (!confirmed) return;
+
             const res = await fetch(`${API_URL}/api/shifts/open`, {
                 method: 'POST', headers: headers(),
-                body: JSON.stringify({ userId: user?.id || 1, userName: user?.name || 'Admin', openingCash })
+                body: JSON.stringify({ userId: user?.id || 1, userName: user?.name || 'Admin', openingCash: openingCashAmount })
             });
             const data = await res.json();
             if (data.success) { setShowOpenModal(false); setOpeningCash(''); loadData(); }
@@ -118,10 +167,11 @@ export default function ShiftsPage() {
                         <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse"></div>
                         <span className="text-sm font-bold text-green-700">Shift Aktif</span>
                     </div>
-                    <div className="grid grid-cols-3 gap-4">
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                         <div><p className="text-xs text-green-600 font-medium">Kasir</p><p className="text-sm font-bold text-green-800">{currentShift.userName}</p></div>
                         <div><p className="text-xs text-green-600 font-medium">Dibuka</p><p className="text-sm font-bold text-green-800">{new Date(currentShift.openedAt).toLocaleString('id-ID')}</p></div>
                         <div><p className="text-xs text-green-600 font-medium">Kas Awal</p><p className="text-sm font-bold text-green-800">{formatRp(Number(currentShift.openingCash))}</p></div>
+                        <div><p className="text-xs text-green-600 font-medium">Target Tutup</p><p className="text-sm font-bold text-green-800">{formatShiftDateTime(currentShift.expectedCloseAt || getOpeningExpectedCloseAt(reminderSettings, currentShift.openedAt))}</p></div>
                     </div>
                 </div>
             )}

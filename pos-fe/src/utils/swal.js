@@ -46,7 +46,7 @@ export const showAlert = {
     });
   },
 
-  confirm: async (title, text, confirmText = 'Ya, Lanjutkan') => {
+  confirm: async (title, text, confirmText = 'Ya, Lanjutkan', cancelText = 'Batal') => {
     const result = await Swal.fire({
       title: title,
       text: text,
@@ -55,7 +55,7 @@ export const showAlert = {
       confirmButtonColor: themeColors.confirm,
       cancelButtonColor: themeColors.cancel,
       confirmButtonText: confirmText,
-      cancelButtonText: 'Batal',
+      cancelButtonText: cancelText,
       reverseButtons: true
     });
     return result.isConfirmed;
@@ -75,7 +75,7 @@ export const showAlert = {
     return result.isConfirmed;
   },
 
-  confirmDanger: async (title, text, confirmText = 'Ya, Lanjutkan') => {
+  confirmDanger: async (title, text, confirmText = 'Ya, Lanjutkan', cancelText = 'Batal') => {
     const result = await Swal.fire({
       title,
       text,
@@ -84,7 +84,7 @@ export const showAlert = {
       confirmButtonColor: themeColors.danger,
       cancelButtonColor: themeColors.cancel,
       confirmButtonText: confirmText,
-      cancelButtonText: 'Batal',
+      cancelButtonText: cancelText,
       reverseButtons: true,
       focusCancel: true,
     });

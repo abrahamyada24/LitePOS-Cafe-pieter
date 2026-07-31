@@ -1,5 +1,9 @@
 const { PrismaClient } = require('@prisma/client');
 const { calculateShiftSummary } = require('../services/shiftSummaryService');
+const {
+    calculateExpectedCloseAt,
+    normalizeShiftReminderSettings,
+} = require('../services/shiftReminderService');
 const prisma = new PrismaClient();
 
 // 1. OPEN SHIFT
@@ -10,7 +14,15 @@ exports.openShift = async (req, res) => {
             return res.status(400).json({ success: false, message: "Kas awal tidak valid." });
         }
 
-        const setting = await prisma.storeSetting.findFirst({ select: { enableShift: true } });
+        const setting = await prisma.storeSetting.findFirst({
+            select: {
+                enableShift: true,
+                enableShiftReminder: true,
+                shiftDurationMinutes: true,
+                shiftReminderMinutes: true,
+                shiftDayCutoff: true,
+            }
+        });
         if (setting?.enableShift === false) {
             return res.status(409).json({
                 success: false,
@@ -40,11 +52,13 @@ exports.openShift = async (req, res) => {
                 throw conflict;
             }
 
+            const openedAt = new Date();
             return tx.shift.create({
                 data: {
                     userId: activeUser.id,
                     userName: activeUser.name,
-                    openedAt: new Date(),
+                    openedAt,
+                    expectedCloseAt: calculateExpectedCloseAt(openedAt, setting),
                     openingCash: parsedOpeningCash,
                     status: 'OPEN'
                 }
@@ -214,14 +228,27 @@ exports.getAllShifts = async (req, res) => {
 exports.getCurrentShift = async (req, res) => {
     try {
         const [setting, shift] = await Promise.all([
-            prisma.storeSetting.findFirst({ select: { enableShift: true } }),
+            prisma.storeSetting.findFirst({
+                select: {
+                    enableShift: true,
+                    enableShiftReminder: true,
+                    shiftDurationMinutes: true,
+                    shiftReminderMinutes: true,
+                    shiftDayCutoff: true,
+                }
+            }),
             prisma.shift.findFirst({
                 where: { status: 'OPEN' },
                 orderBy: { openedAt: 'desc' }
             })
         ]);
 
-        res.json({ success: true, enabled: setting?.enableShift !== false, data: shift });
+        res.json({
+            success: true,
+            enabled: setting?.enableShift !== false,
+            reminderSettings: normalizeShiftReminderSettings(setting),
+            data: shift
+        });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }

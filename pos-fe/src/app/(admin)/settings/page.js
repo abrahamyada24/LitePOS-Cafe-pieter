@@ -44,6 +44,10 @@ export default function SettingsPage() {
     theme: 'light',
     enablePreOrder: false,
     enableShift: true,
+    enableShiftReminder: true,
+    shiftDurationMinutes: 480,
+    shiftReminderMinutes: 15,
+    shiftDayCutoff: '23:50',
     enableDineTable: false,
     enableTableOrder: false,
     enableKitchenQueue: false
@@ -118,6 +122,10 @@ export default function SettingsPage() {
         theme: settings.theme || 'light',
         enablePreOrder: settings.enablePreOrder || false,
         enableShift: settings.enableShift !== undefined ? settings.enableShift : true,
+        enableShiftReminder: settings.enableShiftReminder !== false,
+        shiftDurationMinutes: Number(settings.shiftDurationMinutes) || 480,
+        shiftReminderMinutes: Number.isFinite(Number(settings.shiftReminderMinutes)) ? Number(settings.shiftReminderMinutes) : 15,
+        shiftDayCutoff: settings.shiftDayCutoff || '23:50',
         enableDineTable: settings.enableDineTable || false,
         enableTableOrder: settings.enableTableOrder || false,
         enableKitchenQueue: settings.enableKitchenQueue || false
@@ -556,6 +564,63 @@ export default function SettingsPage() {
                             <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
                         </label>
                     </div>
+
+                    {form.enableShift && (
+                        <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4 space-y-4">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <p className="font-bold text-gray-800 text-sm">Pengingat Closing Shift</p>
+                                    <p className="text-xs text-gray-500">Alert sebelum target tutup dan pergantian hari.</p>
+                                </div>
+                                <label className="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" className="sr-only peer" checked={form.enableShiftReminder} onChange={() => handleToggle('enableShiftReminder')} />
+                                    <div className="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                                </label>
+                            </div>
+                            {form.enableShiftReminder && (
+                                <div className="grid gap-3 sm:grid-cols-3">
+                                    <label className="text-xs font-bold text-gray-600">
+                                        Durasi shift (jam)
+                                        <input
+                                            type="number"
+                                            min="0.5"
+                                            max="48"
+                                            step="0.5"
+                                            value={form.shiftDurationMinutes / 60}
+                                            onChange={(event) => setForm(prev => ({ ...prev, shiftDurationMinutes: Math.round(Number(event.target.value || 0) * 60) }))}
+                                            className="mt-1.5 w-full rounded-lg border border-blue-100 bg-white px-3 py-2.5 text-sm text-gray-800 outline-none focus:border-blue-400"
+                                        />
+                                    </label>
+                                    <label className="text-xs font-bold text-gray-600">
+                                        Ingatkan sebelumnya
+                                        <div className="relative mt-1.5">
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                max="240"
+                                                step="5"
+                                                value={form.shiftReminderMinutes}
+                                                onChange={handleChange}
+                                                name="shiftReminderMinutes"
+                                                className="w-full rounded-lg border border-blue-100 bg-white px-3 py-2.5 pr-14 text-sm text-gray-800 outline-none focus:border-blue-400"
+                                            />
+                                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400">menit</span>
+                                        </div>
+                                    </label>
+                                    <label className="text-xs font-bold text-gray-600">
+                                        Jam peringatan pergantian hari
+                                        <input
+                                            type="time"
+                                            name="shiftDayCutoff"
+                                            value={form.shiftDayCutoff}
+                                            onChange={handleChange}
+                                            className="mt-1.5 w-full rounded-lg border border-blue-100 bg-white px-3 py-2.5 text-sm text-gray-800 outline-none focus:border-blue-400"
+                                        />
+                                    </label>
+                                </div>
+                            )}
+                        </div>
+                    )}
 
                     <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
                         <div className="flex items-start gap-3">

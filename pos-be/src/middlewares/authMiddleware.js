@@ -154,7 +154,7 @@ exports.isOwner = (req, res, next) => {
   if (req.user.role !== 'OWNER') {
     return res.status(403).json({
       success: false,
-      message: 'Hanya Owner yang dapat mengaktifkan atau memperpanjang lisensi.',
+      message: 'Hanya Owner yang dapat melakukan tindakan ini.',
     });
   }
   return next();

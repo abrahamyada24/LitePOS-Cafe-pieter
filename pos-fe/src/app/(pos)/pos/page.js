@@ -17,6 +17,11 @@ import ShiftGuardModal from '@/components/pos/ShiftGuardModal';
 
 // Import SweetAlert
 import { showAlert } from '@/utils/swal';
+import {
+  formatShiftDateTime,
+  getOpeningExpectedCloseAt,
+  getShiftReminder,
+} from '@/utils/shiftReminder';
 import { getPosPendingTransactions } from '@/utils/savedTransactions';
 import { useStore } from '@/store/useStore';
 
@@ -78,6 +83,7 @@ export default function POSPage() {
   const [takeawayOption, setTakeawayOption] = useState('');
   const [taxRate, setTaxRate] = useState(0);
   const tableOrderRestoreStarted = useRef(false);
+  const shiftReminderGateRef = useRef({ key: '', nextAt: 0 });
 
   const refreshSavedTransactionCount = async () => {
     try {
@@ -238,6 +244,24 @@ export default function POSPage() {
       window.removeEventListener('focus', handleFocus);
     };
   }, [settingsLoaded, storeSettings?.enableShift]);
+
+  useEffect(() => {
+    if (!activeShift || storeSettings?.enableShift !== true) {
+      shiftReminderGateRef.current = { key: '', nextAt: 0 };
+      return;
+    }
+
+    const reminder = getShiftReminder(activeShift, storeSettings);
+    if (!reminder) return;
+    const key = `${activeShift.id}:${reminder.phase}`;
+    const now = Date.now();
+    if (shiftReminderGateRef.current.key === key && shiftReminderGateRef.current.nextAt > now) return;
+    shiftReminderGateRef.current = { key, nextAt: now + 15 * 60 * 1000 };
+
+    showAlert.confirm(reminder.title, reminder.message, 'Tutup Shift Sekarang', 'Ingatkan 15 Menit').then(confirmed => {
+      if (confirmed) router.push('/shifts?close=1');
+    });
+  }, [activeShift, router, storeSettings]);
 
   useEffect(() => {
     if (tableOrderRestoreStarted.current) return;
@@ -507,6 +531,16 @@ export default function POSPage() {
   const handleOpenShift = async () => {
     setIsOpeningShift(true);
     try {
+      const openingCashAmount = Number(openingCash) || 0;
+      const expectedCloseAt = getOpeningExpectedCloseAt(storeSettings);
+      const confirmed = await showAlert.confirm(
+        'Konfirmasi buka shift',
+        `Kas awal Rp ${openingCashAmount.toLocaleString('id-ID')}. Target tutup ${formatShiftDateTime(expectedCloseAt)}.`,
+        'Ya, Buka Shift',
+        'Ubah Nominal'
+      );
+      if (!confirmed) return;
+
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_URL}/api/shifts/open`, {
         method: 'POST',
@@ -514,7 +548,7 @@ export default function POSPage() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ openingCash: Number(openingCash) || 0 })
+        body: JSON.stringify({ openingCash: openingCashAmount })
       });
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.message || data.error || 'Shift tidak dapat dibuka.');

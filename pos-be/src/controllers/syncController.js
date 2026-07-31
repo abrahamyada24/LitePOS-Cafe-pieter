@@ -1,4 +1,5 @@
 const { PrismaClient } = require('@prisma/client');
+const { enterDataSync } = require('../services/dataResetCoordinator');
 const prisma = new PrismaClient();
 
 const normalizeAndroidPayment = (transaction) => {
@@ -84,6 +85,10 @@ exports.getMasterData = async (req, res) => {
       { key: 'storeLogo', value: settings.logoUrl || '' },
       { key: 'enablePreOrder', value: settings.enablePreOrder ? 'true' : 'false' },
       { key: 'enableShift', value: settings.enableShift ? 'true' : 'false' },
+      { key: 'enableShiftReminder', value: settings.enableShiftReminder ? 'true' : 'false' },
+      { key: 'shiftDurationMinutes', value: settings.shiftDurationMinutes.toString() },
+      { key: 'shiftReminderMinutes', value: settings.shiftReminderMinutes.toString() },
+      { key: 'shiftDayCutoff', value: settings.shiftDayCutoff || '23:50' },
       { key: 'enableDineTable', value: settings.enableDineTable ? 'true' : 'false' },
       { key: 'enableTableOrder', value: settings.enableTableOrder ? 'true' : 'false' },
       { key: 'enableKitchenQueue', value: settings.enableKitchenQueue ? 'true' : 'false' },
@@ -93,7 +98,9 @@ exports.getMasterData = async (req, res) => {
       { key: 'takeawayOptions', value: settings.takeawayOptions || '[]' },
       { key: 'allowNegativeStock', value: settings.allowNegativeStock ? 'true' : 'false' },
       { key: 'showImages', value: settings.showImages ? 'true' : 'false' },
-      { key: 'theme', value: settings.theme || 'light' }
+      { key: 'theme', value: settings.theme || 'light' },
+      { key: 'dataResetVersion', value: settings.dataResetVersion.toString() },
+      { key: 'dataResetAt', value: settings.dataResetAt?.toISOString() || '' }
     ] : [];
 
     // Add loyalty config as settings too for easy access in Android
@@ -136,8 +143,33 @@ exports.getMasterData = async (req, res) => {
  * lalu menyimpannya secara massal ke database MySQL server.
  */
 exports.pushLocalData = async (req, res) => {
+  let releaseDataSync = null;
   try {
-    const { transactions, expenses, shifts, categories, products, customers, settings, stockReceipts, suppliers: pushSuppliers, packages: pushPackages, dineTables, addons: pushAddons } = req.body;
+    releaseDataSync = enterDataSync();
+    const { transactions, expenses, shifts, categories, products, customers, settings, stockReceipts, suppliers: pushSuppliers, packages: pushPackages, dineTables, addons: pushAddons, dataResetVersion } = req.body;
+    const resetState = await prisma.storeSetting.findFirst({
+      select: { dataResetVersion: true, dataResetInProgress: true, dataResetAt: true },
+    });
+    const serverResetVersion = resetState?.dataResetVersion || 0;
+    const clientResetVersion = Number(dataResetVersion || 0);
+    if (resetState?.dataResetInProgress) {
+      return res.status(423).json({
+        success: false,
+        code: 'DATA_RESET_IN_PROGRESS',
+        message: 'Reset data outlet sedang berlangsung. Sinkronisasi ditunda.',
+      });
+    }
+    if (!Number.isInteger(clientResetVersion) || clientResetVersion !== serverResetVersion) {
+      return res.status(409).json({
+        success: false,
+        code: 'RESET_REQUIRED',
+        message: 'Data perangkat berasal dari sebelum reset outlet dan tidak boleh diunggah.',
+        data: {
+          version: serverResetVersion,
+          resetAt: resetState?.dataResetAt || null,
+        },
+      });
+    }
     const canManageMasterData = ['ADMIN', 'OWNER'].includes(req.user.role);
     const restrictedPayloads = [settings, categories, products, stockReceipts, pushSuppliers, pushPackages, pushAddons];
     if (!canManageMasterData && restrictedPayloads.some(items => Array.isArray(items) && items.length > 0)) {
@@ -206,6 +238,18 @@ exports.pushLocalData = async (req, res) => {
         if (receiptFooter) storeSettingData.receiptFooter = receiptFooter;
         if (settingsMap.enablePreOrder !== undefined) storeSettingData.enablePreOrder = settingsMap.enablePreOrder === 'true';
         if (settingsMap.enableShift !== undefined) storeSettingData.enableShift = settingsMap.enableShift === 'true';
+        if (settingsMap.enableShiftReminder !== undefined) storeSettingData.enableShiftReminder = settingsMap.enableShiftReminder === 'true';
+        const shiftDurationMinutes = finiteNumber(settingsMap.shiftDurationMinutes);
+        if (shiftDurationMinutes !== null && shiftDurationMinutes >= 30 && shiftDurationMinutes <= 2880) {
+            storeSettingData.shiftDurationMinutes = Math.round(shiftDurationMinutes);
+        }
+        const shiftReminderMinutes = finiteNumber(settingsMap.shiftReminderMinutes);
+        if (shiftReminderMinutes !== null && shiftReminderMinutes >= 0 && shiftReminderMinutes <= 240) {
+            storeSettingData.shiftReminderMinutes = Math.round(shiftReminderMinutes);
+        }
+        if (/^([01]\d|2[0-3]):[0-5]\d$/.test(String(settingsMap.shiftDayCutoff || ''))) {
+            storeSettingData.shiftDayCutoff = String(settingsMap.shiftDayCutoff);
+        }
         if (settingsMap.enableDineTable !== undefined) storeSettingData.enableDineTable = settingsMap.enableDineTable === 'true';
         if (settingsMap.enableTableOrder !== undefined) storeSettingData.enableTableOrder = settingsMap.enableTableOrder === 'true';
         if (settingsMap.enableKitchenQueue !== undefined) storeSettingData.enableKitchenQueue = settingsMap.enableKitchenQueue === 'true';
@@ -726,6 +770,7 @@ exports.pushLocalData = async (req, res) => {
                                 userId: req.user.id,
                                 userName: syncUser?.name || shift.userName || 'Kasir',
                                 openedAt: new Date(shift.openedAt),
+                                expectedCloseAt: shift.expectedCloseAt ? new Date(shift.expectedCloseAt) : null,
                                 closedAt: shift.closedAt ? new Date(shift.closedAt) : null,
                                 openingCash: Number(shift.openingCash || 0),
                                 closingCash: shift.closingCash == null ? null : Number(shift.closingCash),
@@ -1032,7 +1077,14 @@ exports.pushLocalData = async (req, res) => {
 
   } catch (error) {
     console.error('[SYNC] pushLocalData gagal:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(error.status || 500).json({
+      success: false,
+      code: error.code || 'SYNC_PUSH_FAILED',
+      error: error.message,
+      message: error.message,
+    });
+  } finally {
+    if (releaseDataSync) releaseDataSync();
   }
 };
 
@@ -1131,6 +1183,7 @@ exports.getTransactionHistory = async (req, res) => {
       userId: s.userId,
       userName: s.userName,
       openedAt: s.openedAt.toISOString(),
+      expectedCloseAt: s.expectedCloseAt ? s.expectedCloseAt.toISOString() : null,
       closedAt: s.closedAt ? s.closedAt.toISOString() : null,
       openingCash: Number(s.openingCash),
       closingCash: s.closingCash ? Number(s.closingCash) : null,
