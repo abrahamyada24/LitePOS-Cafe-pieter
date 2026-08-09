@@ -270,6 +270,7 @@ export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [recentTransactions, setRecentTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [dashboardError, setDashboardError] = useState("");
 
   // AndroidPos features state
   const [activeShift, setActiveShift] = useState(null);
@@ -299,6 +300,7 @@ export default function Dashboard() {
   // ── Fetch dashboard data ──
   useEffect(() => {
     const loadDashboardData = async () => {
+      setDashboardError("");
       try {
         const token = localStorage.getItem('token');
         const headers = { 'Authorization': `Bearer ${token}` };
@@ -308,6 +310,10 @@ export default function Dashboard() {
           fetch(`${API_URL}/api/transactions?limit=5`, { headers })
         ]);
 
+        if (!statsRes.ok || !trxRes.ok) {
+          throw new Error(`API dashboard gagal (${statsRes.status}/${trxRes.status})`);
+        }
+
         const statsJson = await statsRes.json();
         const trxJson = await trxRes.json();
 
@@ -315,6 +321,7 @@ export default function Dashboard() {
         if (trxJson.success) setRecentTransactions(trxJson.data);
       } catch (error) {
         console.error("Dashboard error:", error);
+        setDashboardError("Data dashboard belum dapat dimuat. Silakan muat ulang halaman.");
       } finally {
         setLoading(false);
       }
@@ -520,10 +527,14 @@ export default function Dashboard() {
 
       {/* ── Stat Cards ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {loading || !stats ? (
+        {loading ? (
           <>
             <CardSkeleton /><CardSkeleton /><CardSkeleton /><CardSkeleton />
           </>
+        ) : dashboardError || !stats ? (
+          <div className="md:col-span-2 lg:col-span-4 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-medium text-amber-800">
+            {dashboardError || "Data statistik belum tersedia."}
+          </div>
         ) : (
           <>
             <StatCardItem title="Total Penjualan" value={formatRp(stats.summary.todayRevenue)} subtitle="Pendapatan hari ini" icon={DollarSign} trend="up" trendValue="Realtime" color="blue" />
@@ -550,7 +561,7 @@ export default function Dashboard() {
       {/* ── Chart + Sidebar ── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
-          {loading || !stats ? <ChartSkeleton /> : (
+          {loading ? <ChartSkeleton /> : !stats ? null : (
             <div className="card-base p-6 bg-white h-full flex flex-col border border-gray-200 shadow-sm">
               <div className="flex justify-between items-center mb-6">
                 <div>
@@ -571,7 +582,7 @@ export default function Dashboard() {
         </div>
 
         <div className="space-y-6">
-          {loading || !stats ? <ListSkeleton /> : (
+          {loading ? <ListSkeleton /> : !stats ? null : (
             <div className="card-base p-5 bg-white border border-gray-200 shadow-sm">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2 text-red-600 font-bold">
@@ -604,7 +615,7 @@ export default function Dashboard() {
             </div>
           )}
 
-          {loading || !stats ? <ListSkeleton /> : (
+          {loading ? <ListSkeleton /> : !stats ? null : (
             <div className="card-base p-5 bg-white border border-gray-200 shadow-sm">
               <h3 className="font-bold text-gray-800 mb-4">Menu Terlaris</h3>
               <div className="space-y-4">

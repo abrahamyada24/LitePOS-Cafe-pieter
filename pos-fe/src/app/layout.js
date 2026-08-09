@@ -1,4 +1,5 @@
 import "./globals.css";
+import ApiClientBootstrap from "@/components/ApiClientBootstrap";
 
 export const metadata = {
   title: "LitePOS Dashboard",
@@ -19,7 +20,7 @@ export default function RootLayout({ children }) {
           Ini membuat React lebih stabil karena div ini tidak akan disentuh oleh ekstensi browser.
         */}
         <div className="min-h-screen bg-gray-50 text-gray-900">
-          {children}
+          <ApiClientBootstrap>{children}</ApiClientBootstrap>
         </div>
       </body>
     </html>
