@@ -4,16 +4,25 @@ import React, { useEffect, useState } from 'react';
 import { 
     TrendingUp, Calendar, ChevronDown, DollarSign, Package,
     ArrowDownRight, ArrowUpRight, BarChart2, Users, Receipt,
-    Clock, Loader2, ArrowRightLeft, CreditCard, Wallet, LayoutGrid
+    Clock, Loader2, ArrowRightLeft, CreditCard, Wallet, LayoutGrid,
+    FileSpreadsheet, FileText
 } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import SalesChart from '@/components/SalesChart';
 import StatCard from '@/components/StatCard';
+import { buildReportExport, exportReportCsv, exportReportPdf } from '@/utils/reportExport';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
 // --- Helper Components ---
 const formatRp = (num) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(Number(num) || 0);
+
+const formatLocalDate = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
 
 const TransactionDetailModal = ({ isOpen, onClose, transaction }) => {
     if (!isOpen || !transaction) return null;
@@ -104,6 +113,7 @@ const TransactionDetailModal = ({ isOpen, onClose, transaction }) => {
 };
 
 export default function ReportsPage() {
+    const settings = useStore(state => state.settings);
     const [activeTab, setActiveTab] = useState('TRANSAKSI');
     const [period, setPeriod] = useState('month');
     const [dateRange, setDateRange] = useState({ start: '', end: '' });
@@ -111,6 +121,8 @@ export default function ReportsPage() {
     
     // Data States
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState('');
+    const [exporting, setExporting] = useState(null);
     const [summaryData, setSummaryData] = useState(null);
     const [transactions, setTransactions] = useState([]);
     const [categoryData, setCategoryData] = useState([]);
@@ -138,7 +150,42 @@ export default function ReportsPage() {
         if (isCustomDate && dateRange.start && dateRange.end) {
             return `?startDate=${dateRange.start}&endDate=${dateRange.end}`;
         }
+        if (period === 'today') {
+            const today = formatLocalDate(new Date());
+            return `?startDate=${today}&endDate=${today}`;
+        }
         return `?period=${period}`;
+    };
+
+    const getPeriodLabel = () => {
+        if (isCustomDate && dateRange.start && dateRange.end) {
+            return `${dateRange.start} sampai ${dateRange.end}`;
+        }
+        return { today: 'Hari ini', week: '7 hari terakhir', month: 'Bulan ini', year: 'Tahun ini' }[period] || 'Bulan ini';
+    };
+
+    const isDateInSelectedPeriod = (value) => {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return false;
+
+        const now = new Date();
+        let start;
+        let end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+
+        if (isCustomDate && dateRange.start && dateRange.end) {
+            start = new Date(`${dateRange.start}T00:00:00`);
+            end = new Date(`${dateRange.end}T23:59:59.999`);
+        } else if (period === 'today') {
+            start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        } else if (period === 'week') {
+            start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
+        } else if (period === 'year') {
+            start = new Date(now.getFullYear(), 0, 1);
+        } else {
+            start = new Date(now.getFullYear(), now.getMonth(), 1);
+        }
+
+        return date >= start && date <= end;
     };
 
     const headers = () => {
@@ -147,58 +194,71 @@ export default function ReportsPage() {
     };
 
     const loadData = async () => {
+        if (isCustomDate && (!dateRange.start || !dateRange.end)) {
+            setLoadError('');
+            setLoading(false);
+            return;
+        }
+        if (isCustomDate && dateRange.start > dateRange.end) {
+            setLoadError('Tanggal mulai tidak boleh setelah tanggal selesai.');
+            setLoading(false);
+            return;
+        }
+
         setLoading(true);
+        setLoadError('');
         try {
             const qs = getQueryString();
+            const fetchData = async (url) => {
+                const response = await fetch(url, { headers: headers() });
+                let payload;
+                try {
+                    payload = await response.json();
+                } catch (_) {
+                    throw new Error(`Server mengirim respons yang tidak valid (${response.status}).`);
+                }
+                if (!response.ok || !payload.success) {
+                    throw new Error(payload.message || payload.error || `Request gagal (${response.status}).`);
+                }
+                return payload.data;
+            };
             
             // Base dashboard stats (used by Multiple tabs: Transaksi, Terlaris)
             if (['TRANSAKSI', 'TERLARIS'].includes(activeTab)) {
-                const res = await fetch(`${API_URL}/api/reports/dashboard${qs}`, { headers: headers() });
-                const data = await res.json();
-                if (data.success) setSummaryData(data.data);
+                const report = await fetchData(`${API_URL}/api/reports/dashboard${qs}`);
+                setSummaryData(report);
                 
                 // Fetch full transactions for table
                 if (activeTab === 'TRANSAKSI') {
-                    const trxRes = await fetch(`${API_URL}/api/transactions${qs}&limit=100`, { headers: headers() });
-                    const trxData = await trxRes.json();
-                    if (trxData.success) setTransactions(trxData.data);
+                    const transactionData = await fetchData(`${API_URL}/api/transactions${qs}&limit=100`);
+                    setTransactions(transactionData);
                 }
             }
             
             // Tab Specific Data
             else if (activeTab === 'KATEGORI') {
-                const res = await fetch(`${API_URL}/api/reports/by-category${qs}`, { headers: headers() });
-                const data = await res.json();
-                if (data.success) setCategoryData(data.data);
+                setCategoryData(await fetchData(`${API_URL}/api/reports/by-category${qs}`));
             }
             else if (activeTab === 'PELANGGAN') {
-                const res = await fetch(`${API_URL}/api/reports/by-customer${qs}`, { headers: headers() });
-                const data = await res.json();
-                if (data.success) setCustomerData(data.data);
+                setCustomerData(await fetchData(`${API_URL}/api/reports/by-customer${qs}`));
             }
             else if (activeTab === 'RETUR') {
-                const res = await fetch(`${API_URL}/api/reports/returns${qs}`, { headers: headers() });
-                const data = await res.json();
-                if (data.success) setReturnsData(data.data);
+                setReturnsData(await fetchData(`${API_URL}/api/reports/returns${qs}`));
             }
             else if (activeTab === 'SHIFT') {
-                const res = await fetch(`${API_URL}/api/reports/shift`, { headers: headers() });
-                const data = await res.json();
-                if (data.success) setShiftData(data.data);
+                const shifts = await fetchData(`${API_URL}/api/reports/shift${qs}`);
+                setShiftData((Array.isArray(shifts) ? shifts : []).filter((shift) => isDateInSelectedPeriod(shift.openedAt)));
             }
             else if (activeTab === 'LABARUGI') {
-                const res = await fetch(`${API_URL}/api/reports/profit-loss${qs}`, { headers: headers() });
-                const data = await res.json();
-                if (data.success) setProfitLossData(data.data);
+                setProfitLossData(await fetchData(`${API_URL}/api/reports/profit-loss${qs}`));
             }
             else if (activeTab === 'PENGELUARAN') {
-                const res = await fetch(`${API_URL}/api/expenses${qs}`, { headers: headers() });
-                const data = await res.json();
-                if (data.success) setExpensesData(data.data);
+                setExpensesData(await fetchData(`${API_URL}/api/expenses${qs}`));
             }
             
         } catch (error) {
             console.error("Gagal memuat laporan:", error);
+            setLoadError(error.message || 'Gagal memuat laporan.');
         } finally {
             setLoading(false);
         }
@@ -206,31 +266,38 @@ export default function ReportsPage() {
 
     useEffect(() => {
         loadData();
-    }, [activeTab, period, isCustomDate]);
+    }, [activeTab, period, isCustomDate, dateRange.start, dateRange.end]);
 
     // Export Handler
-    const handleExport = async () => {
-        const token = localStorage.getItem('token');
-        const qs = getQueryString();
+    const handleExport = async (format) => {
+        setExporting(format);
         try {
-            const response = await fetch(`${API_URL}/api/reports/export${qs}&format=csv`, {
-                headers: { Authorization: `Bearer ${token}` }
+            const report = buildReportExport(activeTab, {
+                summaryData,
+                transactions,
+                categoryData,
+                customerData,
+                returnsData,
+                shiftData,
+                profitLossData,
+                expensesData,
             });
-            if (!response.ok) throw new Error('Gagal mengekspor laporan.');
+            const dateSuffix = formatLocalDate(new Date());
+            const baseFilename = `laporan-${activeTab.toLowerCase()}-${dateSuffix}`;
 
-            const blob = await response.blob();
-            const disposition = response.headers.get('content-disposition') || '';
-            const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || 'laporan-transaksi.csv';
-            const downloadUrl = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = downloadUrl;
-            link.download = filename;
-            document.body.appendChild(link);
-            link.click();
-            link.remove();
-            URL.revokeObjectURL(downloadUrl);
+            if (format === 'csv') {
+                exportReportCsv(report, `${baseFilename}.csv`);
+            } else {
+                await exportReportPdf(report, {
+                    filename: `${baseFilename}.pdf`,
+                    storeName: settings?.storeName || 'LitePOS',
+                    periodLabel: getPeriodLabel(),
+                });
+            }
         } catch (error) {
             window.alert(error.message || 'Gagal mengekspor laporan.');
+        } finally {
+            setExporting(null);
         }
     };
 
@@ -510,7 +577,7 @@ export default function ReportsPage() {
                                     {profitLossData?.expenseBreakdown?.map((cat, idx) => (
                                         <tr key={idx} className="border-b border-gray-50 hover:bg-gray-50">
                                             <td className="px-6 py-4 font-medium text-gray-600">{cat.category}</td>
-                                            <td className="px-6 py-4 font-bold text-red-500 text-right">{formatRp(cat.total)}</td>
+                                            <td className="px-6 py-4 font-bold text-red-500 text-right">{formatRp(cat.amount)}</td>
                                         </tr>
                                     ))}
                                     {profitLossData?.expenseBreakdown?.length === 0 && (
@@ -568,7 +635,7 @@ export default function ReportsPage() {
                     <p className="text-sm text-gray-500 mt-1">Analisis performa bisnis Anda secara komprehensif</p>
                 </div>
 
-                <div className="flex items-center gap-3 w-full md:w-auto">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
                     {/* Period Selector */}
                     <div className="flex bg-white rounded-xl border border-gray-200 p-1 shadow-sm w-full md:w-auto">
                         <button onClick={() => { setPeriod('today'); setIsCustomDate(false); }} className={`px-4 py-2 text-sm font-bold rounded-lg transition-colors ${period === 'today' && !isCustomDate ? 'bg-blue-50 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}>Hari Ini</button>
@@ -577,9 +644,24 @@ export default function ReportsPage() {
                         <button onClick={() => setIsCustomDate(true)} className={`px-4 py-2 text-sm font-bold rounded-lg transition-colors ${isCustomDate ? 'bg-blue-50 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}>Custom</button>
                     </div>
 
-                    <button onClick={handleExport} className="hidden md:flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-xl font-bold text-sm hover:bg-gray-800 transition-colors shadow-lg">
-                        Export CSV
-                    </button>
+                    <div className="grid grid-cols-2 gap-2">
+                        <button
+                            onClick={() => handleExport('csv')}
+                            disabled={loading || !!exporting}
+                            className="flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-lg"
+                        >
+                            {exporting === 'csv' ? <Loader2 size={16} className="animate-spin" /> : <FileSpreadsheet size={16} />}
+                            CSV
+                        </button>
+                        <button
+                            onClick={() => handleExport('pdf')}
+                            disabled={loading || !!exporting}
+                            className="flex items-center justify-center gap-2 px-4 py-2 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 disabled:opacity-50 transition-colors shadow-lg"
+                        >
+                            {exporting === 'pdf' ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
+                            PDF
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -617,7 +699,13 @@ export default function ReportsPage() {
 
             {/* Content Area */}
             <div>
-                {renderContent()}
+                {loadError ? (
+                    <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
+                        <p className="font-bold">Laporan gagal dimuat</p>
+                        <p className="mt-1">{loadError}</p>
+                        <button onClick={loadData} className="mt-3 rounded-lg bg-red-600 px-4 py-2 font-bold text-white hover:bg-red-700">Coba Lagi</button>
+                    </div>
+                ) : renderContent()}
             </div>
 
             {/* Modals */}
