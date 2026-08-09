@@ -4,6 +4,7 @@ const {
   LOGIN_LOCK_DURATION_MS,
   LOGIN_LOCK_THRESHOLD,
   SESSION_COOKIE_NAME,
+  getSessionCookieClearOptions,
   getSessionCookieOptions,
   validatePassword,
 } = require('../config/auth');
@@ -22,12 +23,10 @@ const prisma = new PrismaClient();
 const PASSWORD_HASH_ROUNDS = 12;
 const DUMMY_PASSWORD_HASH = bcrypt.hashSync('litepos-invalid-password-placeholder', PASSWORD_HASH_ROUNDS);
 
-const clearSessionCookie = (res) => res.clearCookie(SESSION_COOKIE_NAME, {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: 'lax',
-  path: '/',
-});
+const clearSessionCookie = (res) => res.clearCookie(
+  SESSION_COOKIE_NAME,
+  getSessionCookieClearOptions(),
+);
 
 const publicUser = (user) => ({
   id: user.id,

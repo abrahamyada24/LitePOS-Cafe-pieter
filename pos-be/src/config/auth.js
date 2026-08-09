@@ -21,12 +21,24 @@ const BLOCKED_PASSWORDS = new Set([
   'qwerty123',
 ]);
 
+const getSessionCookieBaseOptions = () => {
+  const isProduction = process.env.NODE_ENV === 'production';
+  return {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+    partitioned: isProduction,
+    path: '/',
+  };
+};
+
 const getSessionCookieOptions = () => ({
-  httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: 'lax',
+  ...getSessionCookieBaseOptions(),
   maxAge: SESSION_ABSOLUTE_TIMEOUT_MS,
-  path: '/',
+});
+
+const getSessionCookieClearOptions = () => ({
+  ...getSessionCookieBaseOptions(),
 });
 
 const validatePassword = (password) => {
@@ -54,6 +66,7 @@ module.exports = {
   SESSION_IDLE_TIMEOUT_HOURS,
   SESSION_IDLE_TIMEOUT_MS,
   SESSION_TOUCH_INTERVAL_MS,
+  getSessionCookieClearOptions,
   getSessionCookieOptions,
   validatePassword,
 };
