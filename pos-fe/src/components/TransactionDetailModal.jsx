@@ -49,6 +49,7 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction })
     const storeName = storeSettings?.storeName || 'TOKO';
     const storeAddress = storeSettings?.address || '';
     const storePhone = storeSettings?.phone || '';
+    const receiptFooter = storeSettings?.receiptFooter || 'Terima kasih atas kunjungan Anda';
     const storeLogo = storeSettings?.logoUrl
         ? (storeSettings.logoUrl.startsWith('http') ? storeSettings.logoUrl : `${API_URL}${storeSettings.logoUrl}`)
         : '';
@@ -338,8 +339,7 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction })
                     <div style={{ borderBottom: '1px dashed #000', margin: '10px 0' }}></div>
 
                     <div style={{ textAlign: 'center', fontSize: '10px', marginTop: '15px' }}>
-                        <p style={{ fontWeight: 'bold', margin: '0' }}>TERIMA KASIH</p>
-                        <p style={{ margin: '5px 0' }}>Selamat Menikmati!</p>
+                        <p style={{ margin: '0', whiteSpace: 'pre-wrap' }}>{receiptFooter}</p>
                         <p style={{ fontSize: '8px' }}>Software by LitePOS</p>
                     </div>
                 </div>

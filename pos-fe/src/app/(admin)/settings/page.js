@@ -323,7 +323,10 @@ export default function SettingsPage() {
         <div>TEST PRINT — {paperWidthMm} MM</div>
         <div>Rasio logo dipertahankan otomatis</div>
         <div className="my-2 border-t border-dashed border-black" />
-        <div className="text-center">Printer browser siap digunakan</div>
+        <div className="whitespace-pre-wrap text-center">
+          {settings?.receiptFooter || 'Terima kasih atas kunjungan Anda'}
+        </div>
+        <div className="mt-1 text-center">Printer browser siap digunakan</div>
       </div>
 
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -470,6 +473,27 @@ export default function SettingsPage() {
 
       {activeTab === 'system' && (
         <div className="max-w-3xl space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="card-base p-6">
+                <h3 className="font-bold text-gray-800 mb-4 border-b border-gray-100 pb-3 flex items-center gap-2">
+                    <Receipt size={18} /> Footer Nota
+                </h3>
+                <label htmlFor="receiptFooter" className="block text-sm font-bold text-gray-700 mb-2">
+                    Kalimat penutup
+                </label>
+                <textarea
+                    id="receiptFooter"
+                    name="receiptFooter"
+                    value={form.receiptFooter}
+                    onChange={handleChange}
+                    rows={3}
+                    placeholder="Contoh: Terima kasih telah berbelanja!"
+                    className="w-full resize-y rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-800 outline-none transition-colors focus:border-blue-500 focus:bg-white"
+                />
+                <p className="mt-2 text-xs text-gray-500">
+                    Teks ini tampil di bagian bawah nota website dan Android. Baris baru akan tetap dipertahankan saat dicetak.
+                </p>
+            </div>
+
             <div className="card-base p-6">
                 <h3 className="font-bold text-gray-800 mb-4 border-b border-gray-100 pb-3">Konfigurasi Keuangan</h3>
                 <div className="space-y-6">
