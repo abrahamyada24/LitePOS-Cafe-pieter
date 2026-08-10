@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const transactionController = require('../controllers/transactionController');
-const { verifyToken } = require('../middlewares/authMiddleware');
+const { verifyToken, isOwner } = require('../middlewares/authMiddleware');
 
 /**
  * @swagger
@@ -82,7 +82,7 @@ router.get('/', verifyToken, transactionController.getAllTransactions);
 router.get('/pre-orders', verifyToken, transactionController.getPreOrders);
 router.get('/:id', verifyToken, transactionController.getTransactionById);
 router.post('/notification', transactionController.handleMidtransNotification);
-router.post('/:id/return', verifyToken, transactionController.returnTransaction);
+router.post('/:id/return', verifyToken, isOwner, transactionController.returnTransaction);
 router.post('/:id/confirm-preorder', verifyToken, transactionController.confirmPreOrder);
 router.get('/status/:invoiceNumber', verifyToken, transactionController.checkTransactionStatus);
 

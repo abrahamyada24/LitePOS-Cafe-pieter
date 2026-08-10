@@ -5,10 +5,12 @@ import { Search, ChevronLeft, ChevronRight, Eye, RefreshCw, Calendar as Calendar
 // Import modal dari folder components
 import TransactionDetailModal from '../../../components/TransactionDetailModal';
 import { showAlert } from '../../../utils/swal';
+import { useStore } from '../../../store/useStore';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
 export default function TransactionsPage() {
+    const { user } = useStore();
     const [transactions, setTransactions] = useState([]);
     const [meta, setMeta] = useState({ page: 1, totalPages: 1, total: 0 });
     const [isLoading, setIsLoading] = useState(true);
@@ -20,6 +22,7 @@ export default function TransactionsPage() {
 
     const [selectedTransaction, setSelectedTransaction] = useState(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [isReturning, setIsReturning] = useState(false);
     const [preOrderFilter, setPreOrderFilter] = useState(false);
 
     const fetchTransactions = async (page = 1) => {
@@ -87,6 +90,45 @@ export default function TransactionsPage() {
         }
     };
 
+    const handleReturnTransaction = async () => {
+        if (!selectedTransaction || user?.role !== 'OWNER') {
+            showAlert.error('Akses ditolak', 'Hanya Owner yang dapat melakukan retur transaksi.');
+            return;
+        }
+
+        const confirmed = await showAlert.confirmDanger(
+            'Retur transaksi?',
+            `Transaksi ${selectedTransaction.invoiceNumber} akan ditandai sebagai retur dan seluruh stok produknya dikembalikan.`,
+            'Ya, Retur Transaksi',
+            'Batal'
+        );
+        if (!confirmed) return;
+
+        setIsReturning(true);
+        try {
+            const token = localStorage.getItem('token');
+            const res = await fetch(`${API_URL}/api/transactions/${selectedTransaction.id}/return`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` },
+                credentials: 'include',
+            });
+            const json = await res.json();
+
+            if (!res.ok || !json.success) {
+                throw new Error(json.message || json.error || 'Gagal melakukan retur transaksi.');
+            }
+
+            setIsModalOpen(false);
+            setSelectedTransaction(null);
+            await fetchTransactions(meta.page);
+            showAlert.success('Retur berhasil', json.message || 'Transaksi berhasil diretur dan stok telah dikembalikan.');
+        } catch (error) {
+            showAlert.error('Retur gagal', error.message);
+        } finally {
+            setIsReturning(false);
+        }
+    };
+
     const formatRp = (num) => "Rp " + (Number(num) || 0).toLocaleString('id-ID');
     const formatDate = (dateStr) => new Date(dateStr).toLocaleString('id-ID', {
         day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
@@ -138,6 +180,7 @@ export default function TransactionsPage() {
                         <option value="PAID">Lunas (PAID)</option>
                         <option value="PENDING">Pending</option>
                         <option value="CANCELLED">Batal</option>
+                        <option value="RETURNED">Retur</option>
                     </select>
 
                     <div className="relative">
@@ -287,6 +330,9 @@ export default function TransactionsPage() {
                 isOpen={isModalOpen}
                 onClose={() => setIsModalOpen(false)}
                 transaction={selectedTransaction}
+                canReturn={user?.role === 'OWNER'}
+                isReturning={isReturning}
+                onReturn={handleReturnTransaction}
             />
         </div>
     );

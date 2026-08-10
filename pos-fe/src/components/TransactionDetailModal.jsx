@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { X, Calendar, User, CreditCard, Printer, ShoppingBag, Store, FileText, MapPin, UtensilsCrossed } from 'lucide-react';
+import { X, Calendar, User, CreditCard, Printer, ShoppingBag, Store, FileText, MapPin, UtensilsCrossed, RotateCcw, Loader2 } from 'lucide-react';
 import { DEFAULT_DEVICE_PREFERENCES, getDevicePreferences, getPaperWidthMm } from '@/utils/devicePreferences';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
-export default function TransactionDetailModal({ isOpen, onClose, transaction }) {
+export default function TransactionDetailModal({ isOpen, onClose, transaction, canReturn = false, isReturning = false, onReturn }) {
     const [storeSettings, setStoreSettings] = useState(null);
     const [devicePreferences, setDevicePreferences] = useState(DEFAULT_DEVICE_PREFERENCES);
 
@@ -60,6 +60,7 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction })
     const paymentType = payments?.[0]?.paymentType || 'TUNAI';
     const paymentAmount = payments?.[0]?.amount || transaction.grandTotal;
     const changeAmount = Number(paymentAmount) - Number(transaction.grandTotal);
+    const returnableTransaction = canReturn && ['PAID', 'COMPLETED'].includes(transaction.status);
 
     // --- FUNGSI CETAK STRUK ---
     const handlePrint = () => {
@@ -133,7 +134,7 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction })
                             <Calendar size={16} />
                             {formatDate(transaction.createdAt)}
                         </div>
-                        <span className={`px-3 py-1 rounded-lg text-[10px] font-black tracking-widest border ${transaction.status === 'PAID' ? 'bg-green-100 text-green-700 border-green-200' : 'bg-yellow-100 text-yellow-700 border-yellow-200'
+                        <span className={`px-3 py-1 rounded-lg text-[10px] font-black tracking-widest border ${transaction.status === 'PAID' || transaction.status === 'COMPLETED' ? 'bg-green-100 text-green-700 border-green-200' : transaction.status === 'RETURNED' ? 'bg-red-100 text-red-700 border-red-200' : 'bg-yellow-100 text-yellow-700 border-yellow-200'
                             }`}>
                             {transaction.status}
                         </span>
@@ -345,9 +346,20 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction })
                 </div>
 
                 {/* Modal Footer */}
-                <div className="px-6 py-4 border-t border-gray-100 bg-gray-50 flex justify-end gap-3 no-print">
+                <div className="px-6 py-4 border-t border-gray-100 bg-gray-50 flex flex-wrap justify-end gap-3 no-print">
+                    {returnableTransaction && (
+                        <button
+                            onClick={onReturn}
+                            disabled={isReturning}
+                            className="px-5 py-2.5 text-xs font-black text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-xl flex items-center gap-2 transition-all active:scale-95 uppercase tracking-widest disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                            {isReturning ? <Loader2 size={16} className="animate-spin" /> : <RotateCcw size={16} strokeWidth={3} />}
+                            {isReturning ? 'Memproses' : 'Retur'}
+                        </button>
+                    )}
                     <button
                         onClick={onClose}
+                        disabled={isReturning}
                         className="px-4 py-2 text-xs font-black uppercase tracking-widest text-gray-400 hover:text-gray-800 transition-colors"
                     >
                         Tutup
