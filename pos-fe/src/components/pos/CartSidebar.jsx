@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { ArrowLeft, LogOut, X, UserPlus, ShoppingCart, Utensils, Minus, Plus, User, ChevronRight, Truck, Tag, Save, ShoppingBag, MessageSquare, Loader2 } from 'lucide-react';
 import { showAlert } from '@/utils/swal';
+import { getItemOriginalPrice, getItemProductDiscountTotal, hasProductDiscount } from '@/utils/transactionDiscounts';
 
 export default function CartSidebar({ 
     cart, 
@@ -16,11 +17,12 @@ export default function CartSidebar({
     removeFromCart, 
     updateQty, 
     handlePaymentOpen, 
-    setCart,
+    onClearCart,
     handleLogout,
     getImageUrl,
     grandTotal,
     subTotal,
+    productDiscountTotal,
     taxAmount,
     orderType,
     setOrderType,
@@ -50,10 +52,10 @@ export default function CartSidebar({
       'Semua item yang sedang dipilih akan dihapus dari keranjang.',
       'Ya, Kosongkan'
     );
-    if (confirmed) setCart([]);
+    if (confirmed) onClearCart();
   };
   return (
-    <div className={`w-full lg:w-[400px] bg-white border-l border-gray-100 flex-col shadow-2xl z-30 relative ${mobileView === 'menu' ? 'hidden lg:flex' : 'flex fixed inset-0 lg:static h-full'}`}>
+    <div className={`w-full lg:w-[400px] h-dvh lg:h-full min-h-0 overflow-hidden bg-white border-l border-gray-100 flex-col shadow-2xl z-30 relative ${mobileView === 'menu' ? 'hidden lg:flex' : 'flex fixed inset-0 lg:static'}`}>
         
         {/* Cart Header */}
         <div className="px-6 py-4 border-b border-gray-50 flex justify-between items-center bg-white flex-shrink-0">
@@ -90,6 +92,7 @@ export default function CartSidebar({
             </div>
         </div>
 
+        <div className="flex-1 min-h-0 overflow-y-auto bg-white">
         {pendingOrderContext && (
             <div className="mx-4 mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 flex items-center justify-between gap-3">
                 <div className="min-w-0">
@@ -103,7 +106,7 @@ export default function CartSidebar({
         )}
 
         {/* Customer Selection Area */}
-        <div className="px-6 py-2 border-b border-gray-50 space-y-3">
+        <div className="px-4 lg:px-6 py-2 border-b border-gray-50 space-y-3">
             {selectedMember ? (
                 <div className="flex items-center justify-between text-sm bg-blue-50 text-blue-700 px-3 py-2 rounded-lg border border-blue-100">
                     <span className="font-bold flex items-center gap-2"><User size={14}/> {selectedMember.name}</span>
@@ -201,7 +204,7 @@ export default function CartSidebar({
         </div>
 
         {/* Cart Items List */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-white">
+        <div className="min-h-[180px] p-4 space-y-3 bg-white">
             {cart.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-gray-400 opacity-50 space-y-4">
                     <ShoppingCart size={64} strokeWidth={1} />
@@ -235,7 +238,12 @@ export default function CartSidebar({
                             </div>
                             
                             <div className="flex justify-between items-end mt-2">
-                                <p className="text-blue-600 font-bold text-sm">Rp {Number(item.price).toLocaleString('id-ID')}</p>
+                                <div>
+                                    {hasProductDiscount(item) && (
+                                        <p className="text-[10px] text-gray-400 line-through">Rp {getItemOriginalPrice(item).toLocaleString('id-ID')}</p>
+                                    )}
+                                    <p className="text-blue-600 font-bold text-sm">Rp {Number(item.price).toLocaleString('id-ID')}</p>
+                                </div>
                                 
                                 {/* Qty Control */}
                                 <div className="flex items-center gap-3 bg-gray-50 rounded-lg px-2 py-1 border border-gray-100">
@@ -244,6 +252,13 @@ export default function CartSidebar({
                                     <button onClick={() => updateQty(item.id, 1)} className="text-gray-500 hover:text-blue-600 transition-colors"><Plus size={14} /></button>
                                 </div>
                             </div>
+
+                            {hasProductDiscount(item) && (
+                                <div className="mt-1 flex items-center justify-between gap-2 text-[10px] font-semibold text-emerald-600">
+                                    <span className="truncate">{item.discountLabel || 'Diskon produk'}</span>
+                                    <span className="shrink-0">Hemat Rp {getItemProductDiscountTotal(item).toLocaleString('id-ID')}</span>
+                                </div>
+                            )}
 
                             {/* Per-item Notes */}
                             {editingNoteId === item.id ? (
@@ -278,10 +293,23 @@ export default function CartSidebar({
                 ))
             )}
         </div>
+        </div>
 
         {/* Footer Summary */}
-        <div className="bg-gray-50 p-6 rounded-t-3xl border-t border-gray-100 mt-auto shadow-[0_-5px_30px_rgba(0,0,0,0.02)]">
-            <div className="space-y-3 mb-6">
+        <div className="shrink-0 bg-gray-50 p-4 lg:p-5 rounded-t-3xl border-t border-gray-100 shadow-[0_-5px_30px_rgba(0,0,0,0.02)]">
+            <div className="space-y-2 mb-4">
+                {productDiscountTotal > 0 && (
+                    <>
+                        <div className="flex justify-between text-xs text-gray-400">
+                            <span>Harga normal</span>
+                            <span>Rp {(subTotal + productDiscountTotal).toLocaleString('id-ID')}</span>
+                        </div>
+                        <div className="flex justify-between text-xs font-medium text-emerald-600">
+                            <span>Diskon produk</span>
+                            <span>- Rp {productDiscountTotal.toLocaleString('id-ID')}</span>
+                        </div>
+                    </>
+                )}
                 <div className="flex justify-between text-sm text-gray-500">
                     <span>Subtotal</span>
                     <span className="font-medium text-gray-900">Rp {subTotal.toLocaleString('id-ID')}</span>
@@ -329,7 +357,7 @@ export default function CartSidebar({
                 <button 
                     disabled={cart.length === 0 || isSavingTransaction || Boolean(pendingOrderContext)}
                     onClick={onSaveTransaction}
-                    className="py-4 px-4 bg-white border border-gray-200 text-gray-600 rounded-xl font-bold text-sm hover:bg-gray-50 hover:border-gray-300 disabled:bg-gray-100 disabled:text-gray-300 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-1.5 active:scale-95"
+                    className="py-3 px-4 bg-white border border-gray-200 text-gray-600 rounded-xl font-bold text-sm hover:bg-gray-50 hover:border-gray-300 disabled:bg-gray-100 disabled:text-gray-300 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-1.5 active:scale-95"
                     title="Simpan Pesanan"
                 >
                     {isSavingTransaction ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
@@ -340,7 +368,7 @@ export default function CartSidebar({
                 <button 
                     disabled={cart.length === 0}
                     onClick={handlePaymentOpen}
-                    className="flex-1 py-4 bg-gray-900 text-white rounded-xl font-bold text-lg hover:bg-gray-800 disabled:bg-gray-300 disabled:cursor-not-allowed shadow-xl shadow-gray-200 transition-all flex items-center justify-center gap-2 active:scale-95"
+                    className="flex-1 py-3 bg-gray-900 text-white rounded-xl font-bold text-lg hover:bg-gray-800 disabled:bg-gray-300 disabled:cursor-not-allowed shadow-xl shadow-gray-200 transition-all flex items-center justify-center gap-2 active:scale-95"
                 >
                     Pembayaran <ChevronRight size={20} />
                 </button>

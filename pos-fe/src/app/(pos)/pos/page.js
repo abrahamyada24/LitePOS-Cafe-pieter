@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 
 // Import Components
@@ -10,6 +10,7 @@ import ProductGrid from '@/components/pos/ProductGrid';
 import CartSidebar from '@/components/pos/CartSidebar';
 import MemberModal from '@/components/pos/MemberModal';
 import PaymentModal from '@/components/pos/PaymentModal';
+import DiscountModal from '@/components/pos/DiscountModal';
 import ReceiptPreviewModal from '@/components/pos/ReceiptPreviewModal';
 import SavedTransactionModal from '@/components/pos/SavedTransactionModal';
 import TableModal from '@/components/pos/TableModal';
@@ -23,6 +24,7 @@ import {
   getShiftReminder,
 } from '@/utils/shiftReminder';
 import { getPosPendingTransactions } from '@/utils/savedTransactions';
+import { getProductDiscountTotal } from '@/utils/transactionDiscounts';
 import { useStore } from '@/store/useStore';
 
 const RAW_API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
@@ -73,6 +75,8 @@ export default function POSPage() {
   const [savedTransactionCount, setSavedTransactionCount] = useState(0);
   const [isSavingTransaction, setIsSavingTransaction] = useState(false);
   const [activeSavedTransactionId, setActiveSavedTransactionId] = useState(null);
+  const [discountConfig, setDiscountConfig] = useState(null);
+  const [isDiscountModalOpen, setIsDiscountModalOpen] = useState(false);
 
   // Table & Order Type States
   const [orderType, setOrderType] = useState('TAKE_AWAY');
@@ -84,6 +88,34 @@ export default function POSPage() {
   const [taxRate, setTaxRate] = useState(0);
   const tableOrderRestoreStarted = useRef(false);
   const shiftReminderGateRef = useRef({ key: '', nextAt: 0 });
+
+  const applyStoreSettings = useCallback((nextSettings) => {
+    setStoreSettings(nextSettings);
+    setTaxRate(Number(nextSettings?.taxRate || 0) / 100);
+    try {
+      const parsedOptions = nextSettings?.takeawayOptions ? JSON.parse(nextSettings.takeawayOptions) : [];
+      setTakeawayOptions(Array.isArray(parsedOptions) ? parsedOptions : []);
+    } catch {
+      setTakeawayOptions([]);
+    }
+  }, []);
+
+  const refreshStoreSettings = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_URL}/api/settings`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        cache: 'no-store',
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success || !data.data) return false;
+      applyStoreSettings(data.data);
+      return true;
+    } catch (error) {
+      console.error('Failed to refresh settings', error);
+      return false;
+    }
+  }, [applyStoreSettings]);
 
   const refreshSavedTransactionCount = async () => {
     try {
@@ -147,28 +179,8 @@ export default function POSPage() {
             if (memData.success) setMembers(memData.data);
             if (tableData.success) setTables(tableData.data.filter(t => t.status === 'AVAILABLE'));
 
-            // Fetch settings for takeaway options and tax
-            try {
-                const settingsRes = await fetch(`${API_URL}/api/settings`, { headers });
-                const settingsData = await settingsRes.json();
-                
-                if (settingsData.success && settingsData.data) {
-                    setStoreSettings(settingsData.data);
-                    if (settingsData.data.takeawayOptions) {
-                        try {
-                            const parsed = JSON.parse(settingsData.data.takeawayOptions);
-                            setTakeawayOptions(Array.isArray(parsed) ? parsed : []);
-                        } catch { setTakeawayOptions([]); }
-                    }
-                    if (settingsData.data.taxRate !== undefined && settingsData.data.taxRate !== null) {
-                        setTaxRate(Number(settingsData.data.taxRate) / 100);
-                    }
-                }
-            } catch (e) {
-                console.error('Failed to fetch settings', e);
-            } finally {
-                setSettingsLoaded(true);
-            }
+            await refreshStoreSettings();
+            setSettingsLoaded(true);
 
         } catch (error) {
             console.error("Error fetching data:", error);
@@ -180,7 +192,21 @@ export default function POSPage() {
     fetchData();
     refreshSavedTransactionCount();
 
-  }, [authenticatedUser]);
+  }, [authenticatedUser, refreshStoreSettings]);
+
+  useEffect(() => {
+    const handleFocus = () => refreshStoreSettings();
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') refreshStoreSettings();
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [refreshStoreSettings]);
 
   useEffect(() => {
     if (!settingsLoaded || storeSettings?.enableQris !== true || !MIDTRANS_CLIENT_KEY) {
@@ -304,6 +330,7 @@ export default function POSPage() {
           accepted: sessionStorage.getItem('table-order-accepted-id') === String(order.id),
         };
         setCart(restoredCart);
+        setDiscountConfig(null);
         setPendingOrderContext(context);
         setOrderType('DINE_IN');
         setSelectedTable({ number: payload.tableNumber, name: payload.tableNumber });
@@ -383,11 +410,35 @@ export default function POSPage() {
   };
 
   const removeFromCart = (id) => setCart(cart.filter(item => item.id !== id));
+  const clearCurrentCart = () => {
+    setCart([]);
+    setDiscountConfig(null);
+  };
+
+  const updateItemNotes = (id, notes) => {
+    setCart(current => current.map(item => item.id === id ? { ...item, notes: notes.trim() || null } : item));
+  };
+
+  useEffect(() => {
+    if (cart.length === 0) setDiscountConfig(null);
+  }, [cart.length]);
 
   // --- CALCULATIONS ---
   const subTotal = cart.reduce((sum, item) => sum + (Number(item.price) * item.qty), 0);
-  const taxAmount = subTotal * taxRate;
-  const grandTotal = subTotal + taxAmount;
+  const productDiscountTotal = getProductDiscountTotal(cart);
+  const discount = useMemo(() => {
+    if (!discountConfig || Number(discountConfig.value) <= 0 || subTotal <= 0) return null;
+    const rawAmount = discountConfig.type === 'percent'
+      ? Math.round(subTotal * (Number(discountConfig.value) / 100))
+      : Math.round(Number(discountConfig.value));
+    return {
+      ...discountConfig,
+      amount: Math.min(subTotal, Math.max(0, rawAmount)),
+    };
+  }, [discountConfig, subTotal]);
+  const taxableAmount = Math.max(0, subTotal - (discount?.amount || 0));
+  const taxAmount = Math.round(taxableAmount * taxRate);
+  const grandTotal = taxableAmount + taxAmount;
   
   const deficit = Math.max(0, grandTotal - cashGiven);
   const change = Math.max(0, cashGiven - grandTotal);
@@ -403,13 +454,22 @@ export default function POSPage() {
       createdAt: transaction.createdAt || new Date().toISOString(),
       customerName: transaction.customerName || customerName || null,
       user: transaction.user || currentUser,
-      items: cart.map(item => ({
+      items: cart.map(item => {
+        const savedItem = item.packageId ? null : transaction.items?.find(candidate => (
+          Number(candidate.productId) === Number(item.id)
+          && !String(candidate.notes || '').startsWith('[Paket ')
+        ));
+        return {
           productId: item.id,
           qty: item.qty,
-          price: Number(item.price),
-          notes: item.notes || null,
+          price: Number(savedItem?.price ?? item.price),
+          originalPrice: Number(savedItem?.originalPrice ?? item.originalPrice ?? item.price),
+          discountAmount: Number(savedItem?.discountAmount ?? item.discountAmount ?? 0),
+          discountLabel: item.discountLabel || null,
+          notes: savedItem?.notes || item.notes || null,
           product: { name: item.name },
-      })),
+        };
+      }),
       payments: transaction.payments?.length
           ? transaction.payments
           : [{ paymentType: type, amount: grandTotal }],
@@ -417,7 +477,7 @@ export default function POSPage() {
       changeAmount: type === 'CASH' ? change : (transaction.changeAmount ?? 0),
       subTotal: transaction.subTotal ?? subTotal,
       taxAmount: transaction.taxAmount ?? taxAmount,
-      discountAmount: transaction.discountAmount ?? 0,
+      discountAmount: transaction.discountAmount ?? discount?.amount ?? 0,
       grandTotal: transaction.grandTotal ?? grandTotal,
       orderType: transaction.orderType || orderType,
       tableNumber: transaction.tableNumber || selectedTable?.number || null,
@@ -454,7 +514,9 @@ export default function POSPage() {
               note: pendingOrderContext?.note || null,
               sourceOrderCode: pendingOrderContext?.orderCode || null,
               preOrderDate: orderType === 'PRE_ORDER' && preOrderDate ? new Date(preOrderDate).toISOString() : null,
-              takeawayOption: orderType === 'TAKE_AWAY' && takeawayOption ? takeawayOption : null
+              takeawayOption: orderType === 'TAKE_AWAY' && takeawayOption ? takeawayOption : null,
+              discountAmount: discountConfig?.value || 0,
+              discountType: discountConfig?.type || 'amount',
           };
 
           const res = await fetch(`${API_URL}/api/transactions`, {
@@ -593,6 +655,9 @@ export default function POSPage() {
         tableNumber: selectedTable?.number || null,
         preOrderDate: preOrderDate || null,
         takeawayOption: takeawayOption || null,
+        discount: discountConfig,
+        productDiscountTotal,
+        discountAmount: discount?.amount || 0,
         subTotal,
         taxAmount,
         grandTotal,
@@ -624,6 +689,7 @@ export default function POSPage() {
       }
 
       setCart([]);
+      setDiscountConfig(null);
       setSelectedMember(null);
       setGuestCustomerName('');
       setSelectedTable(null);
@@ -655,6 +721,12 @@ export default function POSPage() {
       setSelectedTable(payload.tableNumber ? { number: payload.tableNumber } : null);
       setPreOrderDate(payload.preOrderDate || '');
       setTakeawayOption(payload.takeawayOption || '');
+      const restoredDiscount = payload.discount;
+      setDiscountConfig(
+        restoredDiscount && Number(restoredDiscount.value) > 0
+          ? { value: Number(restoredDiscount.value), type: restoredDiscount.type === 'percent' ? 'percent' : 'amount' }
+          : null
+      );
       setActiveSavedTransactionId(transaction.id);
       setIsSavedTransactionModalOpen(false);
       if (window.innerWidth < 1024) setMobileView('cart');
@@ -669,6 +741,7 @@ export default function POSPage() {
       setIsReceiptModalOpen(false);
       setCompletedTransaction(null);
       setCart([]);
+      setDiscountConfig(null);
       setSelectedMember(null);
       setGuestCustomerName('');
       setSelectedTable(null);
@@ -763,10 +836,11 @@ export default function POSPage() {
         removeFromCart={removeFromCart}
         updateQty={updateQty}
         handlePaymentOpen={handlePaymentOpen}
-        setCart={setCart}
+        onClearCart={clearCurrentCart}
         getImageUrl={getImageUrl}
         grandTotal={grandTotal}
         subTotal={subTotal}
+        productDiscountTotal={productDiscountTotal}
         taxAmount={taxAmount}
         orderType={orderType}
         setOrderType={setOrderType}
@@ -779,10 +853,14 @@ export default function POSPage() {
         setTakeawayOption={setTakeawayOption}
         taxRate={taxRate}
         pendingOrderContext={pendingOrderContext}
+        discount={discount}
+        onOpenDiscountModal={() => setIsDiscountModalOpen(true)}
+        onRemoveDiscount={() => setDiscountConfig(null)}
         onSaveTransaction={handleSaveTransaction}
         isSavingTransaction={isSavingTransaction}
         savedTransactionCount={savedTransactionCount}
         onOpenSavedTransactions={() => setIsSavedTransactionModalOpen(true)}
+        onUpdateItemNotes={updateItemNotes}
         // Logout sekarang dihandle Header, tapi jika butuh di mobile menu:
         handleLogout={async () => {
             const confirmed = await showAlert.confirm('Keluar Kasir?', 'Sesi kasir akan diakhiri.', 'Ya, Keluar');
@@ -835,8 +913,22 @@ export default function POSPage() {
          hasReceipt={Boolean(completedTransaction)}
          onOpenReceipt={() => setIsReceiptModalOpen(true)}
          grandTotal={grandTotal}
+         cart={cart}
+         subTotal={subTotal}
+         productDiscountTotal={productDiscountTotal}
+         orderDiscountAmount={discount?.amount || 0}
+         taxAmount={taxAmount}
          formatNumber={formatNumber}
          midtransEnabled={storeSettings?.enableQris === true && Boolean(MIDTRANS_CLIENT_KEY)}
+      />
+
+      <DiscountModal
+         isOpen={isDiscountModalOpen}
+         onClose={() => setIsDiscountModalOpen(false)}
+         onApply={(value, type) => setDiscountConfig(Number(value) > 0 ? { value: Number(value), type } : null)}
+         subTotal={subTotal}
+         initialDiscount={discountConfig?.value || 0}
+         initialType={discountConfig?.type || 'amount'}
       />
 
       <SavedTransactionModal

@@ -58,7 +58,7 @@ exports.updateSettings = async (req, res) => {
     if (phone) dataToUpdate.phone = phone;
     if (email) dataToUpdate.email = email;
     if (website) dataToUpdate.website = website;
-    if (receiptFooter) dataToUpdate.receiptFooter = receiptFooter;
+    if (receiptFooter !== undefined) dataToUpdate.receiptFooter = String(receiptFooter).slice(0, 1000);
 
     // Map data angka
     if (taxRate !== undefined) dataToUpdate.taxRate = parseFloat(taxRate);

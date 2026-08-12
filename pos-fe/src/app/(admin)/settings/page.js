@@ -194,6 +194,14 @@ export default function SettingsPage() {
         const result = await res.json();
         if (!res.ok || !result.success) throw new Error(result.message || result.error || "Gagal menyimpan pengaturan");
 
+        if (result.data) {
+          setForm(current => ({
+            ...current,
+            receiptFooter: result.data.receiptFooter ?? '',
+            logoFile: null,
+          }));
+        }
+
         // Endpoint settings jauh lebih ringan daripada memuat semua master data
         // dan langsung memicu render ulang menu Sidebar.
         await fetchSettings();
@@ -324,7 +332,7 @@ export default function SettingsPage() {
         <div>Rasio logo dipertahankan otomatis</div>
         <div className="my-2 border-t border-dashed border-black" />
         <div className="whitespace-pre-wrap text-center">
-          {settings?.receiptFooter || 'Terima kasih atas kunjungan Anda'}
+          {settings?.receiptFooter ?? 'Terima kasih atas kunjungan Anda'}
         </div>
         <div className="mt-1 text-center">Printer browser siap digunakan</div>
       </div>
@@ -485,6 +493,7 @@ export default function SettingsPage() {
                     name="receiptFooter"
                     value={form.receiptFooter}
                     onChange={handleChange}
+                    maxLength={1000}
                     rows={3}
                     placeholder="Contoh: Terima kasih telah berbelanja!"
                     className="w-full resize-y rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-800 outline-none transition-colors focus:border-blue-500 focus:bg-white"
@@ -492,6 +501,18 @@ export default function SettingsPage() {
                 <p className="mt-2 text-xs text-gray-500">
                     Teks ini tampil di bagian bawah nota website dan Android. Baris baru akan tetap dipertahankan saat dicetak.
                 </p>
+                <div className="mt-4 flex items-center justify-between gap-3">
+                    <span className="text-[11px] text-gray-400">{form.receiptFooter.length}/1000 karakter</span>
+                    <button
+                        type="button"
+                        onClick={handleSaveSettings}
+                        disabled={isLoading}
+                        className="flex items-center gap-2 rounded-xl bg-blue-500 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-blue-600 disabled:opacity-60"
+                    >
+                        {isLoading ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />}
+                        Simpan Footer Nota
+                    </button>
+                </div>
             </div>
 
             <div className="card-base p-6">

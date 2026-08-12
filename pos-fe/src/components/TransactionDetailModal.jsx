@@ -3,12 +3,16 @@
 import { useState, useEffect } from 'react';
 import { X, Calendar, User, CreditCard, Printer, ShoppingBag, Store, FileText, MapPin, UtensilsCrossed, RotateCcw, Loader2 } from 'lucide-react';
 import { DEFAULT_DEVICE_PREFERENCES, getDevicePreferences, getPaperWidthMm } from '@/utils/devicePreferences';
+import { useStore } from '@/store/useStore';
+import { getItemOriginalPrice, getItemProductDiscountTotal, getProductDiscountTotal, hasProductDiscount } from '@/utils/transactionDiscounts';
+import { shouldShowLitePosBranding } from '@/utils/receiptBranding';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
 export default function TransactionDetailModal({ isOpen, onClose, transaction, canReturn = false, isReturning = false, onReturn }) {
     const [storeSettings, setStoreSettings] = useState(null);
     const [devicePreferences, setDevicePreferences] = useState(DEFAULT_DEVICE_PREFERENCES);
+    const license = useStore((state) => state.license);
 
     // Fetch store settings for receipt header
     useEffect(() => {
@@ -20,6 +24,7 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
                     const res = await fetch(`${API_URL}/api/settings`, {
                         headers: token ? { 'Authorization': `Bearer ${token}` } : {},
                         credentials: 'include',
+                        cache: 'no-store',
                     });
                     const data = await res.json();
                     if (data.success && data.data) {
@@ -33,7 +38,7 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
 
     if (!isOpen || !transaction) return null;
 
-    const { items, payments, user, customer } = transaction;
+    const { items = [], payments, user, customer } = transaction;
 
     const formatRp = (num) => "Rp " + (Number(num) || 0).toLocaleString('id-ID');
     const formatDate = (dateStr) => new Date(dateStr).toLocaleString('id-ID', {
@@ -41,20 +46,24 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
     });
 
     // Calculate tax percentage from transaction data
-    const taxPct = transaction.subTotal > 0 && transaction.taxAmount > 0
-        ? Math.round((transaction.taxAmount / transaction.subTotal) * 100)
+    const orderDiscountAmount = Number(transaction.discountAmount || 0);
+    const taxableBase = Math.max(0, Number(transaction.subTotal || 0) - orderDiscountAmount);
+    const taxPct = taxableBase > 0 && transaction.taxAmount > 0
+        ? Math.round((transaction.taxAmount / taxableBase) * 100)
         : 0;
+    const productDiscountTotal = getProductDiscountTotal(items);
 
     // Store info for receipt
     const storeName = storeSettings?.storeName || 'TOKO';
     const storeAddress = storeSettings?.address || '';
     const storePhone = storeSettings?.phone || '';
-    const receiptFooter = storeSettings?.receiptFooter || 'Terima kasih atas kunjungan Anda';
+    const receiptFooter = storeSettings?.receiptFooter ?? 'Terima kasih atas kunjungan Anda';
     const storeLogo = storeSettings?.logoUrl
         ? (storeSettings.logoUrl.startsWith('http') ? storeSettings.logoUrl : `${API_URL}${storeSettings.logoUrl}`)
         : '';
     const paperWidthMm = getPaperWidthMm(devicePreferences);
     const logoMaxWidthMm = paperWidthMm === 80 ? 58 : 42;
+    const showLitePosBranding = shouldShowLitePosBranding(license);
 
     // Payment info
     const paymentType = payments?.[0]?.paymentType || 'TUNAI';
@@ -198,7 +207,19 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
                                         <tr key={idx} className="hover:bg-gray-50 transition-colors">
                                             <td className="px-4 py-3">
                                                 <p className="font-bold text-gray-700 text-xs">{item.product?.name || 'Menu'}</p>
-                                                <p className="text-[9px] text-gray-400">@ {formatRp(item.price)}</p>
+                                                {hasProductDiscount(item) ? (
+                                                    <>
+                                                        <p className="text-[9px] text-gray-400">
+                                                            @ <span className="line-through">{formatRp(getItemOriginalPrice(item))}</span>{' '}
+                                                            <span className="font-bold text-emerald-600">{formatRp(item.price)}</span>
+                                                        </p>
+                                                        <p className="mt-0.5 text-[9px] font-semibold text-emerald-600">
+                                                            Diskon produk -{formatRp(getItemProductDiscountTotal(item))}
+                                                        </p>
+                                                    </>
+                                                ) : (
+                                                    <p className="text-[9px] text-gray-400">@ {formatRp(item.price)}</p>
+                                                )}
                                             </td>
                                             <td className="px-4 py-3 text-center font-bold text-xs">{item.qty}</td>
                                             <td className="px-4 py-3 text-right font-black text-xs text-gray-900">{formatRp(item.price * item.qty)}</td>
@@ -219,6 +240,18 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
                                 <CreditCard size={12} /> {paymentType}
                             </span>
                         </div>
+                        {productDiscountTotal > 0 && (
+                            <>
+                                <div className="flex justify-between text-xs">
+                                    <span className="text-gray-400 font-bold uppercase tracking-widest">Harga normal</span>
+                                    <span className="font-bold text-white">{formatRp(Number(transaction.subTotal) + productDiscountTotal)}</span>
+                                </div>
+                                <div className="flex justify-between text-xs">
+                                    <span className="text-emerald-400 font-bold uppercase tracking-widest">Diskon produk</span>
+                                    <span className="font-bold text-emerald-400">-{formatRp(productDiscountTotal)}</span>
+                                </div>
+                            </>
+                        )}
                         <div className="flex justify-between text-xs">
                             <span className="text-gray-400 font-bold uppercase tracking-widest">Subtotal</span>
                             <span className="font-bold text-white">{formatRp(transaction.subTotal)}</span>
@@ -230,8 +263,8 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
                             </div>
                         )}
                         <div className="flex justify-between text-xs pb-3 border-b border-white/10">
-                            <span className="text-gray-400 font-bold uppercase tracking-widest">Diskon</span>
-                            <span className="font-bold text-white">{formatRp(transaction.discountAmount || 0)}</span>
+                            <span className="text-gray-400 font-bold uppercase tracking-widest">Diskon transaksi</span>
+                            <span className="font-bold text-white">{orderDiscountAmount > 0 ? `-${formatRp(orderDiscountAmount)}` : formatRp(0)}</span>
                         </div>
                         <div className="flex justify-between items-center pt-2">
                             <span className="text-sm font-black uppercase tracking-tighter text-blue-500">Total Akhir</span>
@@ -289,10 +322,17 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
                         {items.map((item, i) => (
                             <div key={i} style={{ marginBottom: '8px' }}>
                                 <div style={{ fontWeight: 'bold', textTransform: 'uppercase' }}>{item.product?.name}</div>
+                                {hasProductDiscount(item) && (
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px' }}>
+                                        <span>HARGA NORMAL {Number(getItemOriginalPrice(item)).toLocaleString('id-ID')}</span>
+                                        <span>-{Number(getItemProductDiscountTotal(item)).toLocaleString('id-ID')}</span>
+                                    </div>
+                                )}
                                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                     <span>{item.qty} x {Number(item.price).toLocaleString('id-ID')}</span>
                                     <span>{(item.qty * Number(item.price)).toLocaleString('id-ID')}</span>
                                 </div>
+                                {hasProductDiscount(item) && <div style={{ fontSize: '9px' }}>DISKON PRODUK</div>}
                             </div>
                         ))}
                     </div>
@@ -300,6 +340,18 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
                     <div style={{ borderBottom: '1px dashed #000', margin: '10px 0' }}></div>
 
                     <div style={{ fontSize: '11px', fontWeight: 'bold' }}>
+                        {productDiscountTotal > 0 && (
+                            <>
+                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                    <span>HARGA NORMAL</span>
+                                    <span>{(Number(transaction.subTotal) + productDiscountTotal).toLocaleString('id-ID')}</span>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                    <span>DISKON PRODUK</span>
+                                    <span>-{productDiscountTotal.toLocaleString('id-ID')}</span>
+                                </div>
+                            </>
+                        )}
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                             <span>SUBTOTAL</span>
                             <span>{Number(transaction.subTotal).toLocaleString('id-ID')}</span>
@@ -314,7 +366,7 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
 
                         {Number(transaction.discountAmount || 0) > 0 && (
                             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                <span>DISKON</span>
+                                <span>DISKON TRANSAKSI</span>
                                 <span>-{Number(transaction.discountAmount).toLocaleString('id-ID')}</span>
                             </div>
                         )}
@@ -341,7 +393,7 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
 
                     <div style={{ textAlign: 'center', fontSize: '10px', marginTop: '15px' }}>
                         <p style={{ margin: '0', whiteSpace: 'pre-wrap' }}>{receiptFooter}</p>
-                        <p style={{ fontSize: '8px' }}>Software by LitePOS</p>
+                        {showLitePosBranding && <p style={{ fontSize: '8px' }}>Software by LitePOS</p>}
                     </div>
                 </div>
 

@@ -20,6 +20,11 @@ export default function DiscountModal({ isOpen, onClose, onApply, subTotal, init
     const handleApply = () => {
         const val = Number(discountValue) || 0;
         let amount = 0;
+
+        if (val < 0 || (discountType === 'percent' && val > 100)) {
+            showAlert.warning('Diskon tidak valid', 'Persentase diskon harus antara 0 sampai 100%.');
+            return;
+        }
         
         if (discountType === 'percent') {
             amount = Math.round(subTotal * (val / 100));

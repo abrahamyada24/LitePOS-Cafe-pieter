@@ -1,15 +1,18 @@
 "use client";
 
 import { X, Banknote, QrCode, CheckCircle2, Loader2, ExternalLink, RotateCcw, CreditCard, Printer } from 'lucide-react';
+import { getItemProductDiscountTotal, hasProductDiscount } from '@/utils/transactionDiscounts';
 
 export default function PaymentModal({
     isOpen, onClose, paymentStep, setPaymentStep, paymentMethod, setPaymentMethod,
     cashGiven, setCashGiven, handleCashInput, isCashSufficient, change, deficit,
     handleProcessTransaction, resetTransaction, isProcessing, hasReceipt, onOpenReceipt,
-    grandTotal, formatNumber, midtransEnabled = false
+    grandTotal, cart = [], subTotal = 0, productDiscountTotal = 0,
+    orderDiscountAmount = 0, taxAmount = 0, formatNumber, midtransEnabled = false
 }) {
 
     const DENOMINATIONS = [1000, 2000, 5000, 10000, 20000, 50000, 100000];
+    const discountedItems = cart.filter(hasProductDiscount);
 
     const handleDenominationClick = (amount) => {
         const current = Number(cashGiven) || 0;
@@ -29,7 +32,7 @@ export default function PaymentModal({
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-            <div className="bg-white w-full max-w-md rounded-3xl shadow-xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+            <div className="bg-white w-full max-w-md max-h-[92vh] rounded-3xl shadow-xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
 
                 {/* HEADER - Clean Style */}
                 <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
@@ -50,6 +53,50 @@ export default function PaymentModal({
                             <div className="text-center py-4">
                                 <p className="text-xs text-gray-400 uppercase font-bold tracking-wider mb-1">Total Tagihan</p>
                                 <h2 className="text-4xl font-black text-gray-900">Rp {formatNumber(grandTotal)}</h2>
+                            </div>
+
+                            <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4 text-xs">
+                                {discountedItems.length > 0 && (
+                                    <div className="mb-3 space-y-1.5 border-b border-dashed border-gray-200 pb-3">
+                                        <p className="font-bold uppercase tracking-wider text-emerald-600">Promo per produk</p>
+                                        {discountedItems.map((item) => (
+                                            <div key={item.id} className="flex justify-between gap-3 text-gray-600">
+                                                <span className="min-w-0 truncate">{item.name} x {item.qty}</span>
+                                                <span className="shrink-0 font-bold text-emerald-600">-Rp {formatNumber(getItemProductDiscountTotal(item))}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                <div className="space-y-1.5">
+                                    {productDiscountTotal > 0 && (
+                                        <>
+                                            <div className="flex justify-between text-gray-500">
+                                                <span>Harga normal</span>
+                                                <span>Rp {formatNumber(subTotal + productDiscountTotal)}</span>
+                                            </div>
+                                            <div className="flex justify-between font-semibold text-emerald-600">
+                                                <span>Diskon produk</span>
+                                                <span>-Rp {formatNumber(productDiscountTotal)}</span>
+                                            </div>
+                                        </>
+                                    )}
+                                    <div className="flex justify-between text-gray-600">
+                                        <span>Subtotal</span>
+                                        <span className="font-semibold">Rp {formatNumber(subTotal)}</span>
+                                    </div>
+                                    {orderDiscountAmount > 0 && (
+                                        <div className="flex justify-between font-semibold text-orange-600">
+                                            <span>Diskon transaksi</span>
+                                            <span>-Rp {formatNumber(orderDiscountAmount)}</span>
+                                        </div>
+                                    )}
+                                    {taxAmount > 0 && (
+                                        <div className="flex justify-between text-gray-600">
+                                            <span>Pajak</span>
+                                            <span>Rp {formatNumber(taxAmount)}</span>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
 
                             <div className="grid grid-cols-1 gap-3">

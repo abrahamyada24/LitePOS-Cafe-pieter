@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Printer, X } from 'lucide-react';
 import { DEFAULT_DEVICE_PREFERENCES, getDevicePreferences, getPaperWidthMm } from '@/utils/devicePreferences';
 import { useStore } from '@/store/useStore';
+import { getItemOriginalPrice, getItemProductDiscountTotal, getProductDiscountTotal, hasProductDiscount } from '@/utils/transactionDiscounts';
+import { shouldShowLitePosBranding } from '@/utils/receiptBranding';
 
 export default function ReceiptPreviewModal({ isOpen, onClose, transaction, store, formatNumber }) {
     const receiptRef = useRef(null);
@@ -30,7 +32,7 @@ export default function ReceiptPreviewModal({ isOpen, onClose, transaction, stor
     });
     const paperWidthMm = getPaperWidthMm(devicePreferences);
     const logoMaxWidthMm = paperWidthMm === 80 ? 58 : 42;
-    const showLitePosBranding = !(license?.isActive && license?.plan === 'PREMIUM');
+    const showLitePosBranding = shouldShowLitePosBranding(license);
 
     const handlePrint = () => {
         if (typeof window === 'undefined') return;
@@ -50,6 +52,7 @@ export default function ReceiptPreviewModal({ isOpen, onClose, transaction, stor
 
     const paymentType = transaction.payments?.[0]?.paymentType || 'CASH';
     const paidAmount = transaction.cashAmount ?? transaction.payments?.[0]?.amount ?? transaction.grandTotal;
+    const productDiscountTotal = getProductDiscountTotal(transaction.items);
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
@@ -142,10 +145,17 @@ export default function ReceiptPreviewModal({ isOpen, onClose, transaction, stor
                             {transaction.items?.map((item, index) => (
                                 <div key={`${item.productId || index}-${index}`}>
                                     <div className="font-bold uppercase">{item.product?.name || item.name || 'Produk'}</div>
+                                    {hasProductDiscount(item) && (
+                                        <div className="flex justify-between gap-2">
+                                            <span>{item.qty || item.quantity} x <span className="line-through">{numberFormat(getItemOriginalPrice(item))}</span></span>
+                                            <span>-{numberFormat(getItemProductDiscountTotal(item))}</span>
+                                        </div>
+                                    )}
                                     <div className="flex justify-between gap-2">
                                         <span>{item.qty || item.quantity} x {numberFormat(item.price)}</span>
                                         <span>{numberFormat(Number(item.price) * Number(item.qty || item.quantity))}</span>
                                     </div>
+                                    {hasProductDiscount(item) && <div className="italic">{item.discountLabel || 'Diskon produk'}</div>}
                                     {item.notes && <div className="italic">Catatan: {item.notes}</div>}
                                 </div>
                             ))}
@@ -153,9 +163,15 @@ export default function ReceiptPreviewModal({ isOpen, onClose, transaction, stor
 
                         <div className="my-2 border-t border-dashed border-black" />
                         <div className="space-y-0.5">
+                            {productDiscountTotal > 0 && (
+                                <>
+                                    <div className="flex justify-between"><span>Harga normal</span><span>{numberFormat(Number(transaction.subTotal) + productDiscountTotal)}</span></div>
+                                    <div className="flex justify-between"><span>Diskon produk</span><span>-{numberFormat(productDiscountTotal)}</span></div>
+                                </>
+                            )}
                             <div className="flex justify-between"><span>Subtotal</span><span>{numberFormat(transaction.subTotal)}</span></div>
                             {Number(transaction.discountAmount) > 0 && (
-                                <div className="flex justify-between"><span>Diskon</span><span>-{numberFormat(transaction.discountAmount)}</span></div>
+                                <div className="flex justify-between"><span>Diskon transaksi</span><span>-{numberFormat(transaction.discountAmount)}</span></div>
                             )}
                             {Number(transaction.taxAmount) > 0 && (
                                 <div className="flex justify-between"><span>Pajak</span><span>{numberFormat(transaction.taxAmount)}</span></div>
@@ -171,7 +187,7 @@ export default function ReceiptPreviewModal({ isOpen, onClose, transaction, stor
 
                         <div className="my-2 border-t border-dashed border-black" />
                         <div className="whitespace-pre-wrap text-center">
-                            {store?.receiptFooter || 'Terima kasih atas kunjungan Anda'}
+                            {store?.receiptFooter ?? 'Terima kasih atas kunjungan Anda'}
                         </div>
                         {showLitePosBranding && (
                             <div className="mt-2 text-center text-[8px]">Powered by LitePOS</div>

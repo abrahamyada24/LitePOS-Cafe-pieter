@@ -183,12 +183,18 @@ exports.createTransaction = async (req, res) => {
             const taxRate = setting?.taxRate ? Number(setting.taxRate) / 100 : 0;
 
             // Calculate discount (support percent and amount modes)
-            let discount = 0;
-            if (discountType === 'percent') {
-                discount = subTotal * (parseFloat(discountAmount) / 100);
-            } else {
-                discount = parseFloat(discountAmount) || 0;
+            const normalizedDiscountType = discountType === 'percent' ? 'percent' : 'amount';
+            const discountValue = Number(discountAmount ?? 0);
+            if (!Number.isFinite(discountValue) || discountValue < 0) {
+                throw new Error('Nilai diskon tidak valid.');
             }
+            if (normalizedDiscountType === 'percent' && discountValue > 100) {
+                throw new Error('Persentase diskon tidak boleh lebih dari 100%.');
+            }
+
+            let discount = normalizedDiscountType === 'percent'
+                ? Math.round(subTotal * (discountValue / 100))
+                : Math.round(discountValue);
 
             // Loyalty points redemption discount
             let loyaltyDiscount = 0;
@@ -203,12 +209,23 @@ exports.createTransaction = async (req, res) => {
                 }
             }
 
-            const taxableAmount = subTotal - discount;
+            discount = Math.min(subTotal, Math.max(0, discount));
+            const taxableAmount = Math.max(0, subTotal - discount);
             const taxAmount = Math.round(taxableAmount * taxRate);
             const grandTotal = taxableAmount + taxAmount;
 
             // Generate Invoice unik
             const invoiceNumber = await generateInvoiceNumber(tx);
+
+            // Pastikan jumlah item Midtrans sama dengan grand total setelah diskon.
+            if (discount > 0) {
+                itemDetailsForMidtrans.push({
+                    id: 'ORDER-DISCOUNT',
+                    price: -Math.round(discount),
+                    quantity: 1,
+                    name: 'Diskon transaksi'
+                });
+            }
 
             // Tambahkan pajak ke item details Midtrans
             if (taxAmount > 0) {
