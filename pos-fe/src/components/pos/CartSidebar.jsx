@@ -123,7 +123,7 @@ export default function CartSidebar({
                         maxLength={100}
                         value={guestCustomerName}
                         onChange={(event) => setGuestCustomerName(event.target.value)}
-                        placeholder="Contoh: Pak Budi"
+                        placeholder="Masukkan Nama Pelanggan"
                         className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 outline-none transition-colors placeholder:text-gray-400 focus:border-blue-400 focus:bg-white"
                     />
                     <button onClick={() => setIsMemberModalOpen(true)} className="text-xs flex items-center gap-1 text-gray-500 hover:text-blue-500 transition-colors w-full justify-center py-2 border border-dashed rounded-lg border-gray-200 hover:border-blue-200">
