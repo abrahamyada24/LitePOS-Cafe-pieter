@@ -10,7 +10,7 @@ import StockOpnameScreen from './StockOpnameScreen';
 import RNFS from 'react-native-fs';
 import { resolveApiAssetUrl } from '../services/api';
 import { closeConfiguredPrinter, connectConfiguredPrinter } from '../utils/printerConnection';
-import ProductDiscountFields from '../components/ProductDiscountFields';
+import ProductDiscountFields, { createDiscountValues, getDiscountScheduleForSave, validateDiscountSchedule } from '../components/ProductDiscountFields';
 
 type TabType = 'products' | 'categories' | 'customers' | 'penerimaan' | 'opname' | 'stokDarurat';
 
@@ -52,7 +52,7 @@ export default function ManagementScreen({ navigation }: any) {
     const [newAddonName, setNewAddonName] = useState('');
     const [newAddonPrice, setNewAddonPrice] = useState('');
     const [productMinStock, setProductMinStock] = useState('');
-    const [productDiscount, setProductDiscount] = useState<any>({ active: false, type: 'PERCENT', value: '', label: '', startAt: '', endAt: '', startTime: '', endTime: '', days: '' });
+    const [productDiscount, setProductDiscount] = useState<any>(createDiscountValues());
 
     // Customer form
     const [customerName, setCustomerName] = useState('');
@@ -131,6 +131,8 @@ export default function ManagementScreen({ navigation }: any) {
     const handleSaveProduct = async () => {
         if (!productName.trim() || !productPrice || !productCategoryId)
             return Alert.alert('Validasi', 'Nama, Harga, dan Kategori wajib diisi.');
+        const discountScheduleError = validateDiscountSchedule(productDiscount);
+        if (discountScheduleError) return Alert.alert('Jadwal diskon belum lengkap', discountScheduleError);
         try {
             const db = await getDBConnection();
             const price = parseFloat(productPrice.replace(/[^0-9]/g, '') || '0');
@@ -142,7 +144,8 @@ export default function ManagementScreen({ navigation }: any) {
             const enableCost = enableCostPrice ? 1 : 0;
             const barcode = productBarcode.trim() ? productBarcode.trim() : null;
             const minStock = parseInt(productMinStock || '0', 10);
-            const discountValues = [productDiscount.active ? 1 : 0, productDiscount.type, parseFloat(productDiscount.value || '0'), productDiscount.startAt || null, productDiscount.endAt || null, productDiscount.startTime || null, productDiscount.endTime || null, productDiscount.days || null, productDiscount.label || null];
+            const discountSchedule = getDiscountScheduleForSave(productDiscount);
+            const discountValues = [productDiscount.active ? 1 : 0, productDiscount.type, parseFloat(productDiscount.value || '0'), discountSchedule.startAt, discountSchedule.endAt, discountSchedule.startTime, discountSchedule.endTime, discountSchedule.days, productDiscount.label || null];
 
             if (editingProduct) {
                 await db.executeSql(
@@ -188,7 +191,7 @@ export default function ManagementScreen({ navigation }: any) {
             setIsUnlimitedStock(prod.isUnlimitedStock === 1);
             setProductBarcode(prod.barcode || '');
             setProductMinStock((prod.minStock || 0).toString());
-            setProductDiscount({ active: prod.discountActive === 1, type: prod.discountType || 'PERCENT', value: (prod.discountValue || '').toString(), label: prod.discountLabel || '', startAt: prod.discountStartAt ? String(prod.discountStartAt).slice(0, 10) : '', endAt: prod.discountEndAt ? String(prod.discountEndAt).slice(0, 10) : '', startTime: prod.discountStartTime || '', endTime: prod.discountEndTime || '', days: prod.discountDays || '' });
+            setProductDiscount(createDiscountValues(prod));
             // Load add-ons for this product
             try {
                 const db = await getDBConnection();
@@ -334,7 +337,7 @@ export default function ManagementScreen({ navigation }: any) {
         setProductStock(''); setProductCategoryId(''); setProductImageUrl('');
         setIsUnlimitedStock(false); setProductBarcode('');
         setProductMinStock('');
-        setProductDiscount({ active: false, type: 'PERCENT', value: '', label: '', startAt: '', endAt: '', startTime: '', endTime: '', days: '' });
+        setProductDiscount(createDiscountValues());
         setProductAddons([]); setNewAddonName(''); setNewAddonPrice('');
         setEditingCustomer(null); setCustomerName(''); setCustomerPhone(''); setCustomerNotes('');
         setCustomerPoints('0');

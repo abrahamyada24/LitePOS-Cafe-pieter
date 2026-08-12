@@ -10,7 +10,7 @@ import { useStore } from '../store/useStore';
 import RNFS from 'react-native-fs';
 import { resolveApiAssetUrl } from '../services/api';
 import { closeConfiguredPrinter, connectConfiguredPrinter } from '../utils/printerConnection';
-import ProductDiscountFields from '../components/ProductDiscountFields';
+import ProductDiscountFields, { createDiscountValues, getDiscountScheduleForSave, validateDiscountSchedule } from '../components/ProductDiscountFields';
 
 const formatRp = (num: number) => 'Rp ' + (Math.round(num) || 0).toLocaleString('id-ID');
 
@@ -36,7 +36,7 @@ export default function ProductListScreen({ navigation }: any) {
     const [productAddons, setProductAddons] = useState<any[]>([]);
     const [newAddonName, setNewAddonName] = useState('');
     const [newAddonPrice, setNewAddonPrice] = useState('');
-    const [productDiscount, setProductDiscount] = useState<any>({ active: false, type: 'PERCENT', value: '', label: '', startAt: '', endAt: '', startTime: '', endTime: '', days: '' });
+    const [productDiscount, setProductDiscount] = useState<any>(createDiscountValues());
 
     const loadData = useCallback(async () => {
         try {
@@ -68,7 +68,7 @@ export default function ProductListScreen({ navigation }: any) {
         setEnableCostPrice(false); setProductStock(''); setProductCategoryId('');
         setProductImageUrl(''); setIsUnlimitedStock(false); setProductBarcode('');
         setProductAddons([]); setNewAddonName(''); setNewAddonPrice('');
-        setProductDiscount({ active: false, type: 'PERCENT', value: '', label: '', startAt: '', endAt: '', startTime: '', endTime: '', days: '' });
+        setProductDiscount(createDiscountValues());
     };
 
     const openAdd = () => { resetForm(); setShowModal(true); };
@@ -84,7 +84,7 @@ export default function ProductListScreen({ navigation }: any) {
         setProductImageUrl(prod.imageUrl || '');
         setIsUnlimitedStock(prod.isUnlimitedStock === 1);
         setProductBarcode(prod.barcode || '');
-        setProductDiscount({ active: prod.discountActive === 1, type: prod.discountType || 'PERCENT', value: (prod.discountValue || '').toString(), label: prod.discountLabel || '', startAt: prod.discountStartAt ? String(prod.discountStartAt).slice(0, 10) : '', endAt: prod.discountEndAt ? String(prod.discountEndAt).slice(0, 10) : '', startTime: prod.discountStartTime || '', endTime: prod.discountEndTime || '', days: prod.discountDays || '' });
+        setProductDiscount(createDiscountValues(prod));
         try {
             const db = await getDBConnection();
             const [aRes] = await db.executeSql('SELECT * FROM product_addons WHERE productId = ? ORDER BY id', [prod.id]);
@@ -103,6 +103,9 @@ export default function ProductListScreen({ navigation }: any) {
         if (price <= 0) {
             return Alert.alert('Validasi', 'Harga produk tidak boleh 0 (Nol) atau kosong.');
         }
+        const discountScheduleError = validateDiscountSchedule(productDiscount);
+        if (discountScheduleError) return Alert.alert('Jadwal diskon belum lengkap', discountScheduleError);
+        const discountSchedule = getDiscountScheduleForSave(productDiscount);
 
         Alert.alert(
             'Konfirmasi',
@@ -121,7 +124,7 @@ export default function ProductListScreen({ navigation }: any) {
                             const isUnlimited = isUnlimitedStock ? 1 : 0;
                             const enableCost = enableCostPrice ? 1 : 0;
                             const barcode = productBarcode.trim() || null;
-                            const discountValues = [productDiscount.active ? 1 : 0, productDiscount.type, parseFloat(productDiscount.value || '0'), productDiscount.startAt || null, productDiscount.endAt || null, productDiscount.startTime || null, productDiscount.endTime || null, productDiscount.days || null, productDiscount.label || null];
+                            const discountValues = [productDiscount.active ? 1 : 0, productDiscount.type, parseFloat(productDiscount.value || '0'), discountSchedule.startAt, discountSchedule.endAt, discountSchedule.startTime, discountSchedule.endTime, discountSchedule.days, productDiscount.label || null];
 
                             if (editing) {
                                 await db.executeSql(

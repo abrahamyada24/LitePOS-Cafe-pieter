@@ -32,7 +32,17 @@ const getStartDow = (year: number, month: number) => {
     return d === 0 ? 6 : d - 1; // shift to Mon-based
 };
 
-const parseISO = (iso: string) => {
+const parseISO = (iso: string, timeOnly = false) => {
+    if (timeOnly && /^\d{2}:\d{2}$/.test(iso)) {
+        const now = new Date();
+        return {
+            d: now.getDate(),
+            m: now.getMonth(),
+            y: now.getFullYear(),
+            h: parseInt(iso.substring(0, 2), 10),
+            min: parseInt(iso.substring(3, 5), 10),
+        };
+    }
     if (!iso || iso.length < 10) {
         const now = new Date();
         return {
@@ -62,6 +72,7 @@ interface Props {
     placeholder?: string;
     label?: string;
     withTime?: boolean;
+    mode?: 'date' | 'time' | 'datetime';
 }
 
 // ── Calendar Grid Cell ───────────────────────────────────────────
@@ -79,8 +90,10 @@ export default function DatePickerDropdown({
     placeholder = 'Pilih tanggal',
     label,
     withTime,
+    mode,
 }: Props) {
     const { width: sw } = useWindowDimensions();
+    const pickerMode = mode || (withTime ? 'datetime' : 'date');
 
     // Modal state
     const [open, setOpen] = React.useState(false);
@@ -105,7 +118,7 @@ export default function DatePickerDropdown({
 
     // ── Open modal ───────────────────────────────────────────────
     const openModal = () => {
-        const { d, m, y, h, min } = parseISO(value);
+        const { d, m, y, h, min } = parseISO(value, pickerMode === 'time');
         setSelDay(d);
         setSelMonth(m);
         setSelYear(y);
@@ -113,16 +126,21 @@ export default function DatePickerDropdown({
         setSelMin(min);
         setViewMonth(m);
         setViewYear(y);
-        setStep(1);
+        setStep(pickerMode === 'time' ? 2 : 1);
         setOpen(true);
     };
 
     // ── Confirm ──────────────────────────────────────────────────
     const confirm = () => {
+        if (pickerMode === 'time') {
+            onChange(`${pad(selHour)}:${pad(selMin)}`);
+            setOpen(false);
+            return;
+        }
         const maxDay = getDaysInMonth(selYear, selMonth);
         const safeDay = Math.min(selDay, maxDay);
         const dateStr = `${selYear}-${pad(selMonth + 1)}-${pad(safeDay)}`;
-        if (withTime) {
+        if (pickerMode === 'datetime') {
             onChange(`${dateStr} ${pad(selHour)}:${pad(selMin)}`);
         } else {
             onChange(dateStr);
@@ -212,9 +230,11 @@ export default function DatePickerDropdown({
 
     // ── Display text (trigger button) ────────────────────────────
     let displayText = placeholder;
-    if (value && value.length >= 10) {
+    if (pickerMode === 'time' && /^\d{2}:\d{2}$/.test(value)) {
+        displayText = value;
+    } else if (value && value.length >= 10) {
         const { d, m, y, h, min } = parseISO(value);
-        if (withTime && value.length >= 15) {
+        if (pickerMode === 'datetime' && value.length >= 15) {
             displayText = `${pad(d)}-${pad(m + 1)}-${y} ${pad(h)}:${pad(min)}`;
         } else {
             displayText = `${pad(d)}-${pad(m + 1)}-${y}`;
@@ -237,8 +257,8 @@ export default function DatePickerDropdown({
                 style={tw`flex-row items-center bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3`}
                 activeOpacity={0.8}
             >
-                <Icon name="calendar" size={18} color={tw.color('gray-500')} style={tw`mr-2`} />
-                <Text style={[tw`flex-1 font-bold`, { color: value ? tw.color('gray-800') : tw.color('gray-400') }]}>
+                <Icon name={pickerMode === 'time' ? 'clock-outline' : 'calendar'} size={18} color={tw.color('gray-500')} style={tw`mr-2`} />
+                <Text style={tw`flex-1 font-bold ${value ? 'text-gray-800 dark:text-gray-100' : 'text-gray-400 dark:text-gray-500'}`} numberOfLines={1}>
                     {displayText}
                 </Text>
                 <Text style={tw`text-gray-400 text-xs`}>▼</Text>
@@ -386,7 +406,7 @@ export default function DatePickerDropdown({
                                     <TouchableOpacity
                                         style={tw`flex-1 py-3 bg-blue-600 rounded-xl items-center flex-row justify-center`}
                                         onPress={() => {
-                                            if (withTime) {
+                                            if (pickerMode === 'datetime') {
                                                 setStep(2);
                                             } else {
                                                 confirm();
@@ -395,9 +415,9 @@ export default function DatePickerDropdown({
                                         activeOpacity={0.7}
                                     >
                                         <Text style={tw`font-bold text-white`}>
-                                            {withTime ? 'Selanjutnya' : 'Pilih Tanggal'}
+                                            {pickerMode === 'datetime' ? 'Selanjutnya' : 'Pilih Tanggal'}
                                         </Text>
-                                        {withTime && (
+                                        {pickerMode === 'datetime' && (
                                             <Icon name="arrow-right" size={16} color="#fff" style={tw`ml-1`} />
                                         )}
                                     </TouchableOpacity>
@@ -408,18 +428,22 @@ export default function DatePickerDropdown({
                                STEP 2 — Time Picker
                                ═══════════════════════════════════════════ */
                             <>
-                                {/* Selected Date Display */}
-                                <View style={tw`items-center pt-5 pb-3`}>
-                                    <Text style={tw`text-xs font-bold text-gray-400 uppercase tracking-wider mb-1`}>
-                                        Tanggal Dipilih
-                                    </Text>
-                                    <Text style={tw`text-base font-black text-gray-800 dark:text-gray-100`}>
-                                        {pad(selDay)}-{pad(selMonth + 1)}-{selYear}
-                                    </Text>
-                                </View>
+                                {pickerMode === 'datetime' ? (
+                                    <>
+                                        {/* Selected Date Display */}
+                                        <View style={tw`items-center pt-5 pb-3`}>
+                                            <Text style={tw`text-xs font-bold text-gray-400 uppercase tracking-wider mb-1`}>
+                                                Tanggal Dipilih
+                                            </Text>
+                                            <Text style={tw`text-base font-black text-gray-800 dark:text-gray-100`}>
+                                                {pad(selDay)}-{pad(selMonth + 1)}-{selYear}
+                                            </Text>
+                                        </View>
 
-                                {/* Separator */}
-                                <View style={tw`h-px bg-gray-100 dark:bg-gray-700 mx-4`} />
+                                        {/* Separator */}
+                                        <View style={tw`h-px bg-gray-100 dark:bg-gray-700 mx-4`} />
+                                    </>
+                                ) : null}
 
                                 {/* Time Label */}
                                 <View style={tw`items-center pt-4 pb-2`}>
@@ -505,11 +529,11 @@ export default function DatePickerDropdown({
                                 <View style={tw`flex-row px-4 py-3 gap-3`}>
                                     <TouchableOpacity
                                         style={tw`flex-1 py-3 border border-gray-200 dark:border-gray-600 rounded-xl items-center flex-row justify-center`}
-                                        onPress={() => setStep(1)}
+                                        onPress={() => pickerMode === 'datetime' ? setStep(1) : setOpen(false)}
                                         activeOpacity={0.7}
                                     >
-                                        <Icon name="arrow-left" size={16} color={tw.color('gray-500')} style={tw`mr-1`} />
-                                        <Text style={tw`font-bold text-gray-500 dark:text-gray-300`}>Kembali</Text>
+                                        {pickerMode === 'datetime' ? <Icon name="arrow-left" size={16} color={tw.color('gray-500')} style={tw`mr-1`} /> : null}
+                                        <Text style={tw`font-bold text-gray-500 dark:text-gray-300`}>{pickerMode === 'datetime' ? 'Kembali' : 'Batal'}</Text>
                                     </TouchableOpacity>
                                     <TouchableOpacity
                                         style={tw`flex-1 py-3 bg-blue-600 rounded-xl items-center flex-row justify-center`}

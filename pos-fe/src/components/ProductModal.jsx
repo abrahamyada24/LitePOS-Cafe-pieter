@@ -30,9 +30,12 @@ export default function ProductModal({ isOpen, onClose, onSave, initialData, cat
     discountValue: '',
     discountStartAt: '',
     discountEndAt: '',
+    discountDateEnabled: false,
     discountStartTime: '',
     discountEndTime: '',
+    discountTimeEnabled: false,
     discountDays: [],
+    discountDaysEnabled: false,
     discountLabel: ''
   });
   const [previewUrl, setPreviewUrl] = useState('');
@@ -83,9 +86,12 @@ export default function ProductModal({ isOpen, onClose, onSave, initialData, cat
           discountValue: initialData.discountValue || '',
           discountStartAt: initialData.discountStartAt ? initialData.discountStartAt.slice(0, 10) : '',
           discountEndAt: initialData.discountEndAt ? initialData.discountEndAt.slice(0, 10) : '',
+          discountDateEnabled: Boolean(initialData.discountStartAt || initialData.discountEndAt),
           discountStartTime: initialData.discountStartTime || '',
           discountEndTime: initialData.discountEndTime || '',
+          discountTimeEnabled: Boolean(initialData.discountStartTime || initialData.discountEndTime),
           discountDays: initialData.discountDays ? String(initialData.discountDays).split(',').map(Number) : [],
+          discountDaysEnabled: Boolean(initialData.discountDays),
           discountLabel: initialData.discountLabel || ''
         });
         setPreviewUrl(getImageUrl(initialData.imageUrl));
@@ -109,9 +115,12 @@ export default function ProductModal({ isOpen, onClose, onSave, initialData, cat
           discountValue: '',
           discountStartAt: '',
           discountEndAt: '',
+          discountDateEnabled: false,
           discountStartTime: '',
           discountEndTime: '',
+          discountTimeEnabled: false,
           discountDays: [],
+          discountDaysEnabled: false,
           discountLabel: ''
         });
         setPreviewUrl('');
@@ -168,7 +177,33 @@ export default function ProductModal({ isOpen, onClose, onSave, initialData, cat
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    onSave(formData);
+    if (formData.discountActive && formData.discountDateEnabled) {
+      if (!formData.discountStartAt || !formData.discountEndAt) {
+        showAlert.warning('Periode tanggal belum lengkap', 'Isi tanggal mulai dan tanggal selesai.');
+        return;
+      }
+      if (formData.discountEndAt < formData.discountStartAt) {
+        showAlert.warning('Periode tanggal tidak valid', 'Tanggal selesai tidak boleh sebelum tanggal mulai.');
+        return;
+      }
+    }
+    if (formData.discountActive && formData.discountTimeEnabled && (!formData.discountStartTime || !formData.discountEndTime)) {
+      showAlert.warning('Jam berlaku belum lengkap', 'Isi jam mulai dan jam selesai.');
+      return;
+    }
+    if (formData.discountActive && formData.discountDaysEnabled && formData.discountDays.length === 0) {
+      showAlert.warning('Hari berlaku belum dipilih', 'Pilih minimal satu hari untuk jadwal diskon.');
+      return;
+    }
+
+    onSave({
+      ...formData,
+      discountStartAt: formData.discountDateEnabled ? formData.discountStartAt : '',
+      discountEndAt: formData.discountDateEnabled ? formData.discountEndAt : '',
+      discountStartTime: formData.discountTimeEnabled ? formData.discountStartTime : '',
+      discountEndTime: formData.discountTimeEnabled ? formData.discountEndTime : '',
+      discountDays: formData.discountDaysEnabled ? formData.discountDays : [],
+    });
   };
 
   const toggleDiscountDay = (day) => {
@@ -396,36 +431,68 @@ export default function ProductModal({ isOpen, onClose, onSave, initialData, cat
                         placeholder="Nama promo / event, mis. Kopi Pagi"
                       />
 
-                      <div className="grid grid-cols-2 gap-3">
-                        <label className="text-[10px] font-black text-gray-500 uppercase">
-                          Mulai tanggal
-                          <input type="date" value={formData.discountStartAt} onChange={(e) => setFormData({ ...formData, discountStartAt: e.target.value })} className="mt-1 w-full h-11 px-3 bg-white border border-red-100 rounded-lg text-sm text-gray-800" />
+                      <div className="space-y-2">
+                        <label className="flex w-fit cursor-pointer items-center gap-2 text-[10px] font-black text-gray-600 uppercase">
+                          <input
+                            type="checkbox"
+                            checked={formData.discountDateEnabled}
+                            onChange={(e) => setFormData({ ...formData, discountDateEnabled: e.target.checked })}
+                            className="h-4 w-4 rounded border-red-200 accent-red-600"
+                          />
+                          Periode tanggal aktif
                         </label>
-                        <label className="text-[10px] font-black text-gray-500 uppercase">
-                          Sampai tanggal
-                          <input type="date" value={formData.discountEndAt} onChange={(e) => setFormData({ ...formData, discountEndAt: e.target.value })} className="mt-1 w-full h-11 px-3 bg-white border border-red-100 rounded-lg text-sm text-gray-800" />
+                        <div className={`grid grid-cols-2 gap-3 ${formData.discountDateEnabled ? '' : 'opacity-45'}`}>
+                          <label className="text-[10px] font-black text-gray-500 uppercase">
+                            Mulai tanggal
+                            <input disabled={!formData.discountDateEnabled} type="date" value={formData.discountStartAt} onChange={(e) => setFormData({ ...formData, discountStartAt: e.target.value })} className="mt-1 w-full h-11 px-3 bg-white border border-red-100 rounded-lg text-sm text-gray-800 disabled:cursor-not-allowed disabled:bg-gray-100" />
+                          </label>
+                          <label className="text-[10px] font-black text-gray-500 uppercase">
+                            Sampai tanggal
+                            <input disabled={!formData.discountDateEnabled} type="date" value={formData.discountEndAt} onChange={(e) => setFormData({ ...formData, discountEndAt: e.target.value })} className="mt-1 w-full h-11 px-3 bg-white border border-red-100 rounded-lg text-sm text-gray-800 disabled:cursor-not-allowed disabled:bg-gray-100" />
+                          </label>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="flex w-fit cursor-pointer items-center gap-2 text-[10px] font-black text-gray-600 uppercase">
+                          <input
+                            type="checkbox"
+                            checked={formData.discountTimeEnabled}
+                            onChange={(e) => setFormData({ ...formData, discountTimeEnabled: e.target.checked })}
+                            className="h-4 w-4 rounded border-red-200 accent-red-600"
+                          />
+                          Jam berlaku aktif
                         </label>
-                        <label className="text-[10px] font-black text-gray-500 uppercase">
-                          Jam mulai
-                          <input type="time" value={formData.discountStartTime} onChange={(e) => setFormData({ ...formData, discountStartTime: e.target.value })} className="mt-1 w-full h-11 px-3 bg-white border border-red-100 rounded-lg text-sm text-gray-800" />
-                        </label>
-                        <label className="text-[10px] font-black text-gray-500 uppercase">
-                          Jam selesai
-                          <input type="time" value={formData.discountEndTime} onChange={(e) => setFormData({ ...formData, discountEndTime: e.target.value })} className="mt-1 w-full h-11 px-3 bg-white border border-red-100 rounded-lg text-sm text-gray-800" />
-                        </label>
+                        <div className={`grid grid-cols-2 gap-3 ${formData.discountTimeEnabled ? '' : 'opacity-45'}`}>
+                          <label className="text-[10px] font-black text-gray-500 uppercase">
+                            Jam mulai
+                            <input disabled={!formData.discountTimeEnabled} type="time" value={formData.discountStartTime} onChange={(e) => setFormData({ ...formData, discountStartTime: e.target.value })} className="mt-1 w-full h-11 px-3 bg-white border border-red-100 rounded-lg text-sm text-gray-800 disabled:cursor-not-allowed disabled:bg-gray-100" />
+                          </label>
+                          <label className="text-[10px] font-black text-gray-500 uppercase">
+                            Jam selesai
+                            <input disabled={!formData.discountTimeEnabled} type="time" value={formData.discountEndTime} onChange={(e) => setFormData({ ...formData, discountEndTime: e.target.value })} className="mt-1 w-full h-11 px-3 bg-white border border-red-100 rounded-lg text-sm text-gray-800 disabled:cursor-not-allowed disabled:bg-gray-100" />
+                          </label>
+                        </div>
                       </div>
 
                       <div>
-                        <div className="flex items-center gap-2 text-[10px] font-black text-gray-500 uppercase mb-2">
-                          <CalendarClock size={14} /> Hari berlaku
-                        </div>
+                        <label className="mb-2 flex w-fit cursor-pointer items-center gap-2 text-[10px] font-black text-gray-600 uppercase">
+                          <input
+                            type="checkbox"
+                            checked={formData.discountDaysEnabled}
+                            onChange={(e) => setFormData({ ...formData, discountDaysEnabled: e.target.checked })}
+                            className="h-4 w-4 rounded border-red-200 accent-red-600"
+                          />
+                          <CalendarClock size={14} /> Hari berlaku aktif
+                        </label>
                         <div className="grid grid-cols-7 gap-1">
                           {['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'].map((label, day) => (
                             <button
                               key={label}
                               type="button"
+                              disabled={!formData.discountDaysEnabled}
                               onClick={() => toggleDiscountDay(day)}
-                              className={`h-9 rounded-md text-[10px] font-black ${formData.discountDays.includes(day) ? 'bg-red-600 text-white' : 'bg-white border border-red-100 text-gray-500'}`}
+                              className={`h-9 rounded-md text-[10px] font-black disabled:cursor-not-allowed disabled:opacity-45 ${formData.discountDays.includes(day) ? 'bg-red-600 text-white' : 'bg-white border border-red-100 text-gray-500'}`}
                             >
                               {label}
                             </button>
