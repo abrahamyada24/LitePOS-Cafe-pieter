@@ -59,6 +59,11 @@ const ProductCard = ({ product, cart, addToCart, updateQty, getImageUrl }) => {
                         {product.discountLabel || 'Promo'}
                     </span>
                 )}
+                {Array.isArray(product.addons) && product.addons.length > 0 && (
+                    <span className="absolute top-2 left-2 rounded-md bg-blue-600 px-2 py-1 text-[9px] font-black uppercase text-white">
+                        Add-on
+                    </span>
+                )}
             </div>
             <div className="flex-1 flex flex-col">
                 <p className="text-[9px] lg:text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-0.5 lg:mb-1">

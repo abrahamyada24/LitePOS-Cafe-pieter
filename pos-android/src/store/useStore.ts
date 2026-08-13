@@ -12,6 +12,11 @@ export interface CartItem {
     costPrice?: number;
     quantity: number;
     notes?: string;
+    customerNotes?: string;
+    basePrice?: number;
+    baseOriginalPrice?: number;
+    addons?: Array<{ id: number; name: string; price: number }>;
+    addonIds?: number[];
     cartItemId: string;
     stock: number;
     isUnlimitedStock: number;
@@ -74,7 +79,7 @@ interface StoreState {
     removeFromCart: (cartItemId: string) => void;
     updateCartQuantity: (cartItemId: string, qty: number) => void;
     updateCartItemNotes: (oldCartItemId: string, newNotes: string) => void;
-    updateCartItem: (cartItemId: string, patch: { notes?: string; price?: number }) => void;
+    updateCartItem: (cartItemId: string, patch: Partial<CartItem>) => void;
     clearCart: () => void;
     cartTotal: () => number;
     cartSubtotal: () => number;

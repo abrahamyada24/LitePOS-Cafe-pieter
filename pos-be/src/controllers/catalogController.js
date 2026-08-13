@@ -1,6 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const { getProductPrice, serializeProductPrice } = require('../utils/productDiscount');
 const { reserveQueue } = require('../utils/orderQueue');
+const { resolveSelectedAddons, buildAddonItemNotes } = require('../services/productAddonService');
 const prisma = new PrismaClient();
 
 const generateTableOrderCode = () => {
@@ -26,7 +27,8 @@ exports.getPublicCatalog = async (req, res) => {
                 ]
             },
             include: {
-                category: true
+                category: true,
+                addons: true
             },
             orderBy: {
                 name: 'asc'
@@ -159,7 +161,7 @@ exports.createTableOrder = async (req, res) => {
 
             const product = await prisma.product.findUnique({
                 where: { id: productId },
-                include: { category: true }
+                include: { category: true, addons: true }
             });
 
             if (!product || !product.isActive) {
@@ -174,7 +176,11 @@ exports.createTableOrder = async (req, res) => {
             }
 
             const priceInfo = getProductPrice(product);
-            const price = priceInfo.effectivePrice;
+            const selectedAddons = resolveSelectedAddons(product.addons, item.addonIds, product.name);
+            const addonTotal = selectedAddons.reduce((total, addon) => total + Number(addon.price || 0), 0);
+            const price = priceInfo.effectivePrice + addonTotal;
+            const originalPrice = priceInfo.originalPrice + addonTotal;
+            const itemNotes = buildAddonItemNotes(selectedAddons, item.notes);
             grandTotal += price * qty;
             cartItems.push({
                 id: product.id,
@@ -183,12 +189,15 @@ exports.createTableOrder = async (req, res) => {
                 name: product.name,
                 categoryName: product.category?.name || null,
                 price,
-                originalPrice: priceInfo.originalPrice,
+                originalPrice,
                 discountAmount: priceInfo.discountAmount,
                 discountLabel: priceInfo.discountLabel,
+                addons: selectedAddons.map(addon => ({ id: addon.id, name: addon.name, price: Number(addon.price) })),
+                addonIds: selectedAddons.map(addon => addon.id),
+                customerNotes: String(item.notes || '').trim() || null,
                 quantity: qty,
                 qty,
-                notes: item.notes || null,
+                notes: itemNotes,
                 imageUrl: product.imageUrl,
                 stock: product.stock,
                 isUnlimitedStock: product.isUnlimitedStock ? 1 : 0
@@ -265,7 +274,11 @@ exports.createTableOrder = async (req, res) => {
         });
     } catch (error) {
         console.error('Error in createTableOrder:', error);
-        res.status(500).json({ success: false, message: 'Terjadi kesalahan pada server saat mengirim order meja.' });
+        const invalidAddon = String(error.message || '').startsWith('Pilihan add-on untuk ');
+        res.status(invalidAddon ? 400 : 500).json({
+            success: false,
+            message: invalidAddon ? error.message : 'Terjadi kesalahan pada server saat mengirim order meja.'
+        });
     }
 };
 

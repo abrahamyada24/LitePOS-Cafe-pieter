@@ -3,6 +3,7 @@ const midtransClient = require('midtrans-client');
 const { getProductPrice } = require('../utils/productDiscount');
 const { reserveQueue } = require('../utils/orderQueue');
 const { normalizePaymentType, resolvePaymentMethod } = require('../services/paymentMethodService');
+const { resolveSelectedAddons, buildAddonItemNotes } = require('../services/productAddonService');
 const prisma = new PrismaClient();
 
 // Inisialisasi Midtrans Snap
@@ -130,7 +131,10 @@ exports.createTransaction = async (req, res) => {
                     continue;
                 }
 
-                const product = await tx.product.findUnique({ where: { id: parseInt(item.productId) } });
+                const product = await tx.product.findUnique({
+                    where: { id: parseInt(item.productId) },
+                    include: { addons: true }
+                });
 
                 if (!product || !product.isActive) {
                     throw new Error(`Produk tidak valid.`);
@@ -141,7 +145,11 @@ exports.createTransaction = async (req, res) => {
                 }
 
                 const priceInfo = getProductPrice(product);
-                const price = priceInfo.effectivePrice;
+                const selectedAddons = resolveSelectedAddons(product.addons, item.addonIds, product.name);
+                const addonTotal = selectedAddons.reduce((total, addon) => total + Number(addon.price || 0), 0);
+                const price = priceInfo.effectivePrice + addonTotal;
+                const originalPrice = priceInfo.originalPrice + addonTotal;
+                const itemNotes = buildAddonItemNotes(selectedAddons, item.notes);
                 subTotal += price * requestedQty;
                 addStockDeduction(product, requestedQty);
 
@@ -149,10 +157,10 @@ exports.createTransaction = async (req, res) => {
                     productId: product.id,
                     qty: requestedQty,
                     price,
-                    originalPrice: priceInfo.originalPrice,
+                    originalPrice,
                     discountAmount: priceInfo.discountAmount,
                     costPrice: product.costPrice,
-                    notes: item.notes || null
+                    notes: itemNotes
                 });
 
                 kitchenItems.push({
@@ -160,9 +168,9 @@ exports.createTransaction = async (req, res) => {
                     name: product.name,
                     qty: requestedQty,
                     price,
-                    originalPrice: priceInfo.originalPrice,
+                    originalPrice,
                     discountAmount: priceInfo.discountAmount,
-                    notes: item.notes || null
+                    notes: itemNotes
                 });
 
                 itemDetailsForMidtrans.push({

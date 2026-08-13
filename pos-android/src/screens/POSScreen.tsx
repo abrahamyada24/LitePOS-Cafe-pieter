@@ -128,6 +128,9 @@ export default function POSScreen({ navigation, route }: any) {
                 isUnlimitedStock: localProduct?.isUnlimitedStock ?? item.isUnlimitedStock ?? 1,
                 imageUrl: localProduct?.imageUrl ?? item.imageUrl ?? null,
                 notes: item.notes || undefined,
+                customerNotes: item.customerNotes || undefined,
+                addons: Array.isArray(item.addons) ? item.addons : [],
+                addonIds: Array.isArray(item.addonIds) ? item.addonIds : [],
                 quantity,
                 cartItemId: `${localProduct?.id || item.id || item.productId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
             });
@@ -323,7 +326,24 @@ export default function POSScreen({ navigation, route }: any) {
             Alert.alert('Batas Stok', 'Batas maksimal stok yang tersedia telah tercapai.');
             return;
         }
-        // Gabung QTY jika item sama (retail style)
+        try {
+            const db = await getDBConnection();
+            const [aRes] = await db.executeSql('SELECT * FROM product_addons WHERE productId = ? ORDER BY id', [item.id]);
+            const addons: any[] = [];
+            for (let i = 0; i < aRes.rows.length; i++) addons.push(aRes.rows.item(i));
+            if (addons.length > 0) {
+                setProductAddons(addons);
+                setSelectedAddons([]);
+                setAddonNotes('');
+                setAddonProductItem(item);
+                setSelectedProductForAddon(null);
+                setAddonModalVisible(true);
+                return;
+            }
+        } catch (error) {
+            console.warn('Gagal memuat add-on produk:', error);
+        }
+        // Produk tanpa add-on tetap digabung seperti alur retail biasa.
         addToCart(item);
     };
 
@@ -335,8 +355,8 @@ export default function POSScreen({ navigation, route }: any) {
             const addons: any[] = [];
             for (let i = 0; i < aRes.rows.length; i++) addons.push(aRes.rows.item(i));
             setProductAddons(addons);
-            setSelectedAddons([]);
-            setAddonNotes(cartItem.notes || '');
+            setSelectedAddons(Array.isArray(cartItem.addonIds) ? cartItem.addonIds.map(Number) : []);
+            setAddonNotes(cartItem.customerNotes || (cartItem.addonIds?.length ? '' : cartItem.notes) || '');
             setAddonProductItem(null);       // not a new product — it's an existing cart line
             setSelectedProductForAddon(cartItem); // use this to track which cart line we're editing
             setAddonModalVisible(true);
@@ -352,22 +372,35 @@ export default function POSScreen({ navigation, route }: any) {
     };
 
     // Confirm editing add-ons + notes for an existing cart item
-    const handleConfirmCartEdit = () => {
-        if (!selectedProductForAddon) return;
-        const chosenAddons = productAddons.filter(a => selectedAddons.includes(a.id));
-        const extraPrice = chosenAddons.reduce((sum, a) => sum + a.price, 0);
-        const addonLabel = chosenAddons.map(a => a.name).join(', ');
-        const noteStr = [addonLabel, addonNotes.trim()].filter(Boolean).join(' | ');
-        // Base price = original product price (strip any previous add-on price)
-        const basePrice = selectedProductForAddon.basePrice ?? selectedProductForAddon.price;
-        updateCartItem(selectedProductForAddon.cartItemId, {
+    const handleConfirmAddon = () => {
+        const targetProduct = selectedProductForAddon || addonProductItem;
+        if (!targetProduct) return;
+        const chosenAddons = productAddons.filter(a => selectedAddons.includes(Number(a.id)));
+        const extraPrice = chosenAddons.reduce((sum, a) => sum + Number(a.price || 0), 0);
+        const addonLabel = chosenAddons.length > 0 ? `Add-on: ${chosenAddons.map(a => a.name).join(', ')}` : '';
+        const cleanCustomerNotes = addonNotes.trim();
+        const noteStr = [addonLabel, cleanCustomerNotes].filter(Boolean).join(' | ');
+        const basePrice = Number(targetProduct.basePrice ?? targetProduct.price ?? 0);
+        const baseOriginalPrice = Number(targetProduct.baseOriginalPrice ?? targetProduct.originalPrice ?? targetProduct.price ?? 0);
+        const addonData = chosenAddons.map(addon => ({ id: Number(addon.id), name: addon.name, price: Number(addon.price || 0) }));
+        const patch = {
             notes: noteStr || undefined,
+            customerNotes: cleanCustomerNotes || undefined,
             price: basePrice + extraPrice,
-            // Also store basePrice so re-editing doesn't double-add prices
-            ...({ basePrice } as any),
-        });
+            basePrice,
+            originalPrice: baseOriginalPrice + extraPrice,
+            baseOriginalPrice,
+            addons: addonData,
+            addonIds: addonData.map(addon => addon.id),
+        };
+        if (selectedProductForAddon) {
+            updateCartItem(selectedProductForAddon.cartItemId, patch);
+        } else {
+            addToCartNewLine({ ...addonProductItem, ...patch });
+        }
         setAddonModalVisible(false);
         setSelectedProductForAddon(null);
+        setAddonProductItem(null);
         setProductAddons([]);
         setSelectedAddons([]);
         setAddonNotes('');
@@ -984,20 +1017,21 @@ export default function POSScreen({ navigation, route }: any) {
                             {selectedProductForAddon ? 'Edit Add-on & Catatan' : 'Add-on / Catatan'}
                         </Text>
                         <Text style={tw`text-sm text-gray-500 dark:text-gray-400 mb-4`}>
-                            {selectedProductForAddon?.name}
+                            {selectedProductForAddon?.name || addonProductItem?.name}
                         </Text>
 
                         {/* Add-on checkboxes */}
                         {productAddons.length > 0 && (
                             <View style={tw`mb-4`}>
                                 {productAddons.map(addon => {
-                                    const checked = selectedAddons.includes(addon.id);
+                                    const addonId = Number(addon.id);
+                                    const checked = selectedAddons.includes(addonId);
                                     return (
                                         <TouchableOpacity
                                             key={addon.id}
                                             style={tw`flex-row items-center py-2.5 border-b border-gray-100 dark:border-gray-700`}
                                             onPress={() => setSelectedAddons(prev =>
-                                                checked ? prev.filter(id => id !== addon.id) : [...prev, addon.id]
+                                                checked ? prev.filter(id => id !== addonId) : [...prev, addonId]
                                             )}
                                         >
                                             <View style={tw`w-5 h-5 rounded border ${checked ? 'bg-blue-600 border-blue-600' : 'border-gray-300'} items-center justify-center mr-3`}>
@@ -1028,7 +1062,7 @@ export default function POSScreen({ navigation, route }: any) {
                             </TouchableOpacity>
                             <TouchableOpacity
                                 style={tw`flex-1 bg-blue-600 py-3 rounded-xl items-center`}
-                                onPress={handleConfirmCartEdit}
+                                onPress={handleConfirmAddon}
                             >
                                 <Text style={tw`font-bold text-white`}>Simpan</Text>
                             </TouchableOpacity>

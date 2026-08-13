@@ -15,6 +15,7 @@ import ReceiptPreviewModal from '@/components/pos/ReceiptPreviewModal';
 import SavedTransactionModal from '@/components/pos/SavedTransactionModal';
 import TableModal from '@/components/pos/TableModal';
 import ShiftGuardModal from '@/components/pos/ShiftGuardModal';
+import AddonModal from '@/components/pos/AddonModal';
 
 // Import SweetAlert
 import { showAlert } from '@/utils/swal';
@@ -77,6 +78,9 @@ export default function POSPage() {
   const [activeSavedTransactionId, setActiveSavedTransactionId] = useState(null);
   const [discountConfig, setDiscountConfig] = useState(null);
   const [isDiscountModalOpen, setIsDiscountModalOpen] = useState(false);
+  const [addonProduct, setAddonProduct] = useState(null);
+  const [selectedAddonIds, setSelectedAddonIds] = useState([]);
+  const [addonNotes, setAddonNotes] = useState('');
 
   // Table & Order Type States
   const [orderType, setOrderType] = useState('TAKE_AWAY');
@@ -382,7 +386,12 @@ export default function POSPage() {
   }, [memberSearch, members]);
 
   // --- LOGIC CART ---
-  const addToCart = (product) => {
+  const buildItemNotes = (addons, customerNotes) => {
+    const addonLabel = addons.length > 0 ? `Add-on: ${addons.map(addon => addon.name).join(', ')}` : '';
+    return [addonLabel, customerNotes.trim()].filter(Boolean).join(' | ') || null;
+  };
+
+  const addProductDirectly = (product) => {
     if (product.stock <= 0 && !product.isUnlimitedStock) return showAlert.warning("Stok Habis", "Produk ini tidak bisa dipilih.");
     
     const existing = cart.find(item => item.id === product.id);
@@ -390,8 +399,54 @@ export default function POSPage() {
         if (existing.qty + 1 > product.stock && !product.isUnlimitedStock) return showAlert.warning("Stok Terbatas", "Jumlah melebihi stok yang tersedia.");
         setCart(cart.map(item => item.id === product.id ? { ...item, qty: item.qty + 1 } : item));
     } else {
-        setCart([...cart, { ...product, qty: 1 }]);
+        setCart([...cart, { ...product, qty: 1, addons: [], customerNotes: '', notes: null }]);
     }
+  };
+
+  const openAddonModal = (product) => {
+    if (product.stock <= 0 && !product.isUnlimitedStock) {
+      showAlert.warning("Stok Habis", "Produk ini tidak bisa dipilih.");
+      return;
+    }
+    const existing = cart.find(item => String(item.id) === String(product.id));
+    setAddonProduct(product);
+    setSelectedAddonIds((existing?.addons || []).map(addon => Number(addon.id)));
+    setAddonNotes(existing?.customerNotes || '');
+  };
+
+  const addToCart = (product) => {
+    if (Array.isArray(product.addons) && product.addons.length > 0) {
+      openAddonModal(product);
+      return;
+    }
+    addProductDirectly(product);
+  };
+
+  const confirmAddonSelection = () => {
+    if (!addonProduct) return;
+    const selectedAddons = addonProduct.addons.filter(addon => selectedAddonIds.includes(Number(addon.id)));
+    const addonTotal = selectedAddons.reduce((total, addon) => total + Number(addon.price || 0), 0);
+    const basePrice = Number(addonProduct.effectivePrice ?? addonProduct.price ?? 0);
+    const baseOriginalPrice = Number(addonProduct.originalPrice ?? addonProduct.price ?? 0);
+    const configuredItem = {
+      ...addonProduct,
+      basePrice,
+      baseOriginalPrice,
+      price: basePrice + addonTotal,
+      originalPrice: baseOriginalPrice + addonTotal,
+      addons: selectedAddons,
+      hasAvailableAddons: true,
+      customerNotes: addonNotes.trim(),
+      notes: buildItemNotes(selectedAddons, addonNotes),
+    };
+    const existing = cart.find(item => String(item.id) === String(addonProduct.id));
+    setCart(current => existing
+      ? current.map(item => String(item.id) === String(addonProduct.id) ? { ...configuredItem, qty: item.qty } : item)
+      : [...current, { ...configuredItem, qty: 1 }]
+    );
+    setAddonProduct(null);
+    setSelectedAddonIds([]);
+    setAddonNotes('');
   };
 
   const updateQty = (id, delta) => {
@@ -416,7 +471,11 @@ export default function POSPage() {
   };
 
   const updateItemNotes = (id, notes) => {
-    setCart(current => current.map(item => item.id === id ? { ...item, notes: notes.trim() || null } : item));
+    setCart(current => current.map(item => item.id === id ? {
+      ...item,
+      customerNotes: notes.trim(),
+      notes: buildItemNotes(item.addons || [], notes),
+    } : item));
   };
 
   useEffect(() => {
@@ -502,7 +561,13 @@ export default function POSPage() {
               userId: userId, 
               customerId: selectedMember?.id || null,
               customerName: pendingOrderContext?.customerName || selectedMember?.name || guestCustomerName.trim() || null,
-              items: cart.map(c => ({ productId: c.id, packageId: c.packageId || null, qty: c.qty, notes: c.notes || null })),
+              items: cart.map(c => ({
+                productId: c.id,
+                packageId: c.packageId || null,
+                qty: c.qty,
+                addonIds: (c.addons || []).map(addon => addon.id),
+                notes: c.customerNotes || (c.addons?.length ? null : c.notes) || null,
+              })),
               payment: {
                 type,
                 amount: grandTotal,
@@ -861,6 +926,10 @@ export default function POSPage() {
         savedTransactionCount={savedTransactionCount}
         onOpenSavedTransactions={() => setIsSavedTransactionModalOpen(true)}
         onUpdateItemNotes={updateItemNotes}
+        onEditItemAddons={(item) => {
+          const product = products.find(candidate => String(candidate.id) === String(item.id));
+          if (product) openAddonModal(product);
+        }}
         // Logout sekarang dihandle Header, tapi jika butuh di mobile menu:
         handleLogout={async () => {
             const confirmed = await showAlert.confirm('Keluar Kasir?', 'Sesi kasir akan diakhiri.', 'Ya, Keluar');
@@ -881,6 +950,21 @@ export default function POSPage() {
          setOpeningCash={setOpeningCash}
          onOpenShift={handleOpenShift}
          currentUser={currentUser}
+      />
+
+      <AddonModal
+        isOpen={Boolean(addonProduct)}
+        product={addonProduct}
+        selectedIds={selectedAddonIds}
+        setSelectedIds={setSelectedAddonIds}
+        notes={addonNotes}
+        setNotes={setAddonNotes}
+        onClose={() => {
+          setAddonProduct(null);
+          setSelectedAddonIds([]);
+          setAddonNotes('');
+        }}
+        onConfirm={confirmAddonSelection}
       />
       
       <MemberModal 

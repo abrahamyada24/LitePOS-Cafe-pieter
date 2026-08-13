@@ -43,6 +43,7 @@ export default function KatalogPage() {
   const [detailCartItemId, setDetailCartItemId] = useState(null);
   const [detailQty, setDetailQty] = useState(1);
   const [detailNotes, setDetailNotes] = useState("");
+  const [detailAddonIds, setDetailAddonIds] = useState([]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -148,7 +149,7 @@ export default function KatalogPage() {
       return;
     }
 
-    const cartItemId = `${product.id}-${cleanNotes.toLowerCase() || "regular"}`;
+    const cartItemId = `${product.id}-regular-${cleanNotes.toLowerCase() || "none"}`;
     setCart((prev) => {
       const existing = prev.find((item) => item.cartItemId === cartItemId);
       if (existing) {
@@ -170,6 +171,9 @@ export default function KatalogPage() {
           price: Number(product.price),
           originalPrice: Number(product.originalPrice ?? product.price),
           discountAmount: Number(product.discountAmount || 0),
+          addons: [],
+          addonIds: [],
+          customerNotes: cleanNotes,
           imageUrl: product.imageUrl,
           stock: product.stock,
           isUnlimitedStock: product.isUnlimitedStock,
@@ -207,7 +211,7 @@ export default function KatalogPage() {
 
   const decreaseProductQuantity = (productId) => {
     setCart((prev) => {
-      const regularIndex = prev.findIndex((item) => item.id === productId && !item.notes);
+      const regularIndex = prev.findIndex((item) => item.id === productId && !item.notes && !item.addonIds?.length);
       const fallbackIndex = prev.findLastIndex((item) => item.id === productId);
       const targetIndex = regularIndex >= 0 ? regularIndex : fallbackIndex;
 
@@ -230,7 +234,8 @@ export default function KatalogPage() {
     setSelectedProduct(product);
     setDetailCartItemId(editableItem?.cartItemId || null);
     setDetailQty(editableItem?.quantity || 1);
-    setDetailNotes(editableItem?.notes || "");
+    setDetailNotes(editableItem?.customerNotes ?? editableItem?.notes ?? "");
+    setDetailAddonIds(editableItem?.addonIds?.map(Number) || editableItem?.addons?.map(addon => Number(addon.id)) || []);
   };
 
   const closeProductDetail = () => {
@@ -238,6 +243,7 @@ export default function KatalogPage() {
     setDetailCartItemId(null);
     setDetailQty(1);
     setDetailNotes("");
+    setDetailAddonIds([]);
   };
 
   const saveProductDetail = () => {
@@ -245,7 +251,12 @@ export default function KatalogPage() {
 
     const quantity = Math.max(0, Number(detailQty) || 0);
     const cleanNotes = String(detailNotes || "").trim();
-    const cartItemId = `${selectedProduct.id}-${cleanNotes.toLowerCase() || "regular"}`;
+    const selectedAddons = (selectedProduct.addons || []).filter(addon => detailAddonIds.includes(Number(addon.id)));
+    const addonTotal = selectedAddons.reduce((total, addon) => total + Number(addon.price || 0), 0);
+    const addonKey = selectedAddons.map(addon => addon.id).sort((a, b) => Number(a) - Number(b)).join('-') || 'regular';
+    const cartItemId = `${selectedProduct.id}-${addonKey}-${cleanNotes.toLowerCase() || "none"}`;
+    const addonNotes = selectedAddons.length > 0 ? `Add-on: ${selectedAddons.map(addon => addon.name).join(', ')}` : '';
+    const combinedNotes = [addonNotes, cleanNotes].filter(Boolean).join(' | ');
     const otherProductQty = cart
       .filter((item) => item.id === selectedProduct.id && item.cartItemId !== detailCartItemId)
       .reduce((sum, item) => sum + item.quantity, 0);
@@ -282,12 +293,17 @@ export default function KatalogPage() {
           packageId: selectedProduct.packageId || null,
           name: selectedProduct.name,
           categoryName: selectedProduct.category?.name || null,
-          price: Number(selectedProduct.price),
+          price: Number(selectedProduct.price) + addonTotal,
+          originalPrice: Number(selectedProduct.originalPrice ?? selectedProduct.price) + addonTotal,
+          discountAmount: Number(selectedProduct.discountAmount || 0),
+          addons: selectedAddons,
+          addonIds: selectedAddons.map(addon => Number(addon.id)),
+          customerNotes: cleanNotes,
           imageUrl: selectedProduct.imageUrl,
           stock: selectedProduct.stock,
           isUnlimitedStock: selectedProduct.isUnlimitedStock,
           quantity,
-          notes: cleanNotes,
+          notes: combinedNotes,
         },
       ];
     });
@@ -322,7 +338,8 @@ export default function KatalogPage() {
             productId: item.id,
             packageId: item.packageId || null,
             qty: item.quantity,
-            notes: item.notes || null,
+            addonIds: item.addonIds || [],
+            notes: item.customerNotes || null,
           })),
         }),
       });
@@ -516,6 +533,11 @@ export default function KatalogPage() {
                           {product.discountLabel || "Promo"}
                         </span>
                       )}
+                      {Array.isArray(product.addons) && product.addons.length > 0 && (
+                        <span className="ml-1 inline-flex mt-1 px-2 py-0.5 rounded-md bg-blue-50 text-blue-600 text-[10px] font-black uppercase">
+                          Pilih add-on
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-end justify-between gap-3 mt-2">
                       <div>
@@ -542,7 +564,7 @@ export default function KatalogPage() {
                             <button
                               type="button"
                               disabled={!available || (!isUnlimitedStock(product) && qtyInCart >= Number(product.stock || 0))}
-                              onClick={() => addToCart(product)}
+                              onClick={() => product.addons?.length ? openProductDetail(product) : addToCart(product)}
                               className="w-10 h-10 flex items-center justify-center bg-emerald-700 text-white disabled:bg-gray-300"
                               aria-label={`Tambah ${product.name}`}
                             >
@@ -555,7 +577,7 @@ export default function KatalogPage() {
                             disabled={!available}
                             onClick={(event) => {
                               event.stopPropagation();
-                              addToCart(product);
+                              product.addons?.length ? openProductDetail(product) : addToCart(product);
                             }}
                             className="h-10 w-10 rounded-xl bg-emerald-700 text-white flex items-center justify-center disabled:bg-gray-300"
                             aria-label={`Tambah ${product.name}`}
@@ -632,6 +654,31 @@ export default function KatalogPage() {
 
                 {isTableMode ? (
                   <div className="pt-5 space-y-3">
+                    {Array.isArray(selectedProduct.addons) && selectedProduct.addons.length > 0 && (
+                      <div className="space-y-2">
+                        <p className="text-xs font-black uppercase tracking-wider text-gray-500">Pilih add-on</p>
+                        {selectedProduct.addons.map(addon => {
+                          const checked = detailAddonIds.includes(Number(addon.id));
+                          return (
+                            <button
+                              key={addon.id}
+                              type="button"
+                              onClick={() => setDetailAddonIds(current => checked
+                                ? current.filter(id => id !== Number(addon.id))
+                                : [...current, Number(addon.id)])}
+                              className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left ${checked ? 'border-emerald-600 bg-emerald-50' : 'border-stone-200 bg-white'}`}
+                            >
+                              <span className={`flex h-5 w-5 items-center justify-center rounded border ${checked ? 'border-emerald-700 bg-emerald-700 text-white' : 'border-stone-300 text-transparent'}`}>
+                                <CheckCircle2 size={13} />
+                              </span>
+                              <span className="flex-1 text-sm font-bold text-gray-800">{addon.name}</span>
+                              <span className="text-sm font-black text-emerald-700">+ {formatRupiah(addon.price)}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+
                     <textarea
                       value={detailNotes}
                       onChange={(event) => setDetailNotes(event.target.value)}
@@ -688,7 +735,9 @@ export default function KatalogPage() {
                             ? "Hapus dari pesanan"
                             : "Tidak jadi pilih"
                           : `${detailCartItemId ? "Simpan" : "Tambah"} ${formatRupiah(
-                              Number(selectedProduct.price) * detailQty
+                              (Number(selectedProduct.price) + (selectedProduct.addons || [])
+                                .filter(addon => detailAddonIds.includes(Number(addon.id)))
+                                .reduce((total, addon) => total + Number(addon.price || 0), 0)) * detailQty
                             )}`}
                       </button>
                     </div>
