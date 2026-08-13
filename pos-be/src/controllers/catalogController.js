@@ -82,7 +82,7 @@ exports.getPublicCatalog = async (req, res) => {
 
 exports.createTableOrder = async (req, res) => {
     try {
-        const { tableNumber, customerName, note, items } = req.body;
+        const { tableNumber, customerName, customerType, memberReference, note, items } = req.body;
 
         const cleanTableNumber = String(tableNumber || '').trim();
         if (!cleanTableNumber) {
@@ -115,6 +115,32 @@ exports.createTableOrder = async (req, res) => {
 
         if (!user) {
             return res.status(500).json({ success: false, message: 'Belum ada user kasir aktif untuk menerima order.' });
+        }
+
+        const isRegisteredMember = String(customerType || '').toUpperCase() === 'MEMBER';
+        const cleanMemberReference = String(memberReference || '').trim();
+        let registeredCustomer = null;
+        if (isRegisteredMember) {
+            if (!cleanMemberReference) {
+                return res.status(400).json({ success: false, message: 'Nomor HP atau Member ID wajib diisi.' });
+            }
+            registeredCustomer = await prisma.customer.findFirst({
+                where: {
+                    OR: [
+                        { phone: cleanMemberReference },
+                        { memberId: cleanMemberReference }
+                    ]
+                },
+                select: { id: true, name: true, memberId: true }
+            });
+            if (!registeredCustomer) {
+                return res.status(404).json({ success: false, message: 'Data member tidak ditemukan. Periksa nomor HP atau Member ID.' });
+            }
+        }
+
+        const cleanCustomerName = registeredCustomer?.name || String(customerName || '').trim();
+        if (!cleanCustomerName) {
+            return res.status(400).json({ success: false, message: 'Nama pelanggan wajib diisi.' });
         }
 
         const cartItems = [];
@@ -176,8 +202,8 @@ exports.createTableOrder = async (req, res) => {
             }
 
             const priceInfo = getProductPrice(product);
-            const selectedAddons = resolveSelectedAddons(product.addons, item.addonIds, product.name);
-            const addonTotal = selectedAddons.reduce((total, addon) => total + Number(addon.price || 0), 0);
+            const selectedAddons = resolveSelectedAddons(product.addons, item.addons ?? item.addonSelections ?? item.addonIds, product.name);
+            const addonTotal = selectedAddons.reduce((total, addon) => total + (Number(addon.price || 0) * Number(addon.quantity || 1)), 0);
             const price = priceInfo.effectivePrice + addonTotal;
             const originalPrice = priceInfo.originalPrice + addonTotal;
             const itemNotes = buildAddonItemNotes(selectedAddons, item.notes);
@@ -190,9 +216,11 @@ exports.createTableOrder = async (req, res) => {
                 categoryName: product.category?.name || null,
                 price,
                 originalPrice,
+                basePrice: priceInfo.effectivePrice,
+                baseOriginalPrice: priceInfo.originalPrice,
                 discountAmount: priceInfo.discountAmount,
                 discountLabel: priceInfo.discountLabel,
-                addons: selectedAddons.map(addon => ({ id: addon.id, name: addon.name, price: Number(addon.price) })),
+                addons: selectedAddons.map(addon => ({ id: addon.id, name: addon.name, price: Number(addon.price), quantity: Number(addon.quantity || 1) })),
                 addonIds: selectedAddons.map(addon => addon.id),
                 customerNotes: String(item.notes || '').trim() || null,
                 quantity: qty,
@@ -204,12 +232,11 @@ exports.createTableOrder = async (req, res) => {
             });
         }
 
-        const cleanCustomerName = String(customerName || '').trim();
         const orderCode = generateTableOrderCode();
 
         const result = await prisma.$transaction(async (tx) => {
             const { queueDate, queueNumber, queueLabel } = await reserveQueue(tx);
-            const orderName = `${queueLabel} - Meja ${table.number} - ${cleanCustomerName || 'Pelanggan'}`;
+            const orderName = `${queueLabel} - Meja ${table.number} - ${cleanCustomerName}`;
             const cartData = {
                 source: 'TABLE_QR',
                 orderCode,
@@ -217,7 +244,9 @@ exports.createTableOrder = async (req, res) => {
                 queueNumber,
                 queueLabel,
                 tableNumber: table.number,
-                customerName: cleanCustomerName || `Pelanggan Meja ${table.number}`,
+                customerId: registeredCustomer?.id || null,
+                customerMemberId: registeredCustomer?.memberId || null,
+                customerName: cleanCustomerName,
                 note: note || null,
                 grandTotal,
                 items: cartItems
@@ -274,7 +303,7 @@ exports.createTableOrder = async (req, res) => {
         });
     } catch (error) {
         console.error('Error in createTableOrder:', error);
-        const invalidAddon = String(error.message || '').startsWith('Pilihan add-on untuk ');
+        const invalidAddon = String(error.message || '').includes('add-on untuk ');
         res.status(invalidAddon ? 400 : 500).json({
             success: false,
             message: invalidAddon ? error.message : 'Terjadi kesalahan pada server saat mengirim order meja.'

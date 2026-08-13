@@ -15,7 +15,7 @@ export interface CartItem {
     customerNotes?: string;
     basePrice?: number;
     baseOriginalPrice?: number;
-    addons?: Array<{ id: number; name: string; price: number }>;
+    addons?: Array<{ id: number; name: string; price: number; quantity?: number }>;
     addonIds?: number[];
     cartItemId: string;
     stock: number;
@@ -33,6 +33,8 @@ interface StoreState {
         orderType?: 'DINE_IN' | 'TAKE_AWAY';
         tableNumber?: string;
         customerName?: string;
+        customerServerId?: number;
+        customerMemberId?: string;
         note?: string;
         source?: string;
         orderCode?: string;

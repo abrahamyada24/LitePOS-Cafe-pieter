@@ -317,6 +317,10 @@ exports.pushLocalData = async (req, res) => {
                             memberId: cust.memberId || `CUST-A${cust.id}-${Date.now()}`,
                             name: normalizedName,
                             phone: normalizedPhone,
+                            email: nonEmptyString(cust.email),
+                            notes: nonEmptyString(cust.notes),
+                            imageUrl: nonEmptyString(cust.imageUrl),
+                            displayType: ['normal', 'tall', 'wide', 'large'].includes(cust.displayType) ? cust.displayType : 'normal',
                             loyaltyDiscount: Number(cust.loyaltyDiscount || 0),
                             points: parseInt(cust.points || 0)
                         }
@@ -327,9 +331,13 @@ exports.pushLocalData = async (req, res) => {
                         where: { id: serverCust.id },
                         data: {
                             name: normalizedName,
+                            email: cust.email !== undefined ? nonEmptyString(cust.email) : serverCust.email,
+                            notes: cust.notes !== undefined ? nonEmptyString(cust.notes) : serverCust.notes,
+                            imageUrl: cust.imageUrl !== undefined ? nonEmptyString(cust.imageUrl) : serverCust.imageUrl,
+                            displayType: ['normal', 'tall', 'wide', 'large'].includes(cust.displayType) ? cust.displayType : serverCust.displayType,
                             points: parseInt(cust.points || 0),
                             loyaltyDiscount: Number(cust.loyaltyDiscount || 0),
-                            phone: normalizedPhone || serverCust.phone
+                            phone: cust.phone !== undefined ? normalizedPhone : serverCust.phone
                         }
                     });
                 }

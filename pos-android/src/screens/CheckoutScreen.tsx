@@ -84,9 +84,21 @@ export default function CheckoutScreen({ navigation }: any) {
     useEffect(() => {
         if (!pendingOrderContext) return;
 
-        if (pendingOrderContext.customerName) {
-            setGuestName(pendingOrderContext.customerName);
-        }
+        const resolvePendingCustomer = async () => {
+            if (pendingOrderContext.customerServerId) {
+                const db = await getDBConnection();
+                const [result] = await db.executeSql('SELECT * FROM customers WHERE serverId = ? LIMIT 1', [pendingOrderContext.customerServerId]);
+                if (result.rows.length > 0) {
+                    setSelectedCustomer(result.rows.item(0));
+                    setGuestName('');
+                    return;
+                }
+            }
+            if (pendingOrderContext.customerName) setGuestName(pendingOrderContext.customerName);
+        };
+        resolvePendingCustomer().catch(() => {
+            if (pendingOrderContext.customerName) setGuestName(pendingOrderContext.customerName);
+        });
 
         if (pendingOrderContext.tableNumber) {
             setOrderType('DINE_IN');

@@ -145,8 +145,8 @@ exports.createTransaction = async (req, res) => {
                 }
 
                 const priceInfo = getProductPrice(product);
-                const selectedAddons = resolveSelectedAddons(product.addons, item.addonIds, product.name);
-                const addonTotal = selectedAddons.reduce((total, addon) => total + Number(addon.price || 0), 0);
+                const selectedAddons = resolveSelectedAddons(product.addons, item.addons ?? item.addonSelections ?? item.addonIds, product.name);
+                const addonTotal = selectedAddons.reduce((total, addon) => total + (Number(addon.price || 0) * Number(addon.quantity || 1)), 0);
                 const price = priceInfo.effectivePrice + addonTotal;
                 const originalPrice = priceInfo.originalPrice + addonTotal;
                 const itemNotes = buildAddonItemNotes(selectedAddons, item.notes);

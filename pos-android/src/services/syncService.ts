@@ -53,6 +53,24 @@ const uploadProductImage = async (serverProductId: number, imageUri: string) => 
     return remoteImageUrl as string;
 };
 
+const uploadCustomerImage = async (serverCustomerId: number, imageUri: string) => {
+    const formData = new FormData();
+    const metadata = getImageUploadMetadata(imageUri);
+    formData.append('image', {
+        uri: imageUri,
+        name: metadata.name.replace('product-', 'customer-'),
+        type: metadata.type,
+    } as any);
+
+    const response = await api.put(`/customers/${serverCustomerId}`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 30000,
+    });
+    const remoteImageUrl = response.data?.data?.imageUrl;
+    if (!remoteImageUrl) throw new Error('Backend tidak mengembalikan URL foto pelanggan.');
+    return remoteImageUrl as string;
+};
+
 export const syncService = {
     // 1. Ambil data master dari server
     syncMasterData: async () => {
@@ -184,10 +202,10 @@ export const syncService = {
                             if (Number(localCustomer.isSynced) === 0) {
                                 await tx.executeSql('UPDATE customers SET serverId = COALESCE(serverId, ?) WHERE id = ?', [c.id, localCustomer.id]);
                             } else {
-                                await tx.executeSql('UPDATE customers SET name = ?, phone = ?, notes = ?, loyaltyDiscount = ?, points = ?, serverId = ?, isSynced = 1 WHERE id = ?', [c.name, c.phone, c.notes, c.loyaltyDiscount || 0, c.points || 0, c.id, localCustomer.id]);
+                                await tx.executeSql('UPDATE customers SET name = ?, phone = ?, email = ?, notes = ?, imageUrl = ?, displayType = ?, memberId = ?, loyaltyDiscount = ?, points = ?, serverId = ?, isSynced = 1 WHERE id = ?', [c.name, c.phone, c.email || null, c.notes || null, c.imageUrl || null, c.displayType || 'normal', c.memberId || null, c.loyaltyDiscount || 0, c.points || 0, c.id, localCustomer.id]);
                             }
                         } else {
-                            await tx.executeSql('INSERT INTO customers (name, phone, notes, loyaltyDiscount, points, serverId, isSynced) VALUES (?, ?, ?, ?, ?, ?, 1)', [c.name, c.phone, c.notes, c.loyaltyDiscount || 0, c.points || 0, c.id]);
+                            await tx.executeSql('INSERT INTO customers (name, phone, email, notes, imageUrl, displayType, memberId, loyaltyDiscount, points, serverId, isSynced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)', [c.name, c.phone, c.email || null, c.notes || null, c.imageUrl || null, c.displayType || 'normal', c.memberId || null, c.loyaltyDiscount || 0, c.points || 0, c.id]);
                         }
                     }
                 }
@@ -613,7 +631,13 @@ export const syncService = {
                 delete productWithoutLocalImage.imageUrl;
                 return productWithoutLocalImage;
             });
-            const payload = { transactions, expenses, shifts, categories, products: productsForPush, customers, settings, stockReceipts, suppliers, packages, dineTables, addons };
+            const customersForPush = customers.map((customer) => {
+                if (!isDeviceAssetUrl(customer.imageUrl)) return customer;
+                const customerWithoutLocalImage = { ...customer };
+                delete customerWithoutLocalImage.imageUrl;
+                return customerWithoutLocalImage;
+            });
+            const payload = { transactions, expenses, shifts, categories, products: productsForPush, customers: customersForPush, settings, stockReceipts, suppliers, packages, dineTables, addons };
             const res = await api.post('/sync/push', payload, {
                 headers: { 'X-LitePOS-Sync-Version': '2' },
             });
@@ -658,6 +682,20 @@ export const syncService = {
                         'UPDATE products SET imageUrl = ? WHERE id = ?',
                         [remoteImageUrl, product.id]
                     );
+                }
+
+                const customerServerIds = new Map<string, number>(
+                    (idMap.customers || []).map(
+                        (item: any) => [String(item.androidId), Number(item.serverId)] as [string, number]
+                    )
+                );
+                for (const customer of customers.filter((item) => isDeviceAssetUrl(item.imageUrl))) {
+                    const serverCustomerId = Number(
+                        customer.serverId || customerServerIds.get(String(customer.id)) || 0
+                    );
+                    if (!serverCustomerId) throw new Error(`Server ID untuk foto pelanggan ${customer.name} tidak ditemukan.`);
+                    const remoteImageUrl = await uploadCustomerImage(serverCustomerId, customer.imageUrl);
+                    await db.executeSql('UPDATE customers SET imageUrl = ? WHERE id = ?', [remoteImageUrl, customer.id]);
                 }
                 
                 // react-native-sqlite-storage tidak menunggu callback transaction yang async.

@@ -80,7 +80,7 @@ export default function POSPage() {
   const [discountConfig, setDiscountConfig] = useState(null);
   const [isDiscountModalOpen, setIsDiscountModalOpen] = useState(false);
   const [addonProduct, setAddonProduct] = useState(null);
-  const [selectedAddonIds, setSelectedAddonIds] = useState([]);
+  const [selectedAddonQuantities, setSelectedAddonQuantities] = useState({});
   const [addonNotes, setAddonNotes] = useState('');
 
   // Table & Order Type States
@@ -339,7 +339,12 @@ export default function POSPage() {
         setPendingOrderContext(context);
         setOrderType('DINE_IN');
         setSelectedTable({ number: payload.tableNumber, name: payload.tableNumber });
-        setSelectedMember(payload.customerName ? { id: null, name: payload.customerName, isTableGuest: true } : null);
+        setSelectedMember(payload.customerName ? {
+          id: payload.customerId || null,
+          memberId: payload.customerMemberId || null,
+          name: payload.customerName,
+          isTableGuest: !payload.customerId,
+        } : null);
         if (window.innerWidth < 1024) setMobileView('cart');
 
         if (context.accepted) return;
@@ -388,7 +393,9 @@ export default function POSPage() {
 
   // --- LOGIC CART ---
   const buildItemNotes = (addons, customerNotes) => {
-    const addonLabel = addons.length > 0 ? `Add-on: ${addons.map(addon => addon.name).join(', ')}` : '';
+    const addonLabel = addons.length > 0
+      ? `Add-on: ${addons.map(addon => `${addon.name}${Number(addon.quantity || 1) > 1 ? ` x${Number(addon.quantity)}` : ''}`).join(', ')}`
+      : '';
     return [addonLabel, customerNotes.trim()].filter(Boolean).join(' | ') || null;
   };
 
@@ -411,7 +418,9 @@ export default function POSPage() {
     }
     const existing = cart.find(item => String(item.id) === String(product.id));
     setAddonProduct(product);
-    setSelectedAddonIds((existing?.addons || []).map(addon => Number(addon.id)));
+    setSelectedAddonQuantities(Object.fromEntries(
+      (existing?.addons || []).map(addon => [Number(addon.id), Number(addon.quantity || 1)])
+    ));
     setAddonNotes(existing?.customerNotes || '');
   };
 
@@ -425,8 +434,10 @@ export default function POSPage() {
 
   const confirmAddonSelection = () => {
     if (!addonProduct) return;
-    const selectedAddons = addonProduct.addons.filter(addon => selectedAddonIds.includes(Number(addon.id)));
-    const addonTotal = selectedAddons.reduce((total, addon) => total + Number(addon.price || 0), 0);
+    const selectedAddons = addonProduct.addons
+      .map(addon => ({ ...addon, quantity: Number(selectedAddonQuantities[Number(addon.id)] || 0) }))
+      .filter(addon => addon.quantity > 0);
+    const addonTotal = selectedAddons.reduce((total, addon) => total + (Number(addon.price || 0) * addon.quantity), 0);
     const basePrice = Number(addonProduct.effectivePrice ?? addonProduct.price ?? 0);
     const baseOriginalPrice = Number(addonProduct.originalPrice ?? addonProduct.price ?? 0);
     const configuredItem = {
@@ -446,7 +457,7 @@ export default function POSPage() {
       : [...current, { ...configuredItem, qty: 1 }]
     );
     setAddonProduct(null);
-    setSelectedAddonIds([]);
+    setSelectedAddonQuantities({});
     setAddonNotes('');
   };
 
@@ -604,6 +615,7 @@ export default function POSPage() {
                 productId: c.id,
                 packageId: c.packageId || null,
                 qty: c.qty,
+                addons: (c.addons || []).map(addon => ({ id: addon.id, quantity: Number(addon.quantity || 1) })),
                 addonIds: (c.addons || []).map(addon => addon.id),
                 notes: c.customerNotes || (c.addons?.length ? null : c.notes) || null,
               })),
@@ -996,13 +1008,13 @@ export default function POSPage() {
       <AddonModal
         isOpen={Boolean(addonProduct)}
         product={addonProduct}
-        selectedIds={selectedAddonIds}
-        setSelectedIds={setSelectedAddonIds}
+        quantities={selectedAddonQuantities}
+        setQuantities={setSelectedAddonQuantities}
         notes={addonNotes}
         setNotes={setAddonNotes}
         onClose={() => {
           setAddonProduct(null);
-          setSelectedAddonIds([]);
+          setSelectedAddonQuantities({});
           setAddonNotes('');
         }}
         onConfirm={confirmAddonSelection}

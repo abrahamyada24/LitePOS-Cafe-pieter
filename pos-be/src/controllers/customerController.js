@@ -1,6 +1,17 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
+const DISPLAY_TYPES = new Set(['normal', 'tall', 'wide', 'large']);
+const optionalText = (value) => String(value || '').trim() || null;
+const parseLoyaltyDiscount = (value) => {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100 ? parsed : null;
+};
+const parsePoints = (value) => {
+  const parsed = Number(value ?? 0);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+};
+
 // Helper: Generate ID Member Otomatis (Format: MBR-0001)
 const generateMemberId = async () => {
   const lastCustomer = await prisma.customer.findFirst({
@@ -27,7 +38,8 @@ exports.getAllCustomers = async (req, res) => {
       whereClause.OR = [
         { name: { contains: search } },
         { memberId: { contains: search } },
-        { phone: { contains: search } }
+        { phone: { contains: search } },
+        { email: { contains: search } }
       ];
     }
 
@@ -50,8 +62,11 @@ exports.getAllCustomers = async (req, res) => {
         name: cust.name,
         phone: cust.phone,
         email: cust.email,
+        notes: cust.notes,
         imageUrl: cust.imageUrl,
         displayType: cust.displayType,
+        loyaltyDiscount: Number(cust.loyaltyDiscount || 0),
+        points: cust.points,
         totalSpent: totalSpent,
         totalVisits: cust.transactions.length
       };
@@ -65,7 +80,7 @@ exports.getAllCustomers = async (req, res) => {
 
 exports.createCustomer = async (req, res) => {
   try {
-    const { name, phone, email, displayType } = req.body;
+    const { name, phone, email, notes, displayType, loyaltyDiscount, points } = req.body;
     const validName = name && String(name).trim();
 
     if (!validName) {
@@ -81,9 +96,19 @@ exports.createCustomer = async (req, res) => {
 
     const validPhone = phone && String(phone).trim() !== "" ? String(phone).trim() : null;
     const validEmail = email && String(email).trim() !== "" ? String(email).trim() : null;
+    const validNotes = optionalText(notes);
+    const validLoyaltyDiscount = parseLoyaltyDiscount(loyaltyDiscount);
+    const validPoints = parsePoints(points);
+    const validDisplayType = DISPLAY_TYPES.has(displayType) ? displayType : 'normal';
 
     if (validPhone && validPhone.length > 20) {
       return res.status(400).json({ success: false, message: "Nomor HP maksimal 20 karakter." });
+    }
+    if (validLoyaltyDiscount === null) {
+      return res.status(400).json({ success: false, message: "Diskon pelanggan harus antara 0 sampai 100 persen." });
+    }
+    if (validPoints === null) {
+      return res.status(400).json({ success: false, message: "Poin pelanggan harus berupa bilangan bulat positif." });
     }
 
     if (validPhone) {
@@ -97,8 +122,11 @@ exports.createCustomer = async (req, res) => {
         name: validName,
         phone: validPhone,
         email: validEmail,
+        notes: validNotes,
         imageUrl,
-        displayType: displayType || 'normal'
+        displayType: validDisplayType,
+        loyaltyDiscount: validLoyaltyDiscount,
+        points: validPoints
       }
     });
 
@@ -111,13 +139,42 @@ exports.createCustomer = async (req, res) => {
 exports.updateCustomer = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, phone, email, displayType } = req.body;
+    const customerId = parseInt(id);
+    const { name, phone, email, notes, displayType, loyaltyDiscount, points } = req.body;
 
     const updateData = {};
-    if (name) updateData.name = name;
-    if (phone) updateData.phone = phone.trim() !== "" ? phone : null;
-    if (email) updateData.email = email.trim() !== "" ? email : null;
-    if (displayType) updateData.displayType = displayType;
+    if (name !== undefined) {
+      const validName = optionalText(name);
+      if (!validName) return res.status(400).json({ success: false, message: "Nama pelanggan wajib diisi." });
+      updateData.name = validName;
+    }
+    if (phone !== undefined) {
+      const validPhone = optionalText(phone);
+      if (validPhone && validPhone.length > 20) {
+        return res.status(400).json({ success: false, message: "Nomor HP maksimal 20 karakter." });
+      }
+      if (validPhone) {
+        const duplicate = await prisma.customer.findFirst({ where: { phone: validPhone, id: { not: customerId } } });
+        if (duplicate) return res.status(400).json({ success: false, message: "Nomor HP sudah terdaftar!" });
+      }
+      updateData.phone = validPhone;
+    }
+    if (email !== undefined) updateData.email = optionalText(email);
+    if (notes !== undefined) updateData.notes = optionalText(notes);
+    if (displayType !== undefined) {
+      if (!DISPLAY_TYPES.has(displayType)) return res.status(400).json({ success: false, message: "Tampilan kartu pelanggan tidak valid." });
+      updateData.displayType = displayType;
+    }
+    if (loyaltyDiscount !== undefined) {
+      const validLoyaltyDiscount = parseLoyaltyDiscount(loyaltyDiscount);
+      if (validLoyaltyDiscount === null) return res.status(400).json({ success: false, message: "Diskon pelanggan harus antara 0 sampai 100 persen." });
+      updateData.loyaltyDiscount = validLoyaltyDiscount;
+    }
+    if (points !== undefined) {
+      const validPoints = parsePoints(points);
+      if (validPoints === null) return res.status(400).json({ success: false, message: "Poin pelanggan harus berupa bilangan bulat positif." });
+      updateData.points = validPoints;
+    }
 
     // Update foto menggunakan jalur lokal jika ada file baru yang diunggah
     if (req.file) {
@@ -125,7 +182,7 @@ exports.updateCustomer = async (req, res) => {
     }
 
     const customer = await prisma.customer.update({
-      where: { id: parseInt(id) },
+      where: { id: customerId },
       data: updateData
     });
 

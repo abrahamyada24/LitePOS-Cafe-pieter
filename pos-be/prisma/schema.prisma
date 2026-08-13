@@ -209,6 +209,7 @@ model Customer {
   name            String        @db.VarChar(255)
   phone           String?       @unique @db.VarChar(20)
   email           String?       @db.VarChar(255)
+  notes           String?       @db.Text
   imageUrl        String?       @map("image_url") @db.Text
   displayType     String        @default("normal") @map("display_type")
   loyaltyDiscount Decimal       @default(0) @map("loyalty_discount") @db.Decimal(5, 2)

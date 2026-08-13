@@ -1,12 +1,12 @@
 "use client";
 
-import { Check, PlusCircle, X } from 'lucide-react';
+import { Minus, Plus, PlusCircle, X } from 'lucide-react';
 
 export default function AddonModal({
   isOpen,
   product,
-  selectedIds,
-  setSelectedIds,
+  quantities,
+  setQuantities,
   notes,
   setNotes,
   onClose,
@@ -16,14 +16,17 @@ export default function AddonModal({
 
   const addons = Array.isArray(product.addons) ? product.addons : [];
   const selectedTotal = addons
-    .filter(addon => selectedIds.includes(Number(addon.id)))
-    .reduce((total, addon) => total + Number(addon.price || 0), 0);
+    .reduce((total, addon) => total + (Number(addon.price || 0) * Number(quantities[Number(addon.id)] || 0)), 0);
 
-  const toggleAddon = (addonId) => {
+  const updateQuantity = (addonId, delta) => {
     const normalizedId = Number(addonId);
-    setSelectedIds(current => current.includes(normalizedId)
-      ? current.filter(id => id !== normalizedId)
-      : [...current, normalizedId]);
+    setQuantities(current => {
+      const nextQuantity = Math.min(99, Math.max(0, Number(current[normalizedId] || 0) + delta));
+      const next = { ...current };
+      if (nextQuantity === 0) delete next[normalizedId];
+      else next[normalizedId] = nextQuantity;
+      return next;
+    });
   };
 
   return (
@@ -44,20 +47,26 @@ export default function AddonModal({
 
         <div className="flex-1 space-y-3 overflow-y-auto px-6 py-5">
           {addons.map(addon => {
-            const checked = selectedIds.includes(Number(addon.id));
+            const quantity = Number(quantities[Number(addon.id)] || 0);
             return (
-              <button
+              <div
                 key={addon.id}
-                type="button"
-                onClick={() => toggleAddon(addon.id)}
-                className={`flex w-full items-center gap-3 rounded-2xl border p-4 text-left transition-colors ${checked ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white hover:border-blue-200'}`}
+                className={`flex w-full items-center gap-3 rounded-2xl border p-4 transition-colors ${quantity > 0 ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white'}`}
               >
-                <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border ${checked ? 'border-blue-600 bg-blue-600 text-white' : 'border-gray-300 bg-white text-transparent'}`}>
-                  <Check size={13} strokeWidth={3} />
-                </span>
                 <span className="min-w-0 flex-1 font-bold text-gray-800">{addon.name}</span>
-                <span className="shrink-0 text-sm font-black text-blue-600">+ Rp {Number(addon.price || 0).toLocaleString('id-ID')}</span>
-              </button>
+                <div className="shrink-0 text-right">
+                  <p className="text-sm font-black text-blue-600">+ Rp {Number(addon.price || 0).toLocaleString('id-ID')}</p>
+                  <div className="mt-2 flex items-center overflow-hidden rounded-xl border border-blue-200 bg-white">
+                    <button type="button" onClick={() => updateQuantity(addon.id, -1)} disabled={quantity === 0} className="flex h-9 w-9 items-center justify-center text-gray-600 disabled:text-gray-300" aria-label={`Kurangi ${addon.name}`}>
+                      <Minus size={15} />
+                    </button>
+                    <span className="w-8 text-center text-sm font-black text-gray-900">{quantity}</span>
+                    <button type="button" onClick={() => updateQuantity(addon.id, 1)} disabled={quantity >= 99} className="flex h-9 w-9 items-center justify-center text-blue-600 disabled:text-gray-300" aria-label={`Tambah ${addon.name}`}>
+                      <Plus size={15} />
+                    </button>
+                  </div>
+                </div>
+              </div>
             );
           })}
 

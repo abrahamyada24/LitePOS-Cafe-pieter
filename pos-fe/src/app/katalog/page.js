@@ -32,6 +32,8 @@ export default function KatalogPage() {
   const [cart, setCart] = useState([]);
   const [showCart, setShowCart] = useState(false);
   const [customerName, setCustomerName] = useState("");
+  const [customerType, setCustomerType] = useState("GUEST");
+  const [memberReference, setMemberReference] = useState("");
   const [orderNote, setOrderNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState(null);
@@ -43,7 +45,7 @@ export default function KatalogPage() {
   const [detailCartItemId, setDetailCartItemId] = useState(null);
   const [detailQty, setDetailQty] = useState(1);
   const [detailNotes, setDetailNotes] = useState("");
-  const [detailAddonIds, setDetailAddonIds] = useState([]);
+  const [detailAddonQuantities, setDetailAddonQuantities] = useState({});
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -235,7 +237,12 @@ export default function KatalogPage() {
     setDetailCartItemId(editableItem?.cartItemId || null);
     setDetailQty(editableItem?.quantity || 1);
     setDetailNotes(editableItem?.customerNotes ?? editableItem?.notes ?? "");
-    setDetailAddonIds(editableItem?.addonIds?.map(Number) || editableItem?.addons?.map(addon => Number(addon.id)) || []);
+    const existingAddons = editableItem?.addons?.length
+      ? editableItem.addons
+      : (editableItem?.addonIds || []).map(id => ({ id, quantity: 1 }));
+    setDetailAddonQuantities(Object.fromEntries(
+      existingAddons.map(addon => [Number(addon.id), Number(addon.quantity || 1)])
+    ));
   };
 
   const closeProductDetail = () => {
@@ -243,7 +250,7 @@ export default function KatalogPage() {
     setDetailCartItemId(null);
     setDetailQty(1);
     setDetailNotes("");
-    setDetailAddonIds([]);
+    setDetailAddonQuantities({});
   };
 
   const saveProductDetail = () => {
@@ -251,11 +258,15 @@ export default function KatalogPage() {
 
     const quantity = Math.max(0, Number(detailQty) || 0);
     const cleanNotes = String(detailNotes || "").trim();
-    const selectedAddons = (selectedProduct.addons || []).filter(addon => detailAddonIds.includes(Number(addon.id)));
-    const addonTotal = selectedAddons.reduce((total, addon) => total + Number(addon.price || 0), 0);
-    const addonKey = selectedAddons.map(addon => addon.id).sort((a, b) => Number(a) - Number(b)).join('-') || 'regular';
+    const selectedAddons = (selectedProduct.addons || [])
+      .map(addon => ({ ...addon, quantity: Number(detailAddonQuantities[Number(addon.id)] || 0) }))
+      .filter(addon => addon.quantity > 0);
+    const addonTotal = selectedAddons.reduce((total, addon) => total + (Number(addon.price || 0) * addon.quantity), 0);
+    const addonKey = selectedAddons.map(addon => `${addon.id}x${addon.quantity}`).sort().join('-') || 'regular';
     const cartItemId = `${selectedProduct.id}-${addonKey}-${cleanNotes.toLowerCase() || "none"}`;
-    const addonNotes = selectedAddons.length > 0 ? `Add-on: ${selectedAddons.map(addon => addon.name).join(', ')}` : '';
+    const addonNotes = selectedAddons.length > 0
+      ? `Add-on: ${selectedAddons.map(addon => `${addon.name}${addon.quantity > 1 ? ` x${addon.quantity}` : ''}`).join(', ')}`
+      : '';
     const combinedNotes = [addonNotes, cleanNotes].filter(Boolean).join(' | ');
     const otherProductQty = cart
       .filter((item) => item.id === selectedProduct.id && item.cartItemId !== detailCartItemId)
@@ -325,6 +336,15 @@ export default function KatalogPage() {
       return;
     }
 
+    if (customerType === 'MEMBER' && !memberReference.trim()) {
+      showAlert.warning('Data member belum diisi', 'Masukkan nomor HP atau Member ID.');
+      return;
+    }
+    if (customerType !== 'MEMBER' && !customerName.trim()) {
+      showAlert.warning('Nama belum diisi', 'Nama pelanggan wajib diisi.');
+      return;
+    }
+
     setSubmitting(true);
     try {
       const res = await fetch(`${API_URL}/api/catalog/table-order`, {
@@ -332,12 +352,15 @@ export default function KatalogPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tableNumber,
-          customerName,
+          customerType,
+          customerName: customerType === 'MEMBER' ? null : customerName,
+          memberReference: customerType === 'MEMBER' ? memberReference.trim() : null,
           note: orderNote,
           items: cart.map((item) => ({
             productId: item.id,
             packageId: item.packageId || null,
             qty: item.quantity,
+            addons: (item.addons || []).map(addon => ({ id: addon.id, quantity: Number(addon.quantity || 1) })),
             addonIds: item.addonIds || [],
             notes: item.customerNotes || null,
           })),
@@ -353,6 +376,8 @@ export default function KatalogPage() {
       setCart([]);
       setShowCart(false);
       setCustomerName("");
+      setCustomerType("GUEST");
+      setMemberReference("");
       setOrderNote("");
     } catch (error) {
       showAlert.error('Order belum terkirim', error.message || 'Periksa koneksi lalu coba lagi.');
@@ -658,22 +683,30 @@ export default function KatalogPage() {
                       <div className="space-y-2">
                         <p className="text-xs font-black uppercase tracking-wider text-gray-500">Pilih add-on</p>
                         {selectedProduct.addons.map(addon => {
-                          const checked = detailAddonIds.includes(Number(addon.id));
+                          const addonId = Number(addon.id);
+                          const quantity = Number(detailAddonQuantities[addonId] || 0);
+                          const updateAddonQuantity = (delta) => setDetailAddonQuantities(current => {
+                            const nextQuantity = Math.min(99, Math.max(0, Number(current[addonId] || 0) + delta));
+                            const next = { ...current };
+                            if (nextQuantity === 0) delete next[addonId];
+                            else next[addonId] = nextQuantity;
+                            return next;
+                          });
                           return (
-                            <button
+                            <div
                               key={addon.id}
-                              type="button"
-                              onClick={() => setDetailAddonIds(current => checked
-                                ? current.filter(id => id !== Number(addon.id))
-                                : [...current, Number(addon.id)])}
-                              className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left ${checked ? 'border-emerald-600 bg-emerald-50' : 'border-stone-200 bg-white'}`}
+                              className={`flex w-full items-center gap-3 rounded-2xl border p-3 ${quantity > 0 ? 'border-emerald-600 bg-emerald-50' : 'border-stone-200 bg-white'}`}
                             >
-                              <span className={`flex h-5 w-5 items-center justify-center rounded border ${checked ? 'border-emerald-700 bg-emerald-700 text-white' : 'border-stone-300 text-transparent'}`}>
-                                <CheckCircle2 size={13} />
-                              </span>
                               <span className="flex-1 text-sm font-bold text-gray-800">{addon.name}</span>
-                              <span className="text-sm font-black text-emerald-700">+ {formatRupiah(addon.price)}</span>
-                            </button>
+                              <div className="shrink-0 text-right">
+                                <p className="text-sm font-black text-emerald-700">+ {formatRupiah(addon.price)}</p>
+                                <div className="mt-1 flex h-9 items-center overflow-hidden rounded-xl border border-emerald-200 bg-white">
+                                  <button type="button" onClick={() => updateAddonQuantity(-1)} disabled={quantity === 0} className="flex h-9 w-9 items-center justify-center text-gray-600 disabled:text-gray-300" aria-label={`Kurangi ${addon.name}`}><Minus size={14} /></button>
+                                  <span className="w-8 text-center text-sm font-black">{quantity}</span>
+                                  <button type="button" onClick={() => updateAddonQuantity(1)} disabled={quantity >= 99} className="flex h-9 w-9 items-center justify-center text-emerald-700 disabled:text-gray-300" aria-label={`Tambah ${addon.name}`}><Plus size={14} /></button>
+                                </div>
+                              </div>
+                            </div>
                           );
                         })}
                       </div>
@@ -736,8 +769,7 @@ export default function KatalogPage() {
                             : "Tidak jadi pilih"
                           : `${detailCartItemId ? "Simpan" : "Tambah"} ${formatRupiah(
                               (Number(selectedProduct.price) + (selectedProduct.addons || [])
-                                .filter(addon => detailAddonIds.includes(Number(addon.id)))
-                                .reduce((total, addon) => total + Number(addon.price || 0), 0)) * detailQty
+                                .reduce((total, addon) => total + (Number(addon.price || 0) * Number(detailAddonQuantities[Number(addon.id)] || 0)), 0)) * detailQty
                             )}`}
                       </button>
                     </div>
@@ -835,12 +867,29 @@ export default function KatalogPage() {
                 ))}
 
                 <div className="pt-4 space-y-3">
-                  <input
-                    value={customerName}
-                    onChange={(event) => setCustomerName(event.target.value)}
-                    placeholder="Nama pelanggan"
-                    className="w-full h-12 rounded-2xl bg-stone-50 border border-stone-200 px-4 text-sm outline-none focus:border-emerald-600"
-                  />
+                  <div className="grid grid-cols-2 rounded-2xl bg-stone-100 border border-stone-200 p-1 text-xs font-black">
+                    <button type="button" onClick={() => setCustomerType('GUEST')} className={`h-10 rounded-xl ${customerType === 'GUEST' ? 'bg-white text-gray-950 shadow-sm' : 'text-gray-500'}`}>Pelanggan umum</button>
+                    <button type="button" onClick={() => setCustomerType('MEMBER')} className={`h-10 rounded-xl ${customerType === 'MEMBER' ? 'bg-white text-emerald-700 shadow-sm' : 'text-gray-500'}`}>Sudah member</button>
+                  </div>
+                  {customerType === 'MEMBER' ? (
+                    <div>
+                      <input
+                        value={memberReference}
+                        onChange={(event) => setMemberReference(event.target.value)}
+                        placeholder="Nomor HP atau Member ID"
+                        autoComplete="tel"
+                        className="w-full h-12 rounded-2xl bg-stone-50 border border-stone-200 px-4 text-sm outline-none focus:border-emerald-600"
+                      />
+                      <p className="mt-1.5 px-1 text-[11px] text-gray-500">Nama dan poin akan memakai data member yang sudah terdaftar.</p>
+                    </div>
+                  ) : (
+                    <input
+                      value={customerName}
+                      onChange={(event) => setCustomerName(event.target.value)}
+                      placeholder="Nama pelanggan (wajib)"
+                      className="w-full h-12 rounded-2xl bg-stone-50 border border-stone-200 px-4 text-sm outline-none focus:border-emerald-600"
+                    />
+                  )}
                   <textarea
                     value={orderNote}
                     onChange={(event) => setOrderNote(event.target.value)}

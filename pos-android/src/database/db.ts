@@ -95,7 +95,11 @@ export const createTables = async (db: any) => {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       phone TEXT,
+      email TEXT,
       notes TEXT,
+      imageUrl TEXT,
+      displayType TEXT DEFAULT 'normal',
+      memberId TEXT,
       loyaltyDiscount REAL DEFAULT 0,
       points INTEGER DEFAULT 0
     );
@@ -274,6 +278,10 @@ export const createTables = async (db: any) => {
     { table: 'products', column: 'isSynced', def: 'INTEGER DEFAULT 0' },
     { table: 'customers', column: 'serverId', def: 'INTEGER' },
     { table: 'customers', column: 'points', def: 'INTEGER DEFAULT 0' },
+    { table: 'customers', column: 'email', def: 'TEXT' },
+    { table: 'customers', column: 'imageUrl', def: 'TEXT' },
+    { table: 'customers', column: 'displayType', def: "TEXT DEFAULT 'normal'" },
+    { table: 'customers', column: 'memberId', def: 'TEXT' },
     { table: 'customers', column: 'isSynced', def: 'INTEGER DEFAULT 0' },
     { table: 'stock_receipts', column: 'isSynced', def: 'INTEGER DEFAULT 0' },
     // Bidirectional sync for Suppliers, Packages, DineTables, ProductAddons

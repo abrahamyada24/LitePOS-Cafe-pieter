@@ -268,8 +268,8 @@ export default function CartSidebar({
                                     <p className="font-black uppercase tracking-wide">Add-on</p>
                                     {item.addons.map(addon => (
                                         <div key={addon.id} className="mt-1 flex justify-between gap-2">
-                                            <span className="truncate">{addon.name}</span>
-                                            <span className="shrink-0 font-bold">+ Rp {Number(addon.price || 0).toLocaleString('id-ID')}</span>
+                                            <span className="truncate">{addon.name}{Number(addon.quantity || 1) > 1 ? ` ×${Number(addon.quantity)}` : ''}</span>
+                                            <span className="shrink-0 font-bold">+ Rp {(Number(addon.price || 0) * Number(addon.quantity || 1)).toLocaleString('id-ID')}</span>
                                         </div>
                                     ))}
                                 </div>

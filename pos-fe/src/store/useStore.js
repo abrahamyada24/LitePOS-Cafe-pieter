@@ -284,10 +284,8 @@ export const useStore = create(
 
       getCartTotal: () => {
         const { cart, settings, discount, discountType } = get();
-        const subTotal = cart.reduce((sum, item) => {
-          const addonTotal = (item.addons || []).reduce((s, a) => s + Number(a.price || 0), 0);
-          return sum + ((Number(item.price) + addonTotal) * item.qty);
-        }, 0);
+        // Harga item yang dikonfigurasi sudah mencakup seluruh add-on per unit.
+        const subTotal = cart.reduce((sum, item) => sum + (Number(item.price) * item.qty), 0);
 
         // Calculate discount
         let discountAmount = 0;

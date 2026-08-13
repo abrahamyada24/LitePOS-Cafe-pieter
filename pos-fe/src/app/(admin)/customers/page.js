@@ -79,6 +79,9 @@ const handleSaveCustomer = async (formData) => {
     data.append('name', formData.name);
     data.append('phone', formData.phone);
     data.append('email', formData.email);
+    data.append('notes', formData.notes);
+    data.append('loyaltyDiscount', formData.loyaltyDiscount);
+    data.append('points', formData.points);
     data.append('displayType', formData.displayType);
     if (formData.imageFile) {
         data.append('image', formData.imageFile);

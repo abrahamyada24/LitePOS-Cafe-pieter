@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { X, UploadCloud, User, Save, ImageIcon, LayoutGrid, ShoppingBag, Coins } from 'lucide-react';
+import { X, UploadCloud, Save, LayoutGrid, ShoppingBag, Coins } from 'lucide-react';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -10,6 +10,9 @@ export default function CustomerModal({ isOpen, onClose, onSave, initialData }) 
     name: '',
     phone: '',
     email: '',
+    notes: '',
+    loyaltyDiscount: '0',
+    points: '0',
     displayType: 'normal',
     imageFile: null
   });
@@ -22,6 +25,9 @@ export default function CustomerModal({ isOpen, onClose, onSave, initialData }) 
           name: initialData.name,
           phone: initialData.phone || '',
           email: initialData.email || '',
+          notes: initialData.notes || '',
+          loyaltyDiscount: String(initialData.loyaltyDiscount || 0),
+          points: String(initialData.points || 0),
           displayType: initialData.displayType || 'normal',
           imageFile: null
         });
@@ -31,6 +37,9 @@ export default function CustomerModal({ isOpen, onClose, onSave, initialData }) 
           name: '',
           phone: '',
           email: '',
+          notes: '',
+          loyaltyDiscount: '0',
+          points: '0',
           displayType: 'normal',
           imageFile: null
         });
@@ -155,7 +164,43 @@ export default function CustomerModal({ isOpen, onClose, onSave, initialData }) 
                             placeholder="email@pelanggan.com"
                         />
                     </div>
-                </div>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Catatan</label>
+                        <textarea
+                            value={formData.notes}
+                            onChange={(e) => setFormData({...formData, notes: e.target.value})}
+                            rows={2}
+                            maxLength={500}
+                            className="w-full resize-none px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-500"
+                            placeholder="Catatan tambahan..."
+                        />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Diskon Pelanggan (%)</label>
+                            <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="0.01"
+                                value={formData.loyaltyDiscount}
+                                onChange={(e) => setFormData({...formData, loyaltyDiscount: e.target.value})}
+                                className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-500"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Poin</label>
+                            <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                value={formData.points}
+                                onChange={(e) => setFormData({...formData, points: e.target.value})}
+                                className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-500"
+                            />
+                        </div>
+                    </div>
 
                 {initialData && (
                     <div className="mt-4 p-3 bg-gray-50 rounded-lg border border-gray-100 flex items-center gap-3">
