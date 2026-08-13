@@ -1,20 +1,68 @@
 "use client";
 
-import { useEffect, useRef, useState } from 'react';
-import { Printer, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Download, Loader2, Printer, Share2, X } from 'lucide-react';
 import { DEFAULT_DEVICE_PREFERENCES, getDevicePreferences, getPaperWidthMm } from '@/utils/devicePreferences';
 import { useStore } from '@/store/useStore';
 import { getItemOriginalPrice, getItemProductDiscountTotal, getProductDiscountTotal, hasProductDiscount } from '@/utils/transactionDiscounts';
 import { shouldShowLitePosBranding } from '@/utils/receiptBranding';
+import { showAlert } from '@/utils/swal';
+import { createReceiptImageBlob, downloadReceiptImage, getReceiptImageFilename, shareReceiptImage } from '@/utils/receiptImage';
 
 export default function ReceiptPreviewModal({ isOpen, onClose, transaction, store, formatNumber }) {
     const receiptRef = useRef(null);
+    const imageGenerationRef = useRef(0);
     const [devicePreferences, setDevicePreferences] = useState(DEFAULT_DEVICE_PREFERENCES);
+    const [receiptImageBlob, setReceiptImageBlob] = useState(null);
+    const [receiptImageError, setReceiptImageError] = useState('');
+    const [isPreparingImage, setIsPreparingImage] = useState(false);
+    const [isSharing, setIsSharing] = useState(false);
     const license = useStore((state) => state.license);
+
+    const prepareReceiptImage = useCallback(async () => {
+        const node = receiptRef.current;
+        if (!node) throw new Error('Preview struk belum siap.');
+
+        const generation = ++imageGenerationRef.current;
+        setIsPreparingImage(true);
+        setReceiptImageError('');
+
+        try {
+            const blob = await createReceiptImageBlob(node);
+
+            if (imageGenerationRef.current === generation) setReceiptImageBlob(blob);
+            return blob;
+        } catch (error) {
+            if (imageGenerationRef.current === generation) {
+                setReceiptImageBlob(null);
+                setReceiptImageError(error?.message || 'Gambar struk belum dapat disiapkan.');
+            }
+            throw error;
+        } finally {
+            if (imageGenerationRef.current === generation) setIsPreparingImage(false);
+        }
+    }, []);
 
     useEffect(() => {
         if (isOpen) setDevicePreferences(getDevicePreferences());
     }, [isOpen]);
+
+    useEffect(() => {
+        imageGenerationRef.current += 1;
+        setReceiptImageBlob(null);
+        setReceiptImageError('');
+        setIsPreparingImage(false);
+        if (!isOpen || !transaction) return undefined;
+
+        const timer = window.setTimeout(() => {
+            prepareReceiptImage().catch(() => undefined);
+        }, 150);
+
+        return () => {
+            window.clearTimeout(timer);
+            imageGenerationRef.current += 1;
+        };
+    }, [devicePreferences, isOpen, prepareReceiptImage, store, transaction]);
 
     if (!isOpen || !transaction) return null;
 
@@ -34,6 +82,44 @@ export default function ReceiptPreviewModal({ isOpen, onClose, transaction, stor
     const logoMaxWidthMm = paperWidthMm === 80 ? 58 : 42;
     const showLitePosBranding = shouldShowLitePosBranding(license);
 
+    const receiptImageFilename = getReceiptImageFilename(transaction.invoiceNumber);
+
+    const handleDownloadImage = async () => {
+        try {
+            const blob = receiptImageBlob || await prepareReceiptImage();
+            downloadReceiptImage(blob, receiptImageFilename);
+            showAlert.success('Gambar Disimpan', `${receiptImageFilename} berhasil diunduh.`);
+        } catch (error) {
+            showAlert.error('Gagal Membuat Gambar', error?.message || 'Struk belum dapat diunduh.');
+        }
+    };
+
+    const handleShareImage = async () => {
+        if (!receiptImageBlob || isSharing) return;
+
+        setIsSharing(true);
+        try {
+            const result = await shareReceiptImage({
+                blob: receiptImageBlob,
+                filename: receiptImageFilename,
+                title: `Struk ${transaction.invoiceNumber || ''}`.trim(),
+                text: `Struk transaksi ${store?.storeName || 'LitePOS'}`,
+            });
+            if (result === 'downloaded') {
+                await showAlert.info(
+                    'Gambar Struk Diunduh',
+                    'Browser ini belum mendukung berbagi file langsung. Pilih gambar dari folder Download saat membuka WhatsApp.'
+                );
+            }
+        } catch (error) {
+            if (error?.name !== 'AbortError') {
+                showAlert.error('Gagal Membagikan Gambar', error?.message || 'Menu berbagi belum dapat dibuka.');
+            }
+        } finally {
+            setIsSharing(false);
+        }
+    };
+
     const handlePrint = () => {
         if (typeof window === 'undefined') return;
 
@@ -51,6 +137,14 @@ export default function ReceiptPreviewModal({ isOpen, onClose, transaction, stor
     };
 
     const paymentType = transaction.payments?.[0]?.paymentType || 'CASH';
+    const rawPaymentStatus = transaction.paymentStatus || transaction.payments?.[0]?.paymentStatus || '';
+    const paymentStatusLabel = {
+        SETTLEMENT: 'Sudah dibayar',
+        PAID: 'Sudah dibayar',
+        PENDING: 'Menunggu bayar',
+        UNPAID: 'Belum dibayar',
+        FAILED: 'Pembayaran gagal',
+    }[rawPaymentStatus] || null;
     const paidAmount = transaction.cashAmount ?? transaction.payments?.[0]?.amount ?? transaction.grandTotal;
     const productDiscountTotal = getProductDiscountTotal(transaction.items);
 
@@ -138,6 +232,8 @@ export default function ReceiptPreviewModal({ isOpen, onClose, transaction, stor
                             <div>Pelanggan: {transaction.customerName || transaction.customer?.name || 'Umum'}</div>
                             <div>Tipe: {transaction.orderType === 'DINE_IN' ? 'Dine In' : transaction.orderType === 'PRE_ORDER' ? 'Pre Order' : 'Take Away'}</div>
                             {transaction.tableNumber && <div>Meja: {transaction.tableNumber}</div>}
+                            {transaction.preOrderDate && <div>Ambil: {formatDate(transaction.preOrderDate)}</div>}
+                            {transaction.preOrderDate && paymentStatusLabel && <div>Status bayar: {paymentStatusLabel}</div>}
                         </div>
 
                         <div className="my-2 border-t border-dashed border-black" />
@@ -195,13 +291,36 @@ export default function ReceiptPreviewModal({ isOpen, onClose, transaction, stor
                     </div>
                 </div>
 
-                <div className="flex gap-3 border-t border-gray-100 p-4">
-                    <button onClick={onClose} className="flex-1 rounded-xl bg-gray-100 px-4 py-3 text-sm font-bold text-gray-700 hover:bg-gray-200">
+                <div className="border-t border-gray-100 p-4">
+                    {receiptImageError && (
+                        <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-center text-[11px] font-medium text-amber-700">
+                            Gambar belum siap. Tekan Unduh untuk mencoba lagi.
+                        </div>
+                    )}
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <button onClick={onClose} className="rounded-xl bg-gray-100 px-3 py-3 text-sm font-bold text-gray-700 hover:bg-gray-200">
                         Tutup
                     </button>
-                    <button onClick={handlePrint} className="flex-[1.5] rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700 flex items-center justify-center gap-2">
+                    <button
+                        onClick={handleDownloadImage}
+                        disabled={isPreparingImage}
+                        className="flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-700 hover:bg-gray-50 disabled:cursor-wait disabled:opacity-50"
+                    >
+                        {isPreparingImage ? <Loader2 size={17} className="animate-spin" /> : <Download size={17} />}
+                        {isPreparingImage ? 'Menyiapkan' : 'Unduh PNG'}
+                    </button>
+                    <button
+                        onClick={handleShareImage}
+                        disabled={!receiptImageBlob || isPreparingImage || isSharing}
+                        className="flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-wait disabled:opacity-50"
+                    >
+                        {isSharing ? <Loader2 size={17} className="animate-spin" /> : <Share2 size={17} />}
+                        {isSharing ? 'Membuka' : 'Bagikan WA'}
+                    </button>
+                    <button onClick={handlePrint} className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-3 py-3 text-sm font-bold text-white hover:bg-blue-700">
                         <Printer size={17} /> Cetak Struk
                     </button>
+                    </div>
                 </div>
             </div>
         </div>

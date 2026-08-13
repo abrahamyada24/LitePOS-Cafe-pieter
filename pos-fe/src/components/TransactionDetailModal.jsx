@@ -1,18 +1,49 @@
 "use client";
 
-import { useState, useEffect } from 'react';
-import { X, Calendar, User, CreditCard, Printer, ShoppingBag, Store, FileText, MapPin, UtensilsCrossed, RotateCcw, Loader2 } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { X, Calendar, User, CreditCard, Printer, ShoppingBag, Store, FileText, MapPin, UtensilsCrossed, RotateCcw, Loader2, Share2 } from 'lucide-react';
 import { DEFAULT_DEVICE_PREFERENCES, getDevicePreferences, getPaperWidthMm } from '@/utils/devicePreferences';
 import { useStore } from '@/store/useStore';
 import { getItemOriginalPrice, getItemProductDiscountTotal, getProductDiscountTotal, hasProductDiscount } from '@/utils/transactionDiscounts';
 import { shouldShowLitePosBranding } from '@/utils/receiptBranding';
+import { createReceiptImageBlob, getReceiptImageFilename, shareReceiptImage } from '@/utils/receiptImage';
+import { showAlert } from '@/utils/swal';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
 export default function TransactionDetailModal({ isOpen, onClose, transaction, canReturn = false, isReturning = false, onReturn }) {
+    const receiptRef = useRef(null);
+    const imageGenerationRef = useRef(0);
     const [storeSettings, setStoreSettings] = useState(null);
     const [devicePreferences, setDevicePreferences] = useState(DEFAULT_DEVICE_PREFERENCES);
+    const [receiptImageBlob, setReceiptImageBlob] = useState(null);
+    const [receiptImageError, setReceiptImageError] = useState('');
+    const [isPreparingImage, setIsPreparingImage] = useState(false);
+    const [isSharing, setIsSharing] = useState(false);
     const license = useStore((state) => state.license);
+
+    const prepareReceiptImage = useCallback(async () => {
+        const node = receiptRef.current;
+        if (!node) throw new Error('Struk belum siap dibuat menjadi gambar.');
+
+        const generation = ++imageGenerationRef.current;
+        setIsPreparingImage(true);
+        setReceiptImageError('');
+
+        try {
+            const blob = await createReceiptImageBlob(node);
+            if (imageGenerationRef.current === generation) setReceiptImageBlob(blob);
+            return blob;
+        } catch (error) {
+            if (imageGenerationRef.current === generation) {
+                setReceiptImageBlob(null);
+                setReceiptImageError(error?.message || 'Gambar struk belum dapat disiapkan.');
+            }
+            throw error;
+        } finally {
+            if (imageGenerationRef.current === generation) setIsPreparingImage(false);
+        }
+    }, []);
 
     // Fetch store settings for receipt header
     useEffect(() => {
@@ -35,6 +66,23 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
             fetchSettings();
         }
     }, [isOpen]);
+
+    useEffect(() => {
+        imageGenerationRef.current += 1;
+        setReceiptImageBlob(null);
+        setReceiptImageError('');
+        setIsPreparingImage(false);
+        if (!isOpen || !transaction) return undefined;
+
+        const timer = window.setTimeout(() => {
+            prepareReceiptImage().catch(() => undefined);
+        }, 150);
+
+        return () => {
+            window.clearTimeout(timer);
+            imageGenerationRef.current += 1;
+        };
+    }, [devicePreferences, isOpen, prepareReceiptImage, storeSettings, transaction]);
 
     if (!isOpen || !transaction) return null;
 
@@ -67,6 +115,14 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
 
     // Payment info
     const paymentType = payments?.[0]?.paymentType || 'TUNAI';
+    const rawPaymentStatus = transaction.paymentStatus || payments?.[0]?.paymentStatus || '';
+    const paymentStatusLabel = {
+        SETTLEMENT: 'Sudah dibayar',
+        PAID: 'Sudah dibayar',
+        PENDING: 'Menunggu bayar',
+        UNPAID: 'Belum dibayar',
+        FAILED: 'Pembayaran gagal',
+    }[rawPaymentStatus] || transaction.status;
     const paymentAmount = payments?.[0]?.amount || transaction.grandTotal;
     const changeAmount = Number(paymentAmount) - Number(transaction.grandTotal);
     const returnableTransaction = canReturn && ['PAID', 'COMPLETED'].includes(transaction.status);
@@ -74,6 +130,42 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
     // --- FUNGSI CETAK STRUK ---
     const handlePrint = () => {
         window.print();
+    };
+
+    const handleShareImage = async () => {
+        if (isPreparingImage || isSharing) return;
+
+        if (!receiptImageBlob) {
+            try {
+                await prepareReceiptImage();
+                await showAlert.info('Gambar Struk Siap', 'Tekan Share Sosmed sekali lagi lalu pilih WhatsApp.');
+            } catch (error) {
+                showAlert.error('Gagal Membuat Gambar', error?.message || 'Struk belum dapat dibagikan.');
+            }
+            return;
+        }
+
+        setIsSharing(true);
+        try {
+            const result = await shareReceiptImage({
+                blob: receiptImageBlob,
+                filename: getReceiptImageFilename(transaction.invoiceNumber),
+                title: `Struk ${transaction.invoiceNumber || ''}`.trim(),
+                text: `Struk transaksi ${storeName}`,
+            });
+            if (result === 'downloaded') {
+                await showAlert.info(
+                    'Gambar Struk Diunduh',
+                    'Browser ini belum mendukung berbagi file langsung. Pilih gambar dari folder Download saat membuka WhatsApp.'
+                );
+            }
+        } catch (error) {
+            if (error?.name !== 'AbortError') {
+                showAlert.error('Gagal Membagikan Gambar', error?.message || 'Menu berbagi belum dapat dibuka.');
+            }
+        } finally {
+            setIsSharing(false);
+        }
     };
 
     return (
@@ -220,6 +312,7 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
                                                 ) : (
                                                     <p className="text-[9px] text-gray-400">@ {formatRp(item.price)}</p>
                                                 )}
+                                                {item.notes && <p className="mt-1 text-[9px] italic text-gray-500">{item.notes}</p>}
                                             </td>
                                             <td className="px-4 py-3 text-center font-bold text-xs">{item.qty}</td>
                                             <td className="px-4 py-3 text-right font-black text-xs text-gray-900">{formatRp(item.price * item.qty)}</td>
@@ -280,7 +373,18 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
                 </div>
 
                 {/* --- RECEIPT TEMPLATE (STRUK FISIK) --- */}
-                <div id="receipt-print" className="hidden">
+                <div
+                    id="receipt-print"
+                    ref={receiptRef}
+                    aria-hidden="true"
+                    className="fixed -left-[10000px] top-0 block bg-white font-mono text-black"
+                    style={{
+                        width: `${paperWidthMm}mm`,
+                        padding: `${devicePreferences.printMarginMm}mm`,
+                        boxSizing: 'border-box',
+                        lineHeight: 1.2,
+                    }}
+                >
                     <div style={{ textAlign: 'center', marginBottom: '15px' }}>
                         {storeLogo && (
                             <img
@@ -314,6 +418,8 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
                         <div>CUST : {transaction.customerName || customer?.name || 'Guest'}</div>
                         <div>TIPE : {transaction.orderType === 'DINE_IN' ? `DINE-IN (Meja ${transaction.tableNumber || '-'})` : transaction.orderType === 'PRE_ORDER' ? 'PRE-ORDER' : 'TAKE AWAY'}</div>
                         {transaction.takeawayOption && <div>VIA  : {transaction.takeawayOption}</div>}
+                        {transaction.preOrderDate && <div>AMBIL: {formatDate(transaction.preOrderDate)}</div>}
+                        {transaction.preOrderDate && <div>STATUS BAYAR: {paymentStatusLabel}</div>}
                     </div>
 
                     <div style={{ borderBottom: '1px dashed #000', margin: '10px 0' }}></div>
@@ -333,6 +439,7 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
                                     <span>{(item.qty * Number(item.price)).toLocaleString('id-ID')}</span>
                                 </div>
                                 {hasProductDiscount(item) && <div style={{ fontSize: '9px' }}>DISKON PRODUK</div>}
+                                {item.notes && <div style={{ fontSize: '9px', fontStyle: 'italic' }}>CATATAN: {item.notes}</div>}
                             </div>
                         ))}
                     </div>
@@ -399,6 +506,9 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
 
                 {/* Modal Footer */}
                 <div className="px-6 py-4 border-t border-gray-100 bg-gray-50 flex flex-wrap justify-end gap-3 no-print">
+                    {receiptImageError && (
+                        <span className="w-full text-right text-[10px] font-semibold text-amber-600">Gambar belum siap; tekan Share Sosmed untuk mencoba lagi.</span>
+                    )}
                     {returnableTransaction && (
                         <button
                             onClick={onReturn}
@@ -415,6 +525,15 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
                         className="px-4 py-2 text-xs font-black uppercase tracking-widest text-gray-400 hover:text-gray-800 transition-colors"
                     >
                         Tutup
+                    </button>
+                    <button
+                        onClick={handleShareImage}
+                        disabled={isPreparingImage || isSharing || isReturning}
+                        title="Bagikan gambar struk lalu pilih WhatsApp"
+                        className="px-5 py-2.5 text-xs font-black text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl flex items-center gap-2 transition-all active:scale-95 shadow-lg shadow-emerald-100 uppercase tracking-widest disabled:cursor-wait disabled:opacity-60"
+                    >
+                        {isPreparingImage || isSharing ? <Loader2 size={16} className="animate-spin" /> : <Share2 size={16} strokeWidth={3} />}
+                        {isPreparingImage ? 'Menyiapkan' : isSharing ? 'Membuka' : receiptImageBlob ? 'Share WhatsApp' : 'Siapkan Share'}
                     </button>
                     <button
                         onClick={handlePrint}
