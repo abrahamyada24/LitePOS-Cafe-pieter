@@ -35,6 +35,8 @@ export default function CartSidebar({
     setTakeawayOption,
     taxRate,
     pendingOrderContext,
+    onCancelPendingOrder,
+    isCancellingPendingOrder,
     // New props for enhanced features
     discount,
     onOpenDiscountModal,
@@ -332,6 +334,16 @@ export default function CartSidebar({
                             <span>- Rp {productDiscountTotal.toLocaleString('id-ID')}</span>
                         </div>
                     </>
+                )}
+                {pendingOrderContext && (
+                    <button
+                        type="button"
+                        onClick={onCancelPendingOrder}
+                        disabled={isCancellingPendingOrder || !pendingOrderContext.accepted}
+                        className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-black text-red-600 disabled:opacity-50"
+                    >
+                        {!pendingOrderContext.accepted ? 'Menyiapkan...' : isCancellingPendingOrder ? 'Membatalkan...' : 'Batalkan Order'}
+                    </button>
                 )}
                 <div className="flex justify-between text-sm text-gray-500">
                     <span>Subtotal</span>

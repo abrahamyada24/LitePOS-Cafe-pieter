@@ -50,6 +50,12 @@ exports.deleteSavedTransaction = async (req, res) => {
         const { id } = req.params;
         const accepted = req.query.action === 'accepted';
         await prisma.$transaction(async (tx) => {
+            const linkedOrders = !accepted
+                ? await tx.kitchenOrder.findMany({
+                    where: { savedOrderId: id, status: { in: ['NEW', 'PREPARING'] } },
+                    select: { id: true, tableNumber: true }
+                })
+                : [];
             await tx.kitchenOrder.updateMany({
                 where: { savedOrderId: id, status: { in: ['NEW', 'PREPARING'] } },
                 data: accepted
@@ -57,6 +63,18 @@ exports.deleteSavedTransaction = async (req, res) => {
                     : { status: 'CANCELLED', completedAt: new Date() }
             });
             await tx.savedTransaction.delete({ where: { id } });
+
+            for (const tableNumber of [...new Set(linkedOrders.map(order => order.tableNumber).filter(Boolean))]) {
+                const otherActiveOrders = await tx.kitchenOrder.count({
+                    where: { tableNumber, status: { in: ['NEW', 'PREPARING', 'READY'] } }
+                });
+                if (otherActiveOrders === 0) {
+                    await tx.dineTable.updateMany({
+                        where: { number: tableNumber },
+                        data: { status: 'AVAILABLE', occupiedAt: null, statusUpdatedAt: new Date() }
+                    });
+                }
+            }
         });
         res.json({ success: true, message: "Transaksi tersimpan berhasil dihapus" });
     } catch (error) {

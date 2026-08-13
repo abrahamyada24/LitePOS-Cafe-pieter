@@ -304,7 +304,7 @@ exports.createTransaction = async (req, res) => {
             });
 
             let kitchenQueue = null;
-            if (isInstantPayment && (orderType || 'DINE_IN') !== 'PRE_ORDER') {
+            if ((sourceOrderCode || isInstantPayment) && (orderType || 'DINE_IN') !== 'PRE_ORDER') {
                 if (sourceOrderCode) {
                     const existingKitchenOrder = await tx.kitchenOrder.findUnique({
                         where: { orderCode: String(sourceOrderCode) }
@@ -324,8 +324,8 @@ exports.createTransaction = async (req, res) => {
                     await tx.kitchenOrder.update({
                         where: { id: existingKitchenOrder.id },
                         data: {
-                            status: existingKitchenOrder.status === 'NEW' ? 'PREPARING' : existingKitchenOrder.status,
-                            startedAt: existingKitchenOrder.startedAt || new Date(),
+                            status: isInstantPayment && existingKitchenOrder.status === 'NEW' ? 'PREPARING' : existingKitchenOrder.status,
+                            startedAt: isInstantPayment ? (existingKitchenOrder.startedAt || new Date()) : existingKitchenOrder.startedAt,
                             tableNumber: tableNumber || existingKitchenOrder.tableNumber,
                             customerName: customerName || existingKitchenOrder.customerName,
                             note: note || existingKitchenOrder.note,

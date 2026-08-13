@@ -5,6 +5,7 @@ const { verifyToken } = require('../middlewares/authMiddleware');
 
 router.get('/', verifyToken, controller.getKitchenOrders);
 router.get('/summary', verifyToken, controller.getKitchenOrderSummary);
+router.patch('/code/:orderCode/cancel', verifyToken, controller.cancelKitchenOrderByCode);
 router.patch('/:id/status', verifyToken, controller.updateKitchenOrderStatus);
 
 module.exports = router;

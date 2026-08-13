@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChefHat, Clock3, Flame, CheckCircle2, Loader2, RefreshCw, X, History, CircleX } from 'lucide-react';
+import { Banknote, ChefHat, Clock3, Flame, CheckCircle2, Loader2, RefreshCw, X, History, CircleX } from 'lucide-react';
 import { showAlert } from '@/utils/swal';
 import { useStore } from '@/store/useStore';
 
@@ -14,6 +14,13 @@ const STATUS_META = {
     READY: { label: 'Siap', icon: CheckCircle2, accent: 'border-emerald-300', button: 'Selesaikan', next: 'COMPLETED' },
     COMPLETED: { label: 'Selesai', icon: CheckCircle2, accent: 'border-gray-200' },
     CANCELLED: { label: 'Dibatalkan', icon: CircleX, accent: 'border-red-200' }
+};
+
+const PAYMENT_META = {
+    UNPAID: { label: 'Belum dibayar', className: 'bg-red-50 text-red-700 border-red-200' },
+    PENDING: { label: 'Menunggu bayar', className: 'bg-amber-50 text-amber-700 border-amber-200' },
+    PAID: { label: 'Sudah dibayar', className: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+    FAILED: { label: 'Pembayaran gagal', className: 'bg-gray-100 text-gray-600 border-gray-200' },
 };
 
 const formatRp = (value) => `Rp ${Number(value || 0).toLocaleString('id-ID')}`;
@@ -164,6 +171,15 @@ export default function KitchenPage() {
                                                 <span className="text-[10px] font-black text-gray-500 flex items-center gap-1 shrink-0"><Clock3 size={12} /> {elapsed(order.createdAt)}</span>
                                             </div>
 
+                                            {(() => {
+                                                const payment = PAYMENT_META[order.paymentStatus] || PAYMENT_META.UNPAID;
+                                                return (
+                                                    <div className={`mt-3 inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10px] font-black uppercase ${payment.className}`}>
+                                                        <Banknote size={13} /> {payment.label}
+                                                    </div>
+                                                );
+                                            })()}
+
                                             <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
                                                 {order.items.map((item, index) => (
                                                     <div key={`${item.productId || item.packageId || index}-${index}`}>
@@ -179,7 +195,7 @@ export default function KitchenPage() {
                                                 <span className="text-xs font-black text-gray-600">{formatRp(order.total)}</span>
                                                 {meta.next && (
                                                     <div className="flex gap-2">
-                                                        {status !== 'READY' && <button onClick={() => cancelOrder(order)} disabled={updatingId === order.id} className="w-9 h-9 rounded-lg border border-red-100 text-red-500 flex items-center justify-center hover:bg-red-50 disabled:opacity-50" title="Batalkan pesanan"><X size={15} /></button>}
+                                                        {(order.paymentStatus || 'UNPAID') === 'UNPAID' && <button onClick={() => cancelOrder(order)} disabled={updatingId === order.id} className="w-9 h-9 rounded-lg border border-red-100 text-red-500 flex items-center justify-center hover:bg-red-50 disabled:opacity-50" title="Batalkan pesanan belum dibayar"><X size={15} /></button>}
                                                         <button onClick={() => updateStatus(order, meta.next)} disabled={updatingId === order.id} className="h-9 px-3 rounded-lg bg-gray-950 text-white text-xs font-black disabled:opacity-50">{updatingId === order.id ? '...' : meta.button}</button>
                                                     </div>
                                                 )}

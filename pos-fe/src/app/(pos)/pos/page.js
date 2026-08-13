@@ -75,6 +75,7 @@ export default function POSPage() {
   const [isSavedTransactionModalOpen, setIsSavedTransactionModalOpen] = useState(false);
   const [savedTransactionCount, setSavedTransactionCount] = useState(0);
   const [isSavingTransaction, setIsSavingTransaction] = useState(false);
+  const [isCancellingPendingOrder, setIsCancellingPendingOrder] = useState(false);
   const [activeSavedTransactionId, setActiveSavedTransactionId] = useState(null);
   const [discountConfig, setDiscountConfig] = useState(null);
   const [isDiscountModalOpen, setIsDiscountModalOpen] = useState(false);
@@ -468,6 +469,44 @@ export default function POSPage() {
   const clearCurrentCart = () => {
     setCart([]);
     setDiscountConfig(null);
+  };
+
+  const cancelPendingOrder = async () => {
+    if (!pendingOrderContext?.orderCode || isCancellingPendingOrder) return;
+    const confirmed = await showAlert.confirmDanger(
+      'Batalkan order meja?',
+      `${pendingOrderContext.queueLabel || 'Order ini'} akan dibatalkan dan dihapus dari antrean dapur.`,
+      'Ya, Batalkan Order'
+    );
+    if (!confirmed) return;
+
+    setIsCancellingPendingOrder(true);
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_URL}/api/kitchen-orders/code/${encodeURIComponent(pendingOrderContext.orderCode)}/cancel`, {
+        method: 'PATCH',
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.message || data.error || 'Order belum dapat dibatalkan.');
+
+      setCart([]);
+      setDiscountConfig(null);
+      setPendingOrderContext(null);
+      setSelectedMember(null);
+      setGuestCustomerName('');
+      setSelectedTable(null);
+      setOrderType('TAKE_AWAY');
+      sessionStorage.removeItem('table-order-to-process');
+      sessionStorage.removeItem('table-order-accepted-id');
+      setMobileView('menu');
+      await refreshSavedTransactionCount();
+      showAlert.success('Order dibatalkan', 'Order meja telah dihapus dari POS dan antrean dapur.');
+    } catch (error) {
+      showAlert.error('Order belum dibatalkan', error.message || 'Coba lagi.');
+    } finally {
+      setIsCancellingPendingOrder(false);
+    }
   };
 
   const updateItemNotes = (id, notes) => {
@@ -918,6 +957,8 @@ export default function POSPage() {
         setTakeawayOption={setTakeawayOption}
         taxRate={taxRate}
         pendingOrderContext={pendingOrderContext}
+        onCancelPendingOrder={cancelPendingOrder}
+        isCancellingPendingOrder={isCancellingPendingOrder}
         discount={discount}
         onOpenDiscountModal={() => setIsDiscountModalOpen(true)}
         onRemoveDiscount={() => setDiscountConfig(null)}
