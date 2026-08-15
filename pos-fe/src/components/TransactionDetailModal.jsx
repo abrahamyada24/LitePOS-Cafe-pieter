@@ -416,7 +416,7 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
                         <div>TGL : {formatDate(transaction.createdAt)}</div>
                         <div>KASIR: {user?.name || 'Staff'}</div>
                         <div>CUST : {transaction.customerName || customer?.name || 'Guest'}</div>
-                        <div>TIPE : {transaction.orderType === 'DINE_IN' ? `DINE-IN (Meja ${transaction.tableNumber || '-'})` : transaction.orderType === 'PRE_ORDER' ? 'PRE-ORDER' : 'TAKE AWAY'}</div>
+                        <div>TIPE : {transaction.orderType === 'DINE_IN' ? (transaction.tableNumber ? `DINE IN - MEJA ${transaction.tableNumber}` : 'DINE IN') : transaction.orderType === 'PRE_ORDER' ? 'PRE ORDER' : 'TAKE AWAY'}</div>
                         {transaction.takeawayOption && <div>VIA  : {transaction.takeawayOption}</div>}
                         {transaction.preOrderDate && <div>AMBIL: {formatDate(transaction.preOrderDate)}</div>}
                         {transaction.preOrderDate && <div>STATUS BAYAR: {paymentStatusLabel}</div>}

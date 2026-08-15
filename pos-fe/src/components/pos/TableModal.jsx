@@ -1,6 +1,6 @@
 "use client";
 
-import { X, Search, Utensils, CheckCircle2 } from 'lucide-react';
+import { X, Utensils, CheckCircle2 } from 'lucide-react';
 
 export default function TableModal({
     isOpen,
@@ -18,7 +18,7 @@ export default function TableModal({
                 <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50 rounded-t-3xl shrink-0">
                     <div>
                         <h3 className="font-bold text-gray-800 text-lg">Pilih Meja</h3>
-                        <p className="text-xs text-gray-500 mt-1">Pilih meja yang tersedia untuk Dine In</p>
+                        <p className="text-xs text-gray-500 mt-1">Boleh dilewati bila meja belum ditentukan</p>
                     </div>
                     <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-full text-gray-500 transition-colors bg-white shadow-sm">
                         <X size={20} />
@@ -27,6 +27,21 @@ export default function TableModal({
 
                 {/* List Meja */}
                 <div className="flex-1 overflow-y-auto p-4">
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setSelectedTable(null);
+                            onClose();
+                        }}
+                        className={`mb-4 w-full rounded-2xl border-2 p-3 text-left transition-colors flex items-center justify-between gap-3 ${!selectedTable ? 'border-blue-500 bg-blue-50' : 'border-gray-100 hover:border-blue-300 hover:bg-gray-50'}`}
+                    >
+                        <div>
+                            <span className={`block text-sm font-bold ${!selectedTable ? 'text-blue-700' : 'text-gray-700'}`}>Tanpa meja</span>
+                            <span className="text-xs text-gray-500">Lanjutkan pesanan tanpa memilih meja</span>
+                        </div>
+                        {!selectedTable && <CheckCircle2 size={18} className="shrink-0 text-blue-500" />}
+                    </button>
+
                     {tables.length === 0 ? (
                         <div className="flex flex-col items-center justify-center h-48 text-gray-400">
                             <Utensils size={48} className="mb-4 opacity-20" />
@@ -35,7 +50,7 @@ export default function TableModal({
                     ) : (
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                             {tables.map((table) => {
-                                const isSelected = selectedTable?.id === table.id;
+                                const isSelected = selectedTable?.id === table.id || selectedTable?.number === table.number;
                                 return (
                                     <button
                                         key={table.id}

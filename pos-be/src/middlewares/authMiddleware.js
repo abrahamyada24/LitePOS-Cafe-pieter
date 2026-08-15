@@ -4,7 +4,6 @@ const {
   JWT_AUDIENCE,
   JWT_ISSUER,
   SESSION_COOKIE_NAME,
-  SESSION_IDLE_TIMEOUT_HOURS,
   SESSION_IDLE_TIMEOUT_MS,
   SESSION_TOUCH_INTERVAL_MS,
 } = require('../config/auth');
@@ -32,7 +31,7 @@ exports.verifyToken = async (req, res, next) => {
     return res.status(401).json({
       success: false,
       code: 'AUTH_REQUIRED',
-      message: 'Sesi tidak ditemukan. Silakan login kembali.',
+      message: 'Silakan masuk untuk melanjutkan.',
     });
   }
 
@@ -79,7 +78,7 @@ exports.verifyToken = async (req, res, next) => {
       return res.status(401).json({
         success: false,
         code: 'SESSION_INVALID',
-        message: 'Sesi sudah tidak aktif. Silakan login kembali.',
+        message: 'Silakan masuk kembali untuk melanjutkan.',
       });
     }
 
@@ -91,7 +90,7 @@ exports.verifyToken = async (req, res, next) => {
       return res.status(401).json({
         success: false,
         code: 'SESSION_IDLE_TIMEOUT',
-        message: `Sesi berakhir karena tidak aktif selama ${SESSION_IDLE_TIMEOUT_HOURS} jam.`,
+        message: 'Untuk menjaga keamanan akun, silakan masuk kembali.',
       });
     }
 
@@ -103,7 +102,7 @@ exports.verifyToken = async (req, res, next) => {
       return res.status(401).json({
         success: false,
         code: 'SESSION_PASSWORD_CHANGED',
-        message: 'Password telah berubah. Silakan login kembali.',
+        message: 'Kata sandi telah diperbarui. Silakan masuk kembali.',
       });
     }
 
@@ -135,7 +134,7 @@ exports.verifyToken = async (req, res, next) => {
     return res.status(401).json({
       success: false,
       code: 'SESSION_INVALID',
-      message: 'Sesi tidak valid atau sudah kedaluwarsa.',
+      message: 'Silakan masuk kembali untuk melanjutkan.',
     });
   }
 };

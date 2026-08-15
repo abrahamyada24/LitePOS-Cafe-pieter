@@ -8,7 +8,7 @@ import { useStore } from '@/store/useStore';
 const INACTIVITY_TIMEOUT_HOURS = 16;
 const INACTIVITY_TIMEOUT_MS = INACTIVITY_TIMEOUT_HOURS * 60 * 60 * 1000;
 const LAST_ACTIVITY_KEY = 'litepos_last_activity';
-const INACTIVITY_NOTICE = `Sesi berakhir karena tidak aktif selama ${INACTIVITY_TIMEOUT_HOURS} jam.`;
+const INACTIVITY_NOTICE = 'Untuk menjaga keamanan akun, silakan masuk kembali.';
 
 export default function AuthGuard({ children }) {
   const router = useRouter();
@@ -44,7 +44,7 @@ export default function AuthGuard({ children }) {
       if (!result.success) {
         sessionStorage.setItem('auth_notice', result.code === 'SESSION_IDLE_TIMEOUT'
           ? INACTIVITY_NOTICE
-          : 'Silakan login kembali.');
+          : 'Silakan masuk kembali untuk melanjutkan.');
         router.replace('/login');
         return;
       }
@@ -138,7 +138,7 @@ export default function AuthGuard({ children }) {
     return (
       <div className="h-screen w-full flex flex-col items-center justify-center bg-gray-50 text-gray-500 gap-3">
         <Loader2 className="animate-spin text-blue-500" size={48} />
-        <p className="text-sm font-medium">Memeriksa sesi aman...</p>
+        <p className="text-sm font-medium">Menyiapkan halaman...</p>
       </div>
     );
   }

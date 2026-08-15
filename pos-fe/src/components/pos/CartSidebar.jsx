@@ -139,17 +139,17 @@ export default function CartSidebar({
             <div className="flex bg-gray-100 p-1 rounded-lg">
                 <button 
                     disabled={Boolean(pendingOrderContext)}
-                    onClick={() => setOrderType('TAKE_AWAY')}
-                    className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all disabled:cursor-not-allowed ${orderType === 'TAKE_AWAY' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500'} ${pendingOrderContext ? 'opacity-50' : ''}`}
-                >
-                    Take Away
-                </button>
-                <button 
-                    disabled={Boolean(pendingOrderContext)}
                     onClick={() => setOrderType('DINE_IN')}
                     className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all disabled:cursor-not-allowed ${orderType === 'DINE_IN' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500'} ${pendingOrderContext ? 'opacity-50' : ''}`}
                 >
                     Dine In
+                </button>
+                <button 
+                    disabled={Boolean(pendingOrderContext)}
+                    onClick={() => setOrderType('TAKE_AWAY')}
+                    className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all disabled:cursor-not-allowed ${orderType === 'TAKE_AWAY' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500'} ${pendingOrderContext ? 'opacity-50' : ''}`}
+                >
+                    Take Away
                 </button>
                 <button 
                     disabled={Boolean(pendingOrderContext)}
@@ -169,7 +169,7 @@ export default function CartSidebar({
                 >
                     <span className="flex items-center gap-2 text-gray-600">
                         <Utensils size={14} />
-                        {selectedTable ? <span className="font-bold text-gray-800">Meja {selectedTable.number}</span> : "Pilih Meja"}
+                        {selectedTable ? <span className="font-bold text-gray-800">Meja {selectedTable.number}</span> : "Pilih meja (opsional)"}
                     </span>
                     <ChevronRight size={14} className="text-gray-400" />
                 </button>

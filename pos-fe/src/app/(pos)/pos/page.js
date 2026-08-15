@@ -84,7 +84,7 @@ export default function POSPage() {
   const [addonNotes, setAddonNotes] = useState('');
 
   // Table & Order Type States
-  const [orderType, setOrderType] = useState('TAKE_AWAY');
+  const [orderType, setOrderType] = useState('DINE_IN');
   const [selectedTable, setSelectedTable] = useState(null);
   const [isTableModalOpen, setIsTableModalOpen] = useState(false);
   const [preOrderDate, setPreOrderDate] = useState('');
@@ -507,7 +507,7 @@ export default function POSPage() {
       setSelectedMember(null);
       setGuestCustomerName('');
       setSelectedTable(null);
-      setOrderType('TAKE_AWAY');
+      setOrderType('DINE_IN');
       sessionStorage.removeItem('table-order-to-process');
       sessionStorage.removeItem('table-order-accepted-id');
       setMobileView('menu');
@@ -809,7 +809,7 @@ export default function POSPage() {
       setSelectedMember(null);
       setGuestCustomerName('');
       setSelectedTable(null);
-      setOrderType('TAKE_AWAY');
+      setOrderType('DINE_IN');
       setPreOrderDate('');
       setTakeawayOption('');
       setActiveSavedTransactionId(null);
@@ -833,7 +833,7 @@ export default function POSPage() {
       setCart(restoredItems);
       setSelectedMember(payload.selectedMember || null);
       setGuestCustomerName(payload.guestCustomerName || '');
-      setOrderType(payload.orderType || 'TAKE_AWAY');
+      setOrderType(payload.orderType || 'DINE_IN');
       setSelectedTable(payload.tableNumber ? { number: payload.tableNumber } : null);
       setPreOrderDate(payload.preOrderDate || '');
       setTakeawayOption(payload.takeawayOption || '');
@@ -861,7 +861,7 @@ export default function POSPage() {
       setSelectedMember(null);
       setGuestCustomerName('');
       setSelectedTable(null);
-      setOrderType('TAKE_AWAY');
+      setOrderType('DINE_IN');
       setPreOrderDate('');
       setTakeawayOption('');
       setPendingOrderContext(null);

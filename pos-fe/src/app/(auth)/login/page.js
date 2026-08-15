@@ -22,7 +22,7 @@ export default function LoginPage() {
         const notice = sessionStorage.getItem('auth_notice');
         if (notice) {
             sessionStorage.removeItem('auth_notice');
-            showAlert.info('Sesi Berakhir', notice);
+            showAlert.info('Silakan Masuk Kembali', notice);
         }
     }, []);
 
@@ -42,7 +42,7 @@ export default function LoginPage() {
 
         } catch (err) {
             console.error(err);
-            showAlert.error("Error", "Gagal terhubung ke server backend.");
+            showAlert.error("Belum Terhubung", "Periksa koneksi internet, lalu coba lagi.");
         } finally {
             setIsLoading(false);
         }
