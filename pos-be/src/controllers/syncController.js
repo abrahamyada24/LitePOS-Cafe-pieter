@@ -148,7 +148,15 @@ exports.pushLocalData = async (req, res) => {
     releaseDataSync = enterDataSync();
     const { transactions, expenses, shifts, categories, products, customers, settings, stockReceipts, suppliers: pushSuppliers, packages: pushPackages, dineTables, addons: pushAddons, dataResetVersion } = req.body;
     const resetState = await prisma.storeSetting.findFirst({
-      select: { dataResetVersion: true, dataResetInProgress: true, dataResetAt: true },
+      select: {
+        dataResetVersion: true,
+        dataResetInProgress: true,
+        dataResetAt: true,
+        dataResetType: true,
+        dataAllResetVersion: true,
+        dataStockResetVersion: true,
+        dataTransactionResetVersion: true,
+      },
     });
     const serverResetVersion = resetState?.dataResetVersion || 0;
     const clientResetVersion = Number(dataResetVersion || 0);
@@ -167,6 +175,10 @@ exports.pushLocalData = async (req, res) => {
         data: {
           version: serverResetVersion,
           resetAt: resetState?.dataResetAt || null,
+          scope: resetState?.dataResetType || null,
+          allResetVersion: resetState?.dataAllResetVersion || 0,
+          stockResetVersion: resetState?.dataStockResetVersion || 0,
+          transactionResetVersion: resetState?.dataTransactionResetVersion || 0,
         },
       });
     }

@@ -1,7 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcryptjs');
 const { activateLicense, getLicenseStatus } = require('../services/licenseService');
-const { getDataResetState, resetOperationalData } = require('../services/dataResetService');
+const { RESET_TYPES, getDataResetState, resetOperationalData } = require('../services/dataResetService');
 
 const prisma = new PrismaClient();
 
@@ -51,12 +51,27 @@ exports.resetData = async (req, res) => {
   try {
     const password = String(req.body?.password || '');
     const confirmation = String(req.body?.confirmation || '').trim();
+    const resetType = String(req.body?.resetType || RESET_TYPES.ALL).trim().toUpperCase();
+    const confirmationByType = {
+      [RESET_TYPES.STOCK]: 'RESET STOK',
+      [RESET_TYPES.TRANSACTIONS]: 'RESET TRANSAKSI',
+      [RESET_TYPES.ALL]: 'RESET OUTLET',
+    };
+    const expectedConfirmation = confirmationByType[resetType];
 
-    if (!password || confirmation !== 'RESET OUTLET') {
+    if (!expectedConfirmation) {
+      return res.status(400).json({
+        success: false,
+        code: 'RESET_TYPE_INVALID',
+        message: 'Pilih jenis reset stok, transaksi, atau semua data.',
+      });
+    }
+
+    if (!password || confirmation !== expectedConfirmation) {
       return res.status(400).json({
         success: false,
         code: 'RESET_CONFIRMATION_INVALID',
-        message: 'Masukkan password Owner dan ketik RESET OUTLET dengan tepat.',
+        message: `Masukkan password Owner dan ketik ${expectedConfirmation} dengan tepat.`,
       });
     }
 
@@ -76,11 +91,18 @@ exports.resetData = async (req, res) => {
     const result = await resetOperationalData({
       prisma,
       resetBy: owner.email || owner.name || `user:${req.user.id}`,
+      resetType,
     });
+
+    const messageByType = {
+      [RESET_TYPES.STOCK]: 'Seluruh stok dan riwayat stok berhasil direset.',
+      [RESET_TYPES.TRANSACTIONS]: 'Seluruh transaksi berhasil dihapus.',
+      [RESET_TYPES.ALL]: 'Seluruh data operasional berhasil dihapus.',
+    };
 
     return res.json({
       success: true,
-      message: 'Seluruh data operasional berhasil dihapus.',
+      message: messageByType[resetType],
       data: result,
     });
   } catch (error) {

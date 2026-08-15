@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from 'react';
-import { AlertTriangle, BadgeCheck, CalendarDays, CheckCircle2, Clock3, Copy, KeyRound, Loader2, MonitorSmartphone, ShieldAlert, Trash2, X } from 'lucide-react';
+import { AlertTriangle, BadgeCheck, Boxes, CalendarDays, CheckCircle2, Clock3, Copy, KeyRound, Loader2, MonitorSmartphone, ReceiptText, ShieldAlert, Trash2, X } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import { showAlert } from '@/utils/swal';
 
@@ -12,6 +12,36 @@ const formatDate = (value) => value
   ? new Intl.DateTimeFormat('id-ID', { dateStyle: 'long', timeStyle: 'short' }).format(new Date(value))
   : 'Tanpa batas waktu';
 
+const RESET_OPTIONS = {
+  STOCK: {
+    label: 'Reset Stok',
+    phrase: 'RESET STOK',
+    description: 'Nolkan stok seluruh produk serta hapus riwayat penerimaan dan pergerakan stok. Katalog dan transaksi tetap ada.',
+    confirmText: 'Ya, Reset Stok',
+    successTitle: 'Stok berhasil direset',
+    successMessage: 'Stok seluruh produk menjadi 0. Katalog, transaksi, akun, lisensi, dan pengaturan tetap tersimpan.',
+    icon: Boxes,
+  },
+  TRANSACTIONS: {
+    label: 'Reset Transaksi',
+    phrase: 'RESET TRANSAKSI',
+    description: 'Hapus transaksi, pembayaran, pesanan tersimpan, dan antrean dapur. Stok, katalog, shift, serta pengeluaran tetap ada.',
+    confirmText: 'Ya, Reset Transaksi',
+    successTitle: 'Transaksi berhasil direset',
+    successMessage: 'Seluruh transaksi telah dihapus. Stok, katalog, shift, pengeluaran, akun, lisensi, dan pengaturan tetap tersimpan.',
+    icon: ReceiptText,
+  },
+  ALL: {
+    label: 'Reset Semua',
+    phrase: 'RESET OUTLET',
+    description: 'Hapus seluruh data operasional termasuk transaksi, stok, katalog, pelanggan, supplier, paket, meja, shift, dan pengeluaran.',
+    confirmText: 'Ya, Reset Semua',
+    successTitle: 'Data berhasil dibersihkan',
+    successMessage: 'Seluruh data operasional telah dihapus. Akun, lisensi, dan pengaturan toko tetap tersimpan.',
+    icon: Trash2,
+  },
+};
+
 export default function LicensePage() {
   const user = useStore((state) => state.user);
   const license = useStore((state) => state.license);
@@ -20,10 +50,12 @@ export default function LicensePage() {
   const [loading, setLoading] = useState(true);
   const [activating, setActivating] = useState(false);
   const [showResetDialog, setShowResetDialog] = useState(false);
+  const [resetType, setResetType] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
   const [resetPhrase, setResetPhrase] = useState('');
   const [resetting, setResetting] = useState(false);
   const isOwner = user?.role === 'OWNER';
+  const selectedReset = resetType ? RESET_OPTIONS[resetType] : null;
 
   const refresh = async () => {
     setLoading(true);
@@ -58,19 +90,23 @@ export default function LicensePage() {
   const closeResetDialog = () => {
     if (resetting) return;
     setShowResetDialog(false);
+    setResetType(null);
     setResetPassword('');
     setResetPhrase('');
   };
 
-  const resetAllData = async () => {
-    if (!resetPassword || resetPhrase.trim() !== 'RESET OUTLET') {
-      return showAlert.warning('Konfirmasi belum lengkap', 'Masukkan password Owner dan ketik RESET OUTLET dengan tepat.');
+  const resetData = async () => {
+    if (!selectedReset) {
+      return showAlert.warning('Jenis reset belum dipilih', 'Pilih reset stok, transaksi, atau semua data.');
+    }
+    if (!resetPassword || resetPhrase.trim() !== selectedReset.phrase) {
+      return showAlert.warning('Konfirmasi belum lengkap', `Masukkan password Owner dan ketik ${selectedReset.phrase} dengan tepat.`);
     }
 
     const confirmed = await showAlert.confirmDanger(
       'Konfirmasi terakhir',
-      'Semua data operasional akan dihapus permanen dari website dan seluruh Android.',
-      'Ya, Reset Semua'
+      `${selectedReset.description} Perubahan berlaku permanen di website dan seluruh Android.`,
+      selectedReset.confirmText
     );
     if (!confirmed) return;
 
@@ -83,17 +119,19 @@ export default function LicensePage() {
         body: JSON.stringify({
           password: resetPassword,
           confirmation: resetPhrase.trim(),
+          resetType,
         }),
       });
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.message || 'Reset data gagal.');
 
       setShowResetDialog(false);
+      setResetType(null);
       setResetPassword('');
       setResetPhrase('');
       showAlert.success(
-        'Data berhasil dibersihkan',
-        'Seluruh data operasional telah dihapus. Akun, lisensi, dan pengaturan toko tetap tersimpan.'
+        selectedReset.successTitle,
+        selectedReset.successMessage
       );
     } catch (error) {
       showAlert.error('Reset data gagal', error.message);
@@ -187,9 +225,9 @@ export default function LicensePage() {
                 <Trash2 size={22} />
               </div>
               <div>
-                <h3 className="font-black text-gray-900">Reset Semua Data</h3>
+                <h3 className="font-black text-gray-900">Reset Data Outlet</h3>
                 <p className="text-sm text-gray-600 mt-1 max-w-2xl">
-                  Bersihkan seluruh data latihan di server dan Android. Akun pengguna, lisensi, sesi login, dan pengaturan toko tidak ikut dihapus.
+                  Pilih data yang ingin dibersihkan: hanya stok, hanya transaksi, atau seluruh data operasional. Akun, lisensi, sesi login, dan pengaturan toko tidak ikut dihapus.
                 </p>
               </div>
             </div>
@@ -197,7 +235,7 @@ export default function LicensePage() {
               onClick={() => setShowResetDialog(true)}
               className="px-5 py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold flex items-center justify-center gap-2 shrink-0"
             >
-              <Trash2 size={18} /> Reset Data
+              <Trash2 size={18} /> Pilih Data
             </button>
           </div>
         </div>
@@ -205,7 +243,7 @@ export default function LicensePage() {
 
       {showResetDialog && (
         <div className="fixed inset-0 z-50 bg-gray-950/60 backdrop-blur-sm grid place-items-center p-4">
-          <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl p-6 relative">
+          <div className="w-full max-w-lg max-h-[calc(100vh-2rem)] overflow-y-auto rounded-3xl bg-white shadow-2xl p-6 relative">
             <button
               onClick={closeResetDialog}
               disabled={resetting}
@@ -218,10 +256,37 @@ export default function LicensePage() {
             <div className="w-12 h-12 rounded-2xl bg-red-100 text-red-600 grid place-items-center">
               <AlertTriangle size={25} />
             </div>
-            <h2 className="text-xl font-black text-gray-900 mt-4">Reset seluruh data outlet?</h2>
+            <h2 className="text-xl font-black text-gray-900 mt-4">Pilih data yang akan direset</h2>
             <p className="text-sm text-gray-600 mt-2 leading-6">
-              Transaksi, pembayaran, shift, pengeluaran, stok, katalog, pelanggan, supplier, paket, meja, pesanan tersimpan, dan antrean dapur akan dihapus permanen.
+              Reset berlaku ke website dan seluruh perangkat Android. Pilih cakupan dengan teliti karena data yang dihapus tidak dapat dikembalikan.
             </p>
+
+            <div className="mt-5 grid gap-2">
+              {Object.entries(RESET_OPTIONS).map(([type, option]) => {
+                const OptionIcon = option.icon;
+                const selected = resetType === type;
+                return (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => {
+                      setResetType(type);
+                      setResetPhrase('');
+                    }}
+                    disabled={resetting}
+                    className={`w-full rounded-2xl border p-4 text-left transition flex items-start gap-3 ${selected ? 'border-red-500 bg-red-50 ring-2 ring-red-100' : 'border-gray-200 hover:border-gray-300'}`}
+                  >
+                    <span className={`w-10 h-10 rounded-xl grid place-items-center shrink-0 ${selected ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600'}`}>
+                      <OptionIcon size={20} />
+                    </span>
+                    <span>
+                      <span className="block font-black text-gray-900">{option.label}</span>
+                      <span className="block text-xs text-gray-500 mt-1 leading-5">{option.description}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
 
             <div className="mt-5">
               <label className="block text-xs font-black text-gray-600 mb-2">Password Owner</label>
@@ -229,7 +294,7 @@ export default function LicensePage() {
                 type="password"
                 value={resetPassword}
                 onChange={(event) => setResetPassword(event.target.value)}
-                disabled={resetting}
+                disabled={resetting || !selectedReset}
                 autoComplete="current-password"
                 placeholder="Masukkan password"
                 className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:border-red-500 disabled:bg-gray-100"
@@ -238,14 +303,14 @@ export default function LicensePage() {
 
             <div className="mt-4">
               <label className="block text-xs font-black text-gray-600 mb-2">
-                Ketik <span className="text-red-600">RESET OUTLET</span>
+                Ketik <span className="text-red-600">{selectedReset?.phrase || 'pilih jenis reset dahulu'}</span>
               </label>
               <input
                 value={resetPhrase}
                 onChange={(event) => setResetPhrase(event.target.value.toUpperCase())}
-                disabled={resetting}
+                disabled={resetting || !selectedReset}
                 autoComplete="off"
-                placeholder="RESET OUTLET"
+                placeholder={selectedReset?.phrase || 'Pilih jenis reset'}
                 className="w-full px-4 py-3 border border-gray-200 rounded-xl font-bold tracking-wide focus:outline-none focus:border-red-500 disabled:bg-gray-100"
               />
             </div>
@@ -259,12 +324,12 @@ export default function LicensePage() {
                 Batal
               </button>
               <button
-                onClick={resetAllData}
-                disabled={resetting || !resetPassword || resetPhrase.trim() !== 'RESET OUTLET'}
+                onClick={resetData}
+                disabled={resetting || !selectedReset || !resetPassword || resetPhrase.trim() !== selectedReset.phrase}
                 className="flex-1 px-5 py-3 rounded-xl bg-red-600 text-white font-bold disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {resetting ? <Loader2 className="animate-spin" size={18} /> : <Trash2 size={18} />}
-                {resetting ? 'Mereset...' : 'Lanjutkan'}
+                {resetting ? 'Mereset...' : selectedReset?.label || 'Lanjutkan'}
               </button>
             </div>
           </div>

@@ -1,19 +1,35 @@
 const { withExclusiveDataReset } = require('./dataResetCoordinator');
 
-const OPERATIONAL_DELETE_STEPS = [
+const RESET_TYPES = Object.freeze({
+  STOCK: 'STOCK',
+  TRANSACTIONS: 'TRANSACTIONS',
+  ALL: 'ALL',
+});
+
+const TRANSACTION_DELETE_STEPS = [
   ['kitchenOrders', 'kitchenOrder'],
   ['queueCounters', 'orderQueueCounter'],
   ['payments', 'payment'],
   ['transactionItems', 'transactionItem'],
   ['transactions', 'transaction'],
-  ['expenses', 'expense'],
-  ['shifts', 'shift'],
   ['savedTransactions', 'savedTransaction'],
+];
+
+const STOCK_DELETE_STEPS = [
   ['stockReceiptItems', 'stockReceiptItem'],
   ['stockMovements', 'stockMovement'],
+  ['stockReceipts', 'stockReceipt'],
+];
+
+const OPERATIONAL_DELETE_STEPS = [
+  ...TRANSACTION_DELETE_STEPS.slice(0, 5),
+  ['expenses', 'expense'],
+  ['shifts', 'shift'],
+  TRANSACTION_DELETE_STEPS[5],
+  ...STOCK_DELETE_STEPS.slice(0, 2),
   ['productAddons', 'productAddon'],
   ['packageItems', 'packageItem'],
-  ['stockReceipts', 'stockReceipt'],
+  STOCK_DELETE_STEPS[2],
   ['packages', 'package'],
   ['suppliers', 'supplier'],
   ['dineTables', 'dineTable'],
@@ -45,6 +61,10 @@ const getDataResetState = async (prisma) => {
       dataResetInProgress: true,
       dataResetAt: true,
       dataResetBy: true,
+      dataResetType: true,
+      dataAllResetVersion: true,
+      dataStockResetVersion: true,
+      dataTransactionResetVersion: true,
     },
   });
 
@@ -53,10 +73,64 @@ const getDataResetState = async (prisma) => {
     inProgress: setting?.dataResetInProgress || false,
     resetAt: setting?.dataResetAt || null,
     resetBy: setting?.dataResetBy || null,
+    scope: setting?.dataResetType || null,
+    allResetVersion: setting?.dataAllResetVersion || 0,
+    stockResetVersion: setting?.dataStockResetVersion || 0,
+    transactionResetVersion: setting?.dataTransactionResetVersion || 0,
   };
 };
 
-const resetOperationalData = async ({ prisma, resetBy }) => withExclusiveDataReset(async () => {
+const buildScopeVersionData = (resetType, version) => ({
+  dataResetType: resetType,
+  ...(resetType === RESET_TYPES.ALL
+    ? {
+        dataAllResetVersion: version,
+        dataStockResetVersion: version,
+        dataTransactionResetVersion: version,
+      }
+    : {}),
+  ...(resetType === RESET_TYPES.STOCK ? { dataStockResetVersion: version } : {}),
+  ...(resetType === RESET_TYPES.TRANSACTIONS ? { dataTransactionResetVersion: version } : {}),
+});
+
+const deleteModels = async (tx, steps, deleted) => {
+  for (const [resultKey, modelName] of steps) {
+    const result = await tx[modelName].deleteMany();
+    deleted[resultKey] = result.count;
+  }
+};
+
+const resetSelectedData = async (tx, resetType) => {
+  const deleted = {};
+
+  if (resetType === RESET_TYPES.ALL) {
+    await deleteModels(tx, OPERATIONAL_DELETE_STEPS, deleted);
+    return deleted;
+  }
+
+  if (resetType === RESET_TYPES.STOCK) {
+    await deleteModels(tx, STOCK_DELETE_STEPS, deleted);
+    const products = await tx.product.updateMany({ data: { stock: 0 } });
+    deleted.productStocksReset = products.count;
+    return deleted;
+  }
+
+  await deleteModels(tx, TRANSACTION_DELETE_STEPS, deleted);
+  const dineTables = await tx.dineTable.updateMany({
+    data: { status: 'AVAILABLE', occupiedAt: null },
+  });
+  deleted.dineTablesReleased = dineTables.count;
+  return deleted;
+};
+
+const resetOperationalData = async ({ prisma, resetBy, resetType = RESET_TYPES.ALL }) => withExclusiveDataReset(async () => {
+  if (!Object.values(RESET_TYPES).includes(resetType)) {
+    const error = new Error('Jenis reset data tidak valid.');
+    error.code = 'RESET_TYPE_INVALID';
+    error.status = 400;
+    throw error;
+  }
+
   const now = new Date();
   const marker = await prisma.$transaction(async (tx) => {
     const pendingPayments = await tx.payment.count({
@@ -71,6 +145,10 @@ const resetOperationalData = async ({ prisma, resetBy }) => withExclusiveDataRes
         dataResetInProgress: true,
         dataResetAt: true,
         dataResetBy: true,
+        dataResetType: true,
+        dataAllResetVersion: true,
+        dataStockResetVersion: true,
+        dataTransactionResetVersion: true,
       },
     });
     if (currentSetting?.dataResetInProgress) throw resetInProgressError();
@@ -82,12 +160,17 @@ const resetOperationalData = async ({ prisma, resetBy }) => withExclusiveDataRes
           dataResetInProgress: true,
           dataResetAt: now,
           dataResetBy: resetBy,
+          ...buildScopeVersionData(resetType, 1),
         },
         select: {
           id: true,
           dataResetVersion: true,
           dataResetAt: true,
           dataResetBy: true,
+          dataResetType: true,
+          dataAllResetVersion: true,
+          dataStockResetVersion: true,
+          dataTransactionResetVersion: true,
         },
       });
       return { ...created, previous: null };
@@ -104,6 +187,7 @@ const resetOperationalData = async ({ prisma, resetBy }) => withExclusiveDataRes
         dataResetInProgress: true,
         dataResetAt: now,
         dataResetBy: resetBy,
+        ...buildScopeVersionData(resetType, currentSetting.dataResetVersion + 1),
       },
     });
     if (claimed.count !== 1) throw resetInProgressError();
@@ -113,17 +197,23 @@ const resetOperationalData = async ({ prisma, resetBy }) => withExclusiveDataRes
       dataResetVersion: currentSetting.dataResetVersion + 1,
       dataResetAt: now,
       dataResetBy: resetBy,
+      dataResetType: resetType,
+      dataAllResetVersion: resetType === RESET_TYPES.ALL
+        ? currentSetting.dataResetVersion + 1
+        : currentSetting.dataAllResetVersion,
+      dataStockResetVersion: [RESET_TYPES.ALL, RESET_TYPES.STOCK].includes(resetType)
+        ? currentSetting.dataResetVersion + 1
+        : currentSetting.dataStockResetVersion,
+      dataTransactionResetVersion: [RESET_TYPES.ALL, RESET_TYPES.TRANSACTIONS].includes(resetType)
+        ? currentSetting.dataResetVersion + 1
+        : currentSetting.dataTransactionResetVersion,
       previous: currentSetting,
     };
   });
 
   try {
     return await prisma.$transaction(async (tx) => {
-      const deleted = {};
-      for (const [resultKey, modelName] of OPERATIONAL_DELETE_STEPS) {
-        const result = await tx[modelName].deleteMany();
-        deleted[resultKey] = result.count;
-      }
+      const deleted = await resetSelectedData(tx, resetType);
 
       await tx.storeSetting.update({
         where: { id: marker.id },
@@ -137,6 +227,10 @@ const resetOperationalData = async ({ prisma, resetBy }) => withExclusiveDataRes
           inProgress: false,
           resetAt: marker.dataResetAt,
           resetBy: marker.dataResetBy,
+          scope: marker.dataResetType,
+          allResetVersion: marker.dataAllResetVersion,
+          stockResetVersion: marker.dataStockResetVersion,
+          transactionResetVersion: marker.dataTransactionResetVersion,
         },
       };
     });
@@ -153,6 +247,10 @@ const resetOperationalData = async ({ prisma, resetBy }) => withExclusiveDataRes
           dataResetInProgress: false,
           dataResetAt: marker.previous.dataResetAt,
           dataResetBy: marker.previous.dataResetBy,
+          dataResetType: marker.previous.dataResetType,
+          dataAllResetVersion: marker.previous.dataAllResetVersion,
+          dataStockResetVersion: marker.previous.dataStockResetVersion,
+          dataTransactionResetVersion: marker.previous.dataTransactionResetVersion,
         },
       }).catch(() => {});
     } else {
@@ -169,6 +267,9 @@ const resetOperationalData = async ({ prisma, resetBy }) => withExclusiveDataRes
 });
 
 module.exports = {
+  RESET_TYPES,
+  TRANSACTION_DELETE_STEPS,
+  STOCK_DELETE_STEPS,
   OPERATIONAL_DELETE_STEPS,
   getDataResetState,
   resetOperationalData,
