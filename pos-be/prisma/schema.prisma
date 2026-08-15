@@ -337,6 +337,18 @@ model StoreSetting {
   @@map("store_settings")
 }
 
+model DataResetEvent {
+  version          Int       @id
+  resetType        String    @map("reset_type") @db.VarChar(20)
+  transactionStart DateTime? @map("transaction_start")
+  transactionEnd   DateTime? @map("transaction_end")
+  resetAt          DateTime  @default(now()) @map("reset_at")
+  resetBy          String?   @map("reset_by") @db.VarChar(255)
+
+  @@index([resetAt])
+  @@map("data_reset_events")
+}
+
 model LoyaltyConfig {
   id                  Int      @id @default(autoincrement())
   pointMultiplier     Decimal  @default(1) @map("point_multiplier") @db.Decimal(15, 2)

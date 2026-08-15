@@ -9,9 +9,10 @@ const {
   resetOperationalData,
 } = require('./dataResetService');
 
-const createTransactionMock = ({ pendingPayments = 0 } = {}) => {
+const createTransactionMock = ({ pendingPayments = 0, rangeTransactions = [] } = {}) => {
   const deletedModels = [];
   const updates = [];
+  const resetEvents = [];
   const currentSetting = {
     id: 1,
     dataResetVersion: 3,
@@ -59,6 +60,12 @@ const createTransactionMock = ({ pendingPayments = 0 } = {}) => {
         return {};
       },
     },
+    dataResetEvent: {
+      create: async ({ data }) => {
+        resetEvents.push(data);
+        return data;
+      },
+    },
   };
 
   for (const [, modelName] of OPERATIONAL_DELETE_STEPS) {
@@ -71,14 +78,19 @@ const createTransactionMock = ({ pendingPayments = 0 } = {}) => {
       },
     };
   }
+  tx.transaction.findMany = async () => rangeTransactions;
 
   return {
     prisma: {
       $transaction: async (callback) => callback(tx),
       storeSetting: tx.storeSetting,
+      dataResetEvent: {
+        findMany: async () => [],
+      },
     },
     deletedModels,
     updates,
+    resetEvents,
   };
 };
 
@@ -132,6 +144,39 @@ test('reset transaksi mempertahankan stok dan data master', async () => {
   ]]);
 });
 
+test('reset transaksi rentang tanggal hanya menghapus transaksi yang ditemukan', async () => {
+  const { prisma, deletedModels, updates, resetEvents } = createTransactionMock({
+    rangeTransactions: [
+      { id: 11, tableNumber: 'A01' },
+      { id: 12, tableNumber: null },
+    ],
+  });
+  const startAt = new Date('2026-08-01T00:00:00.000+07:00');
+  const endAt = new Date('2026-08-15T23:59:59.999+07:00');
+  const result = await resetOperationalData({
+    prisma,
+    resetBy: 'owner@example.com',
+    resetType: RESET_TYPES.TRANSACTIONS,
+    transactionRange: { startAt, endAt },
+  });
+
+  assert.equal(result.resetState.scope, RESET_TYPES.TRANSACTIONS);
+  assert.deepEqual(result.resetState.transactionRange, { startAt, endAt });
+  assert.deepEqual(deletedModels, [
+    'kitchenOrder',
+    'payment',
+    'transactionItem',
+    'transaction',
+  ]);
+  assert.deepEqual(updates, [[
+    'dineTable',
+    { status: 'AVAILABLE', occupiedAt: null },
+  ]]);
+  assert.equal(resetEvents.length, 1);
+  assert.equal(resetEvents[0].transactionStart, startAt);
+  assert.equal(resetEvents[0].transactionEnd, endAt);
+});
+
 test('reset dibatalkan sebelum penghapusan bila pembayaran masih pending', async () => {
   const { prisma, deletedModels } = createTransactionMock({ pendingPayments: 1 });
 
@@ -145,6 +190,7 @@ test('reset dibatalkan sebelum penghapusan bila pembayaran masih pending', async
 test('status reset default aman saat StoreSetting belum tersedia', async () => {
   const state = await getDataResetState({
     storeSetting: { findFirst: async () => null },
+    dataResetEvent: { findMany: async () => [] },
   });
 
   assert.deepEqual(state, {
@@ -156,5 +202,32 @@ test('status reset default aman saat StoreSetting belum tersedia', async () => {
     allResetVersion: 0,
     stockResetVersion: 0,
     transactionResetVersion: 0,
+    events: [],
   });
+});
+
+test('status reset mengembalikan histori event setelah versi perangkat', async () => {
+  const startAt = new Date('2026-08-01T00:00:00.000+07:00');
+  const endAt = new Date('2026-08-15T23:59:59.999+07:00');
+  const state = await getDataResetState({
+    storeSetting: {
+      findFirst: async () => ({
+        dataResetVersion: 4,
+        dataResetType: RESET_TYPES.TRANSACTIONS,
+        dataTransactionResetVersion: 4,
+      }),
+    },
+    dataResetEvent: {
+      findMany: async () => [{
+        version: 4,
+        resetType: RESET_TYPES.TRANSACTIONS,
+        transactionStart: startAt,
+        transactionEnd: endAt,
+        resetAt: new Date('2026-08-15T10:00:00.000Z'),
+      }],
+    },
+  }, { sinceVersion: 3 });
+
+  assert.equal(state.events.length, 1);
+  assert.deepEqual(state.events[0].transactionRange, { startAt, endAt });
 });

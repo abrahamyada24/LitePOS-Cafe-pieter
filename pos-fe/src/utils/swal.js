@@ -91,6 +91,48 @@ export const showAlert = {
     return result.isConfirmed;
   },
 
+  confirmDangerCountdown: async (
+    title,
+    text,
+    confirmText = 'Reset Sekarang',
+    seconds = 10,
+    cancelText = 'Batalkan Reset'
+  ) => {
+    let remaining = Math.max(1, Number(seconds) || 10);
+    let countdownInterval;
+    const result = await Swal.fire({
+      title,
+      text,
+      icon: 'error',
+      showCancelButton: true,
+      confirmButtonColor: themeColors.danger,
+      cancelButtonColor: themeColors.cancel,
+      confirmButtonText: `Tunggu ${remaining} detik`,
+      cancelButtonText: cancelText,
+      reverseButtons: true,
+      focusCancel: true,
+      allowOutsideClick: false,
+      didOpen: () => {
+        const confirmButton = Swal.getConfirmButton();
+        confirmButton.disabled = true;
+        countdownInterval = window.setInterval(() => {
+          remaining -= 1;
+          if (remaining > 0) {
+            confirmButton.textContent = `Tunggu ${remaining} detik`;
+            return;
+          }
+          window.clearInterval(countdownInterval);
+          confirmButton.disabled = false;
+          confirmButton.textContent = confirmText;
+        }, 1000);
+      },
+      willClose: () => {
+        if (countdownInterval) window.clearInterval(countdownInterval);
+      },
+    });
+    return result.isConfirmed;
+  },
+
   loading: (title = 'Memproses...') => {
     Swal.fire({
       title: title,

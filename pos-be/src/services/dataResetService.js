@@ -54,19 +54,34 @@ const resetInProgressError = () => {
   return error;
 };
 
-const getDataResetState = async (prisma) => {
-  const setting = await prisma.storeSetting.findFirst({
-    select: {
-      dataResetVersion: true,
-      dataResetInProgress: true,
-      dataResetAt: true,
-      dataResetBy: true,
-      dataResetType: true,
-      dataAllResetVersion: true,
-      dataStockResetVersion: true,
-      dataTransactionResetVersion: true,
-    },
-  });
+const getDataResetState = async (prisma, { sinceVersion = null } = {}) => {
+  const [setting, events] = await Promise.all([
+    prisma.storeSetting.findFirst({
+      select: {
+        dataResetVersion: true,
+        dataResetInProgress: true,
+        dataResetAt: true,
+        dataResetBy: true,
+        dataResetType: true,
+        dataAllResetVersion: true,
+        dataStockResetVersion: true,
+        dataTransactionResetVersion: true,
+      },
+    }),
+    Number.isInteger(sinceVersion) && sinceVersion >= 0
+      ? prisma.dataResetEvent.findMany({
+          where: { version: { gt: sinceVersion } },
+          orderBy: { version: 'asc' },
+          select: {
+            version: true,
+            resetType: true,
+            transactionStart: true,
+            transactionEnd: true,
+            resetAt: true,
+          },
+        })
+      : Promise.resolve([]),
+  ]);
 
   return {
     version: setting?.dataResetVersion || 0,
@@ -77,6 +92,14 @@ const getDataResetState = async (prisma) => {
     allResetVersion: setting?.dataAllResetVersion || 0,
     stockResetVersion: setting?.dataStockResetVersion || 0,
     transactionResetVersion: setting?.dataTransactionResetVersion || 0,
+    events: events.map((event) => ({
+      version: event.version,
+      scope: event.resetType,
+      resetAt: event.resetAt,
+      transactionRange: event.transactionStart && event.transactionEnd
+        ? { startAt: event.transactionStart, endAt: event.transactionEnd }
+        : null,
+    })),
   };
 };
 
@@ -100,7 +123,53 @@ const deleteModels = async (tx, steps, deleted) => {
   }
 };
 
-const resetSelectedData = async (tx, resetType) => {
+const resetTransactionsInRange = async (tx, transactionRange) => {
+  const dateFilter = {
+    gte: transactionRange.startAt,
+    lte: transactionRange.endAt,
+  };
+  const transactions = await tx.transaction.findMany({
+    where: { createdAt: dateFilter },
+    select: { id: true, tableNumber: true },
+  });
+  const transactionIds = transactions.map((transaction) => transaction.id);
+  const tableNumbers = Array.from(new Set(
+    transactions.map((transaction) => transaction.tableNumber).filter(Boolean)
+  ));
+  const deleted = {
+    kitchenOrders: 0,
+    payments: 0,
+    transactionItems: 0,
+    transactions: 0,
+    dineTablesReleased: 0,
+  };
+
+  if (transactionIds.length === 0) return deleted;
+
+  deleted.kitchenOrders = (await tx.kitchenOrder.deleteMany({
+    where: { transactionId: { in: transactionIds } },
+  })).count;
+  deleted.payments = (await tx.payment.deleteMany({
+    where: { transactionId: { in: transactionIds } },
+  })).count;
+  deleted.transactionItems = (await tx.transactionItem.deleteMany({
+    where: { transactionId: { in: transactionIds } },
+  })).count;
+  deleted.transactions = (await tx.transaction.deleteMany({
+    where: { id: { in: transactionIds } },
+  })).count;
+
+  if (tableNumbers.length > 0) {
+    deleted.dineTablesReleased = (await tx.dineTable.updateMany({
+      where: { number: { in: tableNumbers } },
+      data: { status: 'AVAILABLE', occupiedAt: null },
+    })).count;
+  }
+
+  return deleted;
+};
+
+const resetSelectedData = async (tx, resetType, transactionRange = null) => {
   const deleted = {};
 
   if (resetType === RESET_TYPES.ALL) {
@@ -115,6 +184,10 @@ const resetSelectedData = async (tx, resetType) => {
     return deleted;
   }
 
+  if (transactionRange) {
+    return resetTransactionsInRange(tx, transactionRange);
+  }
+
   await deleteModels(tx, TRANSACTION_DELETE_STEPS, deleted);
   const dineTables = await tx.dineTable.updateMany({
     data: { status: 'AVAILABLE', occupiedAt: null },
@@ -123,18 +196,52 @@ const resetSelectedData = async (tx, resetType) => {
   return deleted;
 };
 
-const resetOperationalData = async ({ prisma, resetBy, resetType = RESET_TYPES.ALL }) => withExclusiveDataReset(async () => {
+const resetOperationalData = async ({
+  prisma,
+  resetBy,
+  resetType = RESET_TYPES.ALL,
+  transactionRange = null,
+}) => withExclusiveDataReset(async () => {
   if (!Object.values(RESET_TYPES).includes(resetType)) {
     const error = new Error('Jenis reset data tidak valid.');
     error.code = 'RESET_TYPE_INVALID';
     error.status = 400;
     throw error;
   }
+  if (transactionRange && resetType !== RESET_TYPES.TRANSACTIONS) {
+    const error = new Error('Rentang tanggal hanya dapat digunakan untuk reset transaksi.');
+    error.code = 'RESET_RANGE_INVALID';
+    error.status = 400;
+    throw error;
+  }
+  if (transactionRange && (
+    !(transactionRange.startAt instanceof Date)
+    || !(transactionRange.endAt instanceof Date)
+    || Number.isNaN(transactionRange.startAt.getTime())
+    || Number.isNaN(transactionRange.endAt.getTime())
+    || transactionRange.startAt > transactionRange.endAt
+  )) {
+    const error = new Error('Rentang tanggal transaksi tidak valid.');
+    error.code = 'RESET_RANGE_INVALID';
+    error.status = 400;
+    throw error;
+  }
 
   const now = new Date();
   const marker = await prisma.$transaction(async (tx) => {
+    const pendingPaymentWhere = transactionRange
+      ? {
+          paymentStatus: 'PENDING',
+          transaction: {
+            createdAt: {
+              gte: transactionRange.startAt,
+              lte: transactionRange.endAt,
+            },
+          },
+        }
+      : { paymentStatus: 'PENDING' };
     const pendingPayments = await tx.payment.count({
-      where: { paymentStatus: 'PENDING' },
+      where: pendingPaymentWhere,
     });
     if (pendingPayments > 0) throw pendingPaymentError();
 
@@ -213,7 +320,18 @@ const resetOperationalData = async ({ prisma, resetBy, resetType = RESET_TYPES.A
 
   try {
     return await prisma.$transaction(async (tx) => {
-      const deleted = await resetSelectedData(tx, resetType);
+      const deleted = await resetSelectedData(tx, resetType, transactionRange);
+
+      await tx.dataResetEvent.create({
+        data: {
+          version: marker.dataResetVersion,
+          resetType,
+          transactionStart: transactionRange?.startAt || null,
+          transactionEnd: transactionRange?.endAt || null,
+          resetAt: marker.dataResetAt,
+          resetBy: marker.dataResetBy,
+        },
+      });
 
       await tx.storeSetting.update({
         where: { id: marker.id },
@@ -231,6 +349,9 @@ const resetOperationalData = async ({ prisma, resetBy, resetType = RESET_TYPES.A
           allResetVersion: marker.dataAllResetVersion,
           stockResetVersion: marker.dataStockResetVersion,
           transactionResetVersion: marker.dataTransactionResetVersion,
+          transactionRange: transactionRange
+            ? { startAt: transactionRange.startAt, endAt: transactionRange.endAt }
+            : null,
         },
       };
     });

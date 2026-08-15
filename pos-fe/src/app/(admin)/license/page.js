@@ -51,11 +51,23 @@ export default function LicensePage() {
   const [activating, setActivating] = useState(false);
   const [showResetDialog, setShowResetDialog] = useState(false);
   const [resetType, setResetType] = useState(null);
+  const [transactionMode, setTransactionMode] = useState('ALL');
+  const [transactionStartDate, setTransactionStartDate] = useState('');
+  const [transactionEndDate, setTransactionEndDate] = useState('');
   const [resetPassword, setResetPassword] = useState('');
   const [resetPhrase, setResetPhrase] = useState('');
   const [resetting, setResetting] = useState(false);
   const isOwner = user?.role === 'OWNER';
   const selectedReset = resetType ? RESET_OPTIONS[resetType] : null;
+  const usesTransactionRange = resetType === 'TRANSACTIONS' && transactionMode === 'RANGE';
+  const transactionRangeValid = !usesTransactionRange || (
+    transactionStartDate
+    && transactionEndDate
+    && transactionStartDate <= transactionEndDate
+  );
+  const resetImpactDescription = usesTransactionRange
+    ? `Hapus transaksi dari ${transactionStartDate || 'tanggal awal'} sampai ${transactionEndDate || 'tanggal akhir'}, termasuk pembayaran dan antrean terkait. Stok, katalog, shift, serta pengeluaran tetap ada.`
+    : selectedReset?.description || '';
 
   const refresh = async () => {
     setLoading(true);
@@ -91,6 +103,9 @@ export default function LicensePage() {
     if (resetting) return;
     setShowResetDialog(false);
     setResetType(null);
+    setTransactionMode('ALL');
+    setTransactionStartDate('');
+    setTransactionEndDate('');
     setResetPassword('');
     setResetPhrase('');
   };
@@ -102,13 +117,24 @@ export default function LicensePage() {
     if (!resetPassword || resetPhrase.trim() !== selectedReset.phrase) {
       return showAlert.warning('Konfirmasi belum lengkap', `Masukkan password Owner dan ketik ${selectedReset.phrase} dengan tepat.`);
     }
+    if (!transactionRangeValid) {
+      return showAlert.warning('Rentang tanggal belum valid', 'Pilih tanggal awal dan akhir; tanggal akhir tidak boleh sebelum tanggal awal.');
+    }
 
-    const confirmed = await showAlert.confirmDanger(
-      'Konfirmasi terakhir',
-      `${selectedReset.description} Perubahan berlaku permanen di website dan seluruh Android.`,
-      selectedReset.confirmText
+    const firstConfirmed = await showAlert.confirmDanger(
+      'Konfirmasi 1 dari 2',
+      `${resetImpactDescription} Perubahan berlaku permanen di website dan seluruh Android.`,
+      'Lanjut ke Konfirmasi Akhir'
     );
-    if (!confirmed) return;
+    if (!firstConfirmed) return;
+
+    const finalConfirmed = await showAlert.confirmDangerCountdown(
+      'Konfirmasi terakhir',
+      `Periksa sekali lagi: ${resetImpactDescription}`,
+      selectedReset.confirmText,
+      10
+    );
+    if (!finalConfirmed) return;
 
     setResetting(true);
     try {
@@ -120,6 +146,9 @@ export default function LicensePage() {
           password: resetPassword,
           confirmation: resetPhrase.trim(),
           resetType,
+          transactionMode: resetType === 'TRANSACTIONS' ? transactionMode : undefined,
+          startDate: usesTransactionRange ? transactionStartDate : undefined,
+          endDate: usesTransactionRange ? transactionEndDate : undefined,
         }),
       });
       const data = await response.json();
@@ -127,11 +156,16 @@ export default function LicensePage() {
 
       setShowResetDialog(false);
       setResetType(null);
+      setTransactionMode('ALL');
+      setTransactionStartDate('');
+      setTransactionEndDate('');
       setResetPassword('');
       setResetPhrase('');
       showAlert.success(
         selectedReset.successTitle,
-        selectedReset.successMessage
+        usesTransactionRange
+          ? `Transaksi tanggal ${transactionStartDate} sampai ${transactionEndDate} telah dihapus. Stok, katalog, shift, dan pengeluaran tetap tersimpan.`
+          : selectedReset.successMessage
       );
     } catch (error) {
       showAlert.error('Reset data gagal', error.message);
@@ -272,6 +306,11 @@ export default function LicensePage() {
                     onClick={() => {
                       setResetType(type);
                       setResetPhrase('');
+                      if (type !== 'TRANSACTIONS') {
+                        setTransactionMode('ALL');
+                        setTransactionStartDate('');
+                        setTransactionEndDate('');
+                      }
                     }}
                     disabled={resetting}
                     className={`w-full rounded-2xl border p-4 text-left transition flex items-start gap-3 ${selected ? 'border-red-500 bg-red-50 ring-2 ring-red-100' : 'border-gray-200 hover:border-gray-300'}`}
@@ -287,6 +326,55 @@ export default function LicensePage() {
                 );
               })}
             </div>
+
+            {resetType === 'TRANSACTIONS' && (
+              <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                <p className="text-xs font-black text-gray-700">Cakupan transaksi</p>
+                <div className="mt-3 grid sm:grid-cols-2 gap-2">
+                  {[
+                    ['ALL', 'Semua transaksi'],
+                    ['RANGE', 'Rentang tanggal'],
+                  ].map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setTransactionMode(mode)}
+                      disabled={resetting}
+                      className={`px-4 py-3 rounded-xl border text-sm font-bold ${transactionMode === mode ? 'border-amber-500 bg-white text-amber-700 ring-2 ring-amber-100' : 'border-amber-200 text-gray-600'}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {usesTransactionRange && (
+                  <div className="mt-4 grid sm:grid-cols-2 gap-3">
+                    <label className="text-xs font-bold text-gray-600">
+                      Dari tanggal
+                      <input
+                        type="date"
+                        value={transactionStartDate}
+                        onChange={(event) => setTransactionStartDate(event.target.value)}
+                        disabled={resetting}
+                        className="mt-2 w-full px-3 py-2.5 rounded-xl border border-amber-200 bg-white text-sm focus:outline-none focus:border-amber-500"
+                      />
+                    </label>
+                    <label className="text-xs font-bold text-gray-600">
+                      Sampai tanggal
+                      <input
+                        type="date"
+                        value={transactionEndDate}
+                        min={transactionStartDate || undefined}
+                        onChange={(event) => setTransactionEndDate(event.target.value)}
+                        disabled={resetting}
+                        className="mt-2 w-full px-3 py-2.5 rounded-xl border border-amber-200 bg-white text-sm focus:outline-none focus:border-amber-500"
+                      />
+                    </label>
+                  </div>
+                )}
+                <p className="text-xs text-gray-500 mt-3 leading-5">{resetImpactDescription}</p>
+              </div>
+            )}
 
             <div className="mt-5">
               <label className="block text-xs font-black text-gray-600 mb-2">Password Owner</label>
@@ -325,7 +413,7 @@ export default function LicensePage() {
               </button>
               <button
                 onClick={resetData}
-                disabled={resetting || !selectedReset || !resetPassword || resetPhrase.trim() !== selectedReset.phrase}
+                disabled={resetting || !selectedReset || !transactionRangeValid || !resetPassword || resetPhrase.trim() !== selectedReset.phrase}
                 className="flex-1 px-5 py-3 rounded-xl bg-red-600 text-white font-bold disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {resetting ? <Loader2 className="animate-spin" size={18} /> : <Trash2 size={18} />}
