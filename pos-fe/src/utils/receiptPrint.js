@@ -39,6 +39,8 @@ export const printReceiptElement = async (node, { paperWidthMm = 58, printMargin
   
   // Make the fixed-width table span almost the entire printable width
   const valueRowWidth = width === 80 ? 68 : 46;
+  const valueColumnWidth = width === 80 ? 22 : 18;
+  const labelColumnWidth = valueRowWidth - valueColumnWidth;
   const frame = document.createElement('iframe');
   frame.setAttribute('title', 'Dokumen cetak struk');
   frame.setAttribute('aria-hidden', 'true');
@@ -140,11 +142,35 @@ export const printReceiptElement = async (node, { paperWidthMm = 58, printMargin
               border-top-style: solid !important;
               border-top-width: 1px !important;
             }
-            [data-receipt-print-root="true"] .receipt-logo {
-              image-rendering: pixelated !important;
-              -webkit-filter: grayscale(100%) contrast(100%) !important;
-              filter: grayscale(100%) contrast(100%) !important;
+            [data-receipt-print-root="true"] .receipt-value-row {
+              display: table !important;
+              table-layout: fixed !important;
+              width: ${valueRowWidth}mm !important;
+              min-width: ${valueRowWidth}mm !important;
+              max-width: ${valueRowWidth}mm !important;
               break-inside: avoid !important;
+              page-break-inside: avoid !important;
+              margin: 0 !important;
+              padding: 0 !important;
+            }
+            [data-receipt-print-root="true"] .receipt-value-row > :first-child {
+              display: table-cell !important;
+              width: ${labelColumnWidth}mm !important;
+              padding-right: 1mm !important;
+              vertical-align: baseline !important;
+              overflow-wrap: anywhere !important;
+            }
+            [data-receipt-print-root="true"] .receipt-value-row > :last-child {
+              display: table-cell !important;
+              width: ${valueColumnWidth}mm !important;
+              padding: 0 !important;
+              vertical-align: baseline !important;
+              white-space: nowrap !important;
+              text-align: right !important;
+              font-variant-numeric: tabular-nums !important;
+            }
+            [data-receipt-print-root="true"] .receipt-logo {
+              display: none !important;
             }
             [data-receipt-print-root="true"] [class~="text-center"] {
               text-align: center !important;
