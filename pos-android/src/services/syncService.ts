@@ -353,6 +353,39 @@ export const syncService = {
 
                 // Products
                 if (data.products) {
+                    // === CLEANUP: Hapus duplikat produk yang sudah terlanjur ada ===
+                    // 1. Duplikat serverId: simpan yang paling lama (id terkecil), hapus sisanya
+                    const [dupServerIdRes] = await tx.executeSql(`
+                        SELECT serverId, MIN(id) as keepId FROM products
+                        WHERE serverId IS NOT NULL
+                        GROUP BY serverId HAVING COUNT(*) > 1
+                    `);
+                    for (let i = 0; i < dupServerIdRes.rows.length; i++) {
+                        const row = dupServerIdRes.rows.item(i);
+                        await tx.executeSql(
+                            'DELETE FROM products WHERE serverId = ? AND id != ?',
+                            [row.serverId, row.keepId]
+                        );
+                        console.log(`[SYNC CLEANUP] Hapus duplikat serverId=${row.serverId}, keep id=${row.keepId}`);
+                    }
+
+                    // 2. Duplikat nama: jika ada produk tanpa serverId yang namanya sama
+                    //    dengan produk yang sudah punya serverId, hapus yang tanpa serverId
+                    const [dupNameRes] = await tx.executeSql(`
+                        SELECT orphan.id as orphanId, orphan.name
+                        FROM products orphan
+                        INNER JOIN products synced
+                            ON LOWER(orphan.name) = LOWER(synced.name)
+                            AND synced.serverId IS NOT NULL
+                            AND orphan.serverId IS NULL
+                            AND orphan.id != synced.id
+                    `);
+                    for (let i = 0; i < dupNameRes.rows.length; i++) {
+                        const row = dupNameRes.rows.item(i);
+                        await tx.executeSql('DELETE FROM products WHERE id = ?', [row.orphanId]);
+                        console.log(`[SYNC CLEANUP] Hapus orphan "${row.name}" id=${row.orphanId}`);
+                    }
+
                     for (const p of data.products) {
                         const [catCheck] = await tx.executeSql('SELECT id FROM categories WHERE serverId = ? OR id = ?', [p.categoryId, p.categoryId]);
                         const localCategoryId = catCheck.rows.length > 0 ? catCheck.rows.item(0).id : p.categoryId;
