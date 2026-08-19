@@ -137,7 +137,14 @@ export const printReceiptElement = async (node, { paperWidthMm = 58, printMargin
               border-top-style: solid !important;
             }
             [data-receipt-print-root="true"] .border-t.border-dashed {
-              border-top-style: dashed !important;
+              border-top-style: solid !important;
+              border-top-width: 1px !important;
+            }
+            [data-receipt-print-root="true"] .receipt-logo {
+              image-rendering: pixelated !important;
+              -webkit-filter: grayscale(100%) contrast(100%) !important;
+              filter: grayscale(100%) contrast(100%) !important;
+              break-inside: avoid !important;
             }
             [data-receipt-print-root="true"] [class~="text-center"] {
               text-align: center !important;
