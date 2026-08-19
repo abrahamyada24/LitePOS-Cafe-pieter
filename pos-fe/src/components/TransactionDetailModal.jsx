@@ -387,131 +387,103 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
                     id="receipt-print"
                     ref={receiptRef}
                     aria-hidden="true"
-                    className="fixed -left-[10000px] top-0 block bg-white font-mono text-black"
+                    className="fixed -left-[10000px] top-0 mx-auto block bg-white font-mono text-[10px] leading-tight text-black"
                     style={{
+                        overflowWrap: 'anywhere',
                         width: `${paperWidthMm}mm`,
                         padding: `${devicePreferences.printMarginMm}mm`,
                         boxSizing: 'border-box',
-                        lineHeight: 1.2,
                     }}
                 >
-                    <div style={{ textAlign: 'center', marginBottom: '15px' }}>
+                    <div className="mb-3 text-center">
                         {storeLogo && (
                             <img
-                                className="receipt-logo"
                                 src={storeLogo}
                                 alt="Logo toko"
+                                className="receipt-logo grayscale"
                                 style={{
                                     display: 'block',
                                     width: 'auto',
                                     height: 'auto',
                                     maxWidth: `${logoMaxWidthMm}mm`,
                                     maxHeight: '16mm',
-                                    margin: '0 auto 3mm',
+                                    margin: '0 auto 2mm',
                                     objectFit: 'contain',
                                 }}
                             />
                         )}
-                        <h3 className="receipt-store-name" style={{ margin: '0', fontSize: '14px', fontWeight: 'bold' }}>{storeName}</h3>
-                        {storeAddress && <p style={{ fontSize: '9px', margin: '2px 0' }}>{storeAddress}</p>}
-                        {storePhone && <p style={{ fontSize: '9px', margin: '0' }}>Telp: {storePhone}</p>}
+                        <div className="receipt-store-name text-[14px] font-black">{storeName}</div>
+                        {storeAddress && <div className="mt-1 whitespace-pre-wrap">{storeAddress}</div>}
+                        {storePhone && <div>Telp: {storePhone}</div>}
                     </div>
 
-                    <div style={{ borderBottom: '1px dashed #000', margin: '10px 0' }}></div>
-
-                    <div style={{ fontSize: '10px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <span>INV : {transaction.invoiceNumber}</span>
-                        </div>
-                        <div>TGL : {formatDate(transaction.createdAt)}</div>
-                        <div>KASIR: {user?.name || 'Staff'}</div>
-                        <div>CUST : {transaction.customerName || customer?.name || 'Guest'}</div>
-                        <div>TIPE : {transaction.orderType === 'DINE_IN' ? (transaction.tableNumber ? `DINE IN - MEJA ${transaction.tableNumber}` : 'DINE IN') : transaction.orderType === 'PRE_ORDER' ? 'PRE ORDER' : 'TAKE AWAY'}</div>
-                        {transaction.takeawayOption && <div>VIA  : {transaction.takeawayOption}</div>}
-                        {transaction.preOrderDate && <div>AMBIL: {formatDate(transaction.preOrderDate)}</div>}
-                        {transaction.preOrderDate && <div>STATUS BAYAR: {paymentStatusLabel}</div>}
+                    <div className="my-2 border-t border-dashed border-black" />
+                    <div className="space-y-0.5">
+                        <div>No: {transaction.invoiceNumber}</div>
+                        <div>{formatDate(transaction.createdAt)}</div>
+                        <div>Kasir: {user?.name || 'Kasir'}</div>
+                        <div>Pelanggan: {transaction.customerName || customer?.name || 'Umum'}</div>
+                        <div>Tipe: {transaction.orderType === 'DINE_IN' ? (transaction.tableNumber ? `Dine In - Meja ${transaction.tableNumber}` : 'Dine In') : transaction.orderType === 'PRE_ORDER' ? 'Pre Order' : 'Take Away'}</div>
+                        {transaction.takeawayOption && <div>Via: {transaction.takeawayOption}</div>}
+                        {transaction.preOrderDate && <div>Ambil: {formatDate(transaction.preOrderDate)}</div>}
+                        {transaction.preOrderDate && <div>Status bayar: {paymentStatusLabel}</div>}
                     </div>
 
-                    <div style={{ borderBottom: '1px dashed #000', margin: '10px 0' }}></div>
-
-                    <div style={{ fontSize: '10px' }}>
-                        {items.map((item, i) => (
-                            <div key={i} style={{ marginBottom: '8px' }}>
-                                <div style={{ fontWeight: 'bold' }}>{item.product?.name}</div>
+                    <div className="my-2 border-t border-dashed border-black" />
+                    <div className="space-y-2">
+                        {items.map((item, index) => (
+                            <div key={`${item.productId || index}-${index}`}>
+                                <div className="font-bold">{item.product?.name || item.name || 'Produk'}</div>
                                 {hasProductDiscount(item) && (
-                                    <div className="receipt-value-row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px' }}>
-                                        <span>HARGA NORMAL {Number(getItemOriginalPrice(item)).toLocaleString('id-ID')}</span>
+                                    <div className="receipt-value-row flex justify-between gap-2">
+                                        <span>{item.qty || item.quantity} x <span className="line-through">{Number(getItemOriginalPrice(item)).toLocaleString('id-ID')}</span></span>
                                         <span>-{Number(getItemProductDiscountTotal(item)).toLocaleString('id-ID')}</span>
                                     </div>
                                 )}
-                                <div className="receipt-value-row" style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                    <span>{item.qty} x {Number(item.price).toLocaleString('id-ID')}</span>
-                                    <span>{(item.qty * Number(item.price)).toLocaleString('id-ID')}</span>
+                                <div className="receipt-value-row flex justify-between gap-2">
+                                    <span>{item.qty || item.quantity} x {Number(item.price).toLocaleString('id-ID')}</span>
+                                    <span>{Number(Number(item.price) * Number(item.qty || item.quantity)).toLocaleString('id-ID')}</span>
                                 </div>
-                                {hasProductDiscount(item) && <div style={{ fontSize: '9px' }}>DISKON PRODUK</div>}
-                                {item.notes && <div style={{ fontSize: '9px', fontStyle: 'italic' }}>CATATAN: {item.notes}</div>}
+                                {hasProductDiscount(item) && <div className="italic">{item.discountLabel || 'Diskon produk'}</div>}
+                                {item.notes && <div className="italic">Catatan: {item.notes}</div>}
                             </div>
                         ))}
                     </div>
 
-                    <div style={{ borderBottom: '1px dashed #000', margin: '10px 0' }}></div>
-
-                    <div style={{ fontSize: '11px', fontWeight: 'bold' }}>
+                    <div className="my-2 border-t border-dashed border-black" />
+                    <div className="space-y-0.5">
                         {productDiscountTotal > 0 && (
                             <>
-                                <div className="receipt-value-row" style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                    <span>HARGA NORMAL</span>
-                                    <span>{(Number(transaction.subTotal) + productDiscountTotal).toLocaleString('id-ID')}</span>
-                                </div>
-                                <div className="receipt-value-row" style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                    <span>DISKON PRODUK</span>
-                                    <span>-{productDiscountTotal.toLocaleString('id-ID')}</span>
-                                </div>
+                                <div className="receipt-value-row flex justify-between"><span>Harga normal</span><span>{Number(Number(transaction.subTotal) + productDiscountTotal).toLocaleString('id-ID')}</span></div>
+                                <div className="receipt-value-row flex justify-between"><span>Diskon produk</span><span>-{Number(productDiscountTotal).toLocaleString('id-ID')}</span></div>
                             </>
                         )}
-                        <div className="receipt-value-row" style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <span>SUBTOTAL</span>
-                            <span>{Number(transaction.subTotal).toLocaleString('id-ID')}</span>
-                        </div>
-
-                        {taxPct > 0 && (
-                            <div className="receipt-value-row" style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                <span>PAJAK ({taxPct}%)</span>
+                        <div className="receipt-value-row flex justify-between"><span>Subtotal</span><span>{Number(transaction.subTotal).toLocaleString('id-ID')}</span></div>
+                        {Number(transaction.discountAmount) > 0 && (
+                            <div className="receipt-value-row flex justify-between"><span>Diskon transaksi</span><span>-{Number(transaction.discountAmount).toLocaleString('id-ID')}</span></div>
+                        )}
+                        {Number(transaction.taxAmount) > 0 && (
+                            <div className="receipt-value-row flex justify-between">
+                                <span>{taxPct > 0 ? `Pajak (${taxPct}%)` : 'Pajak'}</span>
                                 <span>{Number(transaction.taxAmount).toLocaleString('id-ID')}</span>
                             </div>
                         )}
-
-                        {Number(transaction.discountAmount || 0) > 0 && (
-                            <div className="receipt-value-row" style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                <span>DISKON TRANSAKSI</span>
-                                <span>-{Number(transaction.discountAmount).toLocaleString('id-ID')}</span>
-                            </div>
-                        )}
-
-                        <div className="receipt-value-row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginTop: '5px', borderTop: '1px solid #000', paddingTop: '5px' }}>
-                            <span>TOTAL</span>
-                            <span>{Number(transaction.grandTotal).toLocaleString('id-ID')}</span>
+                        <div className="receipt-value-row mt-1 flex justify-between border-t border-black pt-1 text-[12px] font-black">
+                            <span>TOTAL</span><span>{Number(transaction.grandTotal).toLocaleString('id-ID')}</span>
                         </div>
-
-                        <div className="receipt-value-row" style={{ display: 'flex', justifyContent: 'space-between', marginTop: '5px', fontSize: '10px' }}>
-                            <span>BAYAR ({paymentTypeLabel})</span>
-                            <span>{Number(paymentAmount).toLocaleString('id-ID')}</span>
-                        </div>
-
-                        {paymentType === 'CASH' && changeAmount > 0 && (
-                            <div className="receipt-value-row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px' }}>
-                                <span>KEMBALI</span>
-                                <span>{changeAmount.toLocaleString('id-ID')}</span>
-                            </div>
+                        <div className="receipt-value-row flex justify-between"><span>Bayar ({paymentTypeLabel})</span><span>{Number(paymentAmount).toLocaleString('id-ID')}</span></div>
+                        {Number(changeAmount) > 0 && (
+                            <div className="receipt-value-row flex justify-between font-bold"><span>Kembali</span><span>{Number(changeAmount).toLocaleString('id-ID')}</span></div>
                         )}
                     </div>
 
-                    <div style={{ borderBottom: '1px dashed #000', margin: '10px 0' }}></div>
-
-                    <div style={{ textAlign: 'center', fontSize: '10px', marginTop: '15px' }}>
-                        <p style={{ margin: '0', whiteSpace: 'pre-wrap' }}>{receiptFooter}</p>
-                        {showLitePosBranding && <p style={{ fontSize: '8px' }}>Software by LitePOS</p>}
+                    <div className="my-2 border-t border-dashed border-black" />
+                    <div className="whitespace-pre-wrap text-center">
+                        {receiptFooter}
                     </div>
+                    {showLitePosBranding && (
+                        <div className="mt-2 text-center text-[8px]">Powered by LitePOS</div>
+                    )}
                 </div>
 
                 {/* Modal Footer */}
