@@ -32,17 +32,14 @@ export const printReceiptElement = async (node, { paperWidthMm = 58, printMargin
 
   const width = Number(paperWidthMm) === 80 ? 80 : 58;
   const margin = [0, 2, 3, 5].includes(Number(printMarginMm)) ? Number(printMarginMm) : 3;
-  // Cheap 58 mm Windows drivers report inconsistent printable areas. Use a
-  // conservative 44 mm canvas so the rightmost digits remain inside even on
-  // drivers that expose less than the usual 48 mm / 384-dot head width.
-  const printableWidth = width === 80 ? 68 : 44;
-  const thermalMargin = width === 58 ? 1 : margin;
-  const rightSafeMargin = width === 58 ? 3 : margin;
-  // Do not anchor amounts to the paper edge. Some drivers scale any canvas
-  // back to full width, so use a fixed-width table that deliberately ends
-  // well before the right edge.
-  const valueRowWidth = width === 80 ? 58 : 36;
-  const valueColumnWidth = width === 80 ? 22 : 16;
+  // Use standard printable area (48mm for 58mm paper, 72mm for 80mm paper)
+  const printableWidth = width === 80 ? 72 : 48;
+  const thermalMargin = width === 58 ? 0 : margin;
+  const rightSafeMargin = width === 58 ? 0 : margin;
+  
+  // Make the fixed-width table span almost the entire printable width
+  const valueRowWidth = width === 80 ? 68 : 46;
+  const valueColumnWidth = width === 80 ? 22 : 18;
   const labelColumnWidth = valueRowWidth - valueColumnWidth;
   const frame = document.createElement('iframe');
   frame.setAttribute('title', 'Dokumen cetak struk');
@@ -84,10 +81,10 @@ export const printReceiptElement = async (node, { paperWidthMm = 58, printMargin
           <style>
             @page { margin: 0; }
             html, body {
-              width: ${printableWidth}mm !important;
-              min-width: ${printableWidth}mm !important;
+              width: 100% !important;
               margin: 0 !important;
               padding: 0 !important;
+              text-align: left !important;
               overflow: visible !important;
               background: #fff !important;
               color: #000 !important;
@@ -101,11 +98,10 @@ export const printReceiptElement = async (node, { paperWidthMm = 58, printMargin
               position: static !important;
               inset: auto !important;
               width: ${printableWidth}mm !important;
-              min-width: ${printableWidth}mm !important;
-              max-width: none !important;
+              max-width: ${printableWidth}mm !important;
               height: auto !important;
               min-height: 0 !important;
-              margin: 0 !important;
+              margin: 0 auto 0 0 !important;
               padding: ${thermalMargin}mm ${rightSafeMargin}mm ${thermalMargin}mm ${thermalMargin}mm !important;
               overflow: visible !important;
               box-sizing: border-box !important;
