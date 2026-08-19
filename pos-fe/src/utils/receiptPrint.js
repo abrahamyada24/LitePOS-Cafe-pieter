@@ -79,7 +79,8 @@ export const printReceiptElement = async (node, { paperWidthMm = 58, printMargin
           <style>
             @page { margin: 0; }
             html, body {
-              width: 100% !important;
+              width: ${printableWidth}mm !important;
+              min-width: ${printableWidth}mm !important;
               margin: 0 !important;
               padding: 0 !important;
               text-align: left !important;

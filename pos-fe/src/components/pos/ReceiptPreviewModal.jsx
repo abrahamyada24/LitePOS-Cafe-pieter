@@ -193,7 +193,7 @@ export default function ReceiptPreviewModal({ isOpen, onClose, transaction, stor
                 <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
                     <div>
                         <h2 className="font-bold text-gray-900">Preview Struk {paperWidthMm} mm</h2>
-                        <p className="text-[11px] text-gray-400">Pilih kertas {paperWidthMm} mm pada dialog printer.</p>
+                        <p className="text-[11px] text-gray-400">Pilih kertas {paperWidthMm} mm dan setel <b>Margins: None / Minimum</b> pada dialog printer.</p>
                     </div>
                     <button aria-label="Tutup preview struk" onClick={onClose} className="rounded-full bg-gray-100 p-2 text-gray-500 hover:bg-gray-200">
                         <X size={18} />
