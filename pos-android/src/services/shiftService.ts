@@ -1,29 +1,35 @@
 import { getDBConnection } from '../database/db';
 import api from './api';
+import { getOpeningExpectedCloseAt, ShiftReminderSettings } from '../utils/shiftReminder';
 
 export interface ActiveShiftData {
     id: string;
     openingCash: number;
     openedAt: string;
+    expectedCloseAt?: string | null;
+    userName?: string;
 }
 
 const toActiveShift = (shift: any): ActiveShiftData => ({
     id: String(shift.id),
     openingCash: Number(shift.openingCash || 0),
     openedAt: shift.openedAt || new Date().toISOString(),
+    expectedCloseAt: shift.expectedCloseAt || null,
+    userName: shift.userName || undefined,
 });
 
 const saveServerShift = async (shift: any) => {
     const db = await getDBConnection();
     await db.executeSql(
         `INSERT OR REPLACE INTO shifts
-         (id, userId, userName, openedAt, closedAt, openingCash, closingCash, status, isSynced)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+         (id, userId, userName, openedAt, expectedCloseAt, closedAt, openingCash, closingCash, status, isSynced)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
         [
             String(shift.id),
             Number(shift.userId || 0),
             shift.userName || 'Kasir',
             shift.openedAt || new Date().toISOString(),
+            shift.expectedCloseAt || null,
             shift.closedAt || null,
             Number(shift.openingCash || 0),
             shift.closingCash == null ? null : Number(shift.closingCash),
@@ -32,7 +38,11 @@ const saveServerShift = async (shift: any) => {
     );
 };
 
-export const openCashierShift = async (user: any, openingCash: number): Promise<ActiveShiftData> => {
+export const openCashierShift = async (
+    user: any,
+    openingCash: number,
+    settings: ShiftReminderSettings = {}
+): Promise<ActiveShiftData> => {
     try {
         const response = await api.post('/shifts/open', { openingCash });
         const serverShift = response.data?.data;
@@ -60,12 +70,13 @@ export const openCashierShift = async (user: any, openingCash: number): Promise<
 
         const id = `SHIFT-${Date.now()}`;
         const openedAt = new Date().toISOString();
+        const expectedCloseAt = getOpeningExpectedCloseAt(settings, new Date(openedAt)).toISOString();
         await db.executeSql(
-            `INSERT INTO shifts (id, userId, userName, openedAt, openingCash, status, isSynced)
-             VALUES (?, ?, ?, ?, ?, 'OPEN', 0)`,
-            [id, user?.id || 0, user?.name || 'Kasir', openedAt, openingCash]
+            `INSERT INTO shifts (id, userId, userName, openedAt, expectedCloseAt, openingCash, status, isSynced)
+             VALUES (?, ?, ?, ?, ?, ?, 'OPEN', 0)`,
+            [id, user?.id || 0, user?.name || 'Kasir', openedAt, expectedCloseAt, openingCash]
         );
-        return { id, openingCash, openedAt };
+        return { id, openingCash, openedAt, expectedCloseAt, userName: user?.name || 'Kasir' };
     }
 };
 

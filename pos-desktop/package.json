@@ -1,15 +1,16 @@
 {
-  "name": "pos-desktop",
-  "version": "1.0.0",
-  "description": "LitePOS Desktop Application",
+  "name": "litepos-cafe-pieter-desktop",
+  "version": "1.1.0",
+  "description": "LitePOS desktop client for Cafe Pieter",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --win"
   },
   "build": {
-    "appId": "com.warnawarni.litepos",
-    "productName": "LitePOS Desktop",
+    "appId": "com.litepos.cafepieter",
+    "productName": "LitePOS Cafe Pieter",
+    "artifactName": "LitePOS-Cafe-Pieter-Setup-${version}.${ext}",
     "win": {
       "target": "nsis",
       "icon": "icon.png"

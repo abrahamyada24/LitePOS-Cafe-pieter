@@ -27,7 +27,7 @@ interface StoreState {
     cart: CartItem[];
     discount: number;
     discountType: 'amount' | 'percent';
-    activeShift: { id: string; openingCash: number; openedAt: string } | null;
+    activeShift: { id: string; openingCash: number; openedAt: string; expectedCloseAt?: string | null; userName?: string } | null;
     tableOrderNotificationCount: number;
     pendingOrderContext: {
         orderType?: 'DINE_IN' | 'TAKE_AWAY';
@@ -48,6 +48,10 @@ interface StoreState {
         storeLogo: string | null;
         enablePreOrder: boolean;
         enableShift: boolean;
+        enableShiftReminder: boolean;
+        shiftDurationMinutes: number;
+        shiftReminderMinutes: number;
+        shiftDayCutoff: string;
         enableDineTable: boolean;
         enableTableOrder: boolean;
         enableKitchenQueue: boolean;
@@ -67,12 +71,18 @@ interface StoreState {
         store_id?: string;
         license_expire_date?: string;
         license_type?: 'TRIAL' | 'PREMIUM';
+        license_number?: string;
+        license_status?: 'ACTIVE' | 'EXPIRED' | 'SUSPENDED' | 'UNKNOWN';
+        license_offline?: boolean;
         google_sheet_url?: string;
         apiBaseUrl?: string;
+        dataResetVersion?: number;
+        dataResetAt?: string;
+        dataResetType?: string;
     };
     setSettings: (settings: any) => void;
     setUser: (user: any) => void;
-    setActiveShift: (shift: { id: string; openingCash: number; openedAt: string } | null) => void;
+    setActiveShift: (shift: { id: string; openingCash: number; openedAt: string; expectedCloseAt?: string | null; userName?: string } | null) => void;
     setTableOrderNotificationCount: (count: number) => void;
     setPendingOrderContext: (context: StoreState['pendingOrderContext']) => void;
     clearPendingOrderContext: () => void;
@@ -104,6 +114,10 @@ export const useStore = create<StoreState>((set, get) => ({
         storeLogo: null,
         enablePreOrder: false,
         enableShift: true,
+        enableShiftReminder: true,
+        shiftDurationMinutes: 480,
+        shiftReminderMinutes: 15,
+        shiftDayCutoff: '23:50',
         enableDineTable: false,
         enableTableOrder: false,
         enableKitchenQueue: false,
@@ -121,6 +135,9 @@ export const useStore = create<StoreState>((set, get) => ({
         loyalty_point_value: 0,
         loyalty_min_points: 0,
         apiBaseUrl: '',
+        dataResetVersion: 0,
+        dataResetAt: '',
+        dataResetType: '',
     },
     setSettings: (settings) => set({ settings }),
     setUser: (user) => set({ user }),

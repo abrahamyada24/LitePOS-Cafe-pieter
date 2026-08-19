@@ -18,6 +18,13 @@ import { getDBConnection, getStoreSummary } from '../database/db';
 import tw, { useAppColorScheme } from 'twrnc';
 import { getPaidAmount, getPaymentStatusLabel, getPaymentStatusMessage, getRemainingAmount } from '../utils/preOrderPayment';
 import { closeCashierShift, openCashierShift } from '../services/shiftService';
+import api from '../services/api';
+import { clearAuthSession } from '../services/secureAuthStorage';
+import {
+    formatShiftDateTime,
+    getOpeningExpectedCloseAt,
+    getShiftExpectedCloseAt,
+} from '../utils/shiftReminder';
 
 const { width } = Dimensions.get('window');
 const isTablet = width >= 768;
@@ -189,7 +196,7 @@ const MenuItem = ({ icon, title, subtitle, color, bgColor, primary, onPress, del
 };
 
 // ─── MAIN DASHBOARD SCREEN ──────────────────────────────────────────────────
-export default function DashboardScreen({ navigation }: any) {
+export default function DashboardScreen({ navigation, route }: any) {
     const COLORS = useThemeColors();
     const styles = useStyles();
     const user = useStore((state) => state.user);
@@ -198,12 +205,20 @@ export default function DashboardScreen({ navigation }: any) {
     const setActiveShift = useStore((state) => state.setActiveShift);
     const [summary, setSummary] = useState({ todayRevenue: 0, todayCount: 0, todayReturns: 0, productsCount: 0, lowStockCount: 0 });
     const [openingCashInput, setOpeningCashInput] = useState('');
+    const [isOpeningShift, setIsOpeningShift] = useState(false);
     const [closingCashInput, setClosingCashInput] = useState('');
     const [showCloseShiftModal, setShowCloseShiftModal] = useState(false);
     const [pendingCount, setPendingCount] = useState(0);
     const tableOrderNotificationCount = useStore((state) => state.tableOrderNotificationCount);
     const [upcomingPreOrders, setUpcomingPreOrders] = useState<any[]>([]);
     const settings = useStore(state => state.settings);
+
+    useEffect(() => {
+        if (!route?.params?.openCloseShift || !activeShift) return;
+        setClosingCashInput('');
+        setShowCloseShiftModal(true);
+        navigation.setParams({ openCloseShift: false });
+    }, [activeShift, navigation, route?.params?.openCloseShift]);
 
     const [selectedDateOrders, setSelectedDateOrders] = useState<any[]>([]);
     const [selectedDate, setSelectedDate] = useState('');
@@ -308,12 +323,11 @@ export default function DashboardScreen({ navigation }: any) {
                 style: 'destructive',
                 onPress: async () => {
                     try {
-                        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-                        await AsyncStorage.removeItem('@auth_token');
-                        await AsyncStorage.removeItem('@auth_user');
+                        await api.post('/auth/logout');
                     } catch (e) {
-                        console.error('Gagal hapus session:', e);
+                        console.log('Logout server tidak tersedia; sesi lokal tetap dihapus.');
                     }
+                    await clearAuthSession();
                     setUser(null);
                     navigation.replace('Login');
                 }
@@ -321,15 +335,32 @@ export default function DashboardScreen({ navigation }: any) {
         ]);
     };
 
-    const handleOpenShift = async () => {
+    const handleOpenShift = () => {
+        if (isOpeningShift) return;
         const cash = parseFloat(openingCashInput.replace(/[^0-9]/g, '') || '0');
-        try {
-            const shift = await openCashierShift(user, cash);
-            setActiveShift(shift);
-            setOpeningCashInput('');
-        } catch (e: any) {
-            Alert.alert('Error', e.response?.data?.message || e.message || 'Gagal membuka shift.');
-        }
+        const expectedCloseAt = getOpeningExpectedCloseAt(settings);
+        Alert.alert(
+            'Konfirmasi Buka Shift',
+            `Kas awal: Rp ${cash.toLocaleString('id-ID')}\nTarget tutup: ${formatShiftDateTime(expectedCloseAt)}\n\nPastikan nominal kas awal sudah benar.`,
+            [
+                { text: 'Ubah Nominal', style: 'cancel' },
+                {
+                    text: 'Ya, Buka Shift',
+                    onPress: async () => {
+                        setIsOpeningShift(true);
+                        try {
+                            const shift = await openCashierShift(user, cash, settings);
+                            setActiveShift(shift);
+                            setOpeningCashInput('');
+                        } catch (e: any) {
+                            Alert.alert('Error', e.response?.data?.message || e.message || 'Gagal membuka shift.');
+                        } finally {
+                            setIsOpeningShift(false);
+                        }
+                    },
+                },
+            ]
+        );
     };
 
     const handleCloseShift = () => {
@@ -570,9 +601,9 @@ export default function DashboardScreen({ navigation }: any) {
                                     onSubmitEditing={handleOpenShift}
                                 />
                             </View>
-                            <TouchableOpacity style={styles.shiftOpenBtn} onPress={handleOpenShift}>
+                            <TouchableOpacity style={[styles.shiftOpenBtn, isOpeningShift && { opacity: 0.6 }]} disabled={isOpeningShift} onPress={handleOpenShift}>
                                 <Icon name="play" size={15} color="#FFFFFF" />
-                                <Text style={styles.shiftOpenBtnText}>Mulai</Text>
+                                <Text style={styles.shiftOpenBtnText}>{isOpeningShift ? 'Membuka...' : 'Mulai'}</Text>
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -586,6 +617,9 @@ export default function DashboardScreen({ navigation }: any) {
                                 </View>
                                 <Text style={styles.shiftActiveLabel}>
                                     {user?.name} | buka {new Date(activeShift.openedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
+                                </Text>
+                                <Text style={styles.shiftActiveLabel}>
+                                    target tutup {formatShiftDateTime(getShiftExpectedCloseAt(activeShift, settings) || activeShift.openedAt)}
                                 </Text>
                             </View>
                             <TouchableOpacity onPress={handleCloseShift} style={styles.shiftCloseBtn}>

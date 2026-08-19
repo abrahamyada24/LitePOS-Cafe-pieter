@@ -1,0 +1,1 @@
+<section class="error-page"><div><span>429</span><h1>Terlalu banyak percobaan</h1><p>Demi keamanan, tunggu beberapa menit lalu coba kembali.</p><a class="button button-accent" href="<?= e(url('/')) ?>">Kembali ke beranda</a></div></section>

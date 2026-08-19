@@ -1,0 +1,36 @@
+Options -Indexes
+DirectoryIndex index.php
+ServerSignature Off
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Block direct access to secrets, source, database files, and logs.
+    RewriteRule ^(?:app|bin|database|storage|tests)(?:/|$) - [F,L,NC]
+    RewriteRule (^|/)\.(?!well-known/) - [F,L]
+    RewriteRule \.(?:env|ini|log|sql|sqlite|bak|dist|md)$ - [F,L,NC]
+
+    # Let Apache/LiteSpeed serve real assets, route everything else to PHP.
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^ index.php [QSA,L]
+</IfModule>
+
+<IfModule mod_headers.c>
+    Header always unset X-Powered-By
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    Header always set Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(self)"
+</IfModule>
+
+<IfModule mod_php.c>
+    php_flag display_errors Off
+    php_flag expose_php Off
+    php_value upload_max_filesize 1M
+    php_value post_max_size 1M
+    php_value max_execution_time 30
+</IfModule>
+
+LimitRequestBody 1048576
+

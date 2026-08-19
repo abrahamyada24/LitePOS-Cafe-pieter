@@ -12,6 +12,7 @@ export const createTables = async (db: any) => {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       email TEXT,
+      username TEXT,
       pin TEXT NOT NULL,
       role TEXT DEFAULT 'CASHIER'
     );
@@ -66,7 +67,8 @@ export const createTables = async (db: any) => {
       remainingAmount REAL DEFAULT 0,
       paidAt TEXT,
       orderType TEXT DEFAULT 'TAKE_AWAY',
-      tableName TEXT
+      tableName TEXT,
+      taxAmount REAL DEFAULT 0
     );
   `;
   const queryTransactionItems = `
@@ -149,6 +151,7 @@ export const createTables = async (db: any) => {
       userId INTEGER,
       userName TEXT,
       openedAt TEXT NOT NULL,
+      expectedCloseAt TEXT,
       closedAt TEXT,
       openingCash REAL DEFAULT 0,
       closingCash REAL,
@@ -177,10 +180,10 @@ export const createTables = async (db: any) => {
     CREATE TABLE IF NOT EXISTS packages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
-      description TEXT,
-      price REAL NOT NULL,
-      imageUrl TEXT,
-      isActive INTEGER DEFAULT 1,
+       description TEXT,
+       price REAL NOT NULL,
+       imageUrl TEXT,
+       isActive INTEGER DEFAULT 1,
       createdAt TEXT NOT NULL
     );
   `;
@@ -229,6 +232,7 @@ export const createTables = async (db: any) => {
     await db.executeSql('CREATE INDEX IF NOT EXISTS idx_transaction_items_txId ON transaction_items(transactionId)');
     await db.executeSql('CREATE INDEX IF NOT EXISTS idx_expenses_createdAt ON expenses(createdAt)');
     await db.executeSql('CREATE INDEX IF NOT EXISTS idx_shifts_openedAt ON shifts(openedAt)');
+    await db.executeSql('CREATE UNIQUE INDEX IF NOT EXISTS idx_products_serverId ON products(serverId) WHERE serverId IS NOT NULL');
   } catch (e) {
     console.log('Failed to create indexes', e);
   }
@@ -251,6 +255,7 @@ export const createTables = async (db: any) => {
     { table: 'transactions', column: 'paidAt', def: 'TEXT' },
     { table: 'transactions', column: 'orderType', def: "TEXT DEFAULT 'TAKE_AWAY'" },
     { table: 'transactions', column: 'tableName', def: 'TEXT' },
+    { table: 'transactions', column: 'taxAmount', def: 'REAL DEFAULT 0' },
     { table: 'customers', column: 'loyaltyDiscount', def: 'REAL DEFAULT 0' },
     { table: 'transactions', column: 'preOrderConfirmed', def: 'INTEGER DEFAULT 0' },
     { table: 'products', column: 'barcode', def: 'TEXT' },
@@ -271,11 +276,14 @@ export const createTables = async (db: any) => {
     { table: 'transactions', column: 'isSynced', def: 'INTEGER DEFAULT 0' },
     { table: 'expenses', column: 'isSynced', def: 'INTEGER DEFAULT 0' },
     { table: 'shifts', column: 'isSynced', def: 'INTEGER DEFAULT 0' },
+    { table: 'shifts', column: 'expectedCloseAt', def: 'TEXT' },
     { table: 'users', column: 'email', def: 'TEXT' },
+    { table: 'users', column: 'username', def: 'TEXT' },
     { table: 'categories', column: 'serverId', def: 'INTEGER' },
     { table: 'categories', column: 'isSynced', def: 'INTEGER DEFAULT 0' },
     { table: 'products', column: 'serverId', def: 'INTEGER' },
     { table: 'products', column: 'isSynced', def: 'INTEGER DEFAULT 0' },
+    { table: 'products', column: 'isActive', def: 'INTEGER DEFAULT 1' },
     { table: 'customers', column: 'serverId', def: 'INTEGER' },
     { table: 'customers', column: 'points', def: 'INTEGER DEFAULT 0' },
     { table: 'customers', column: 'email', def: 'TEXT' },
@@ -348,31 +356,9 @@ export const getStoreSummary = async (db: any) => {
 };
 
 export const seedInitialData = async (db: any) => {
-  const [results] = await db.executeSql('SELECT count(*) as count FROM users');
-  if (results.rows.item(0).count === 0) {
-    await db.executeSql(`INSERT INTO users (name, email, pin, role) VALUES ('Owner', 'boss@litepos.com', '123456', 'OWNER')`);
-    await db.executeSql(`INSERT INTO users (name, email, pin, role) VALUES ('Admin Toko', 'admin@litepos.com', '123456', 'ADMIN')`);
-    await db.executeSql(`INSERT INTO users (name, email, pin, role) VALUES ('Kasir 1', 'kasir@litepos.com', '111111', 'CASHIER')`);
-  } else {
-    // Ensure OWNER exists and update credentials
-    const [ownerRes] = await db.executeSql("SELECT count(*) as count FROM users WHERE role = 'OWNER'");
-    if (ownerRes.rows.item(0).count === 0) {
-      await db.executeSql(`INSERT INTO users (name, email, pin, role) VALUES ('Owner', 'boss@litepos.com', '123456', 'OWNER')`);
-    } else {
-      // Update existing OWNER with correct email and pin
-      await db.executeSql(`UPDATE users SET email = 'boss@litepos.com', pin = '123456' WHERE role = 'OWNER' AND (email IS NULL OR email = '')`);
-    }
-    // Update ADMIN credentials
-    const [adminRes] = await db.executeSql("SELECT count(*) as count FROM users WHERE role = 'ADMIN'");
-    if (adminRes.rows.item(0).count > 0) {
-      await db.executeSql(`UPDATE users SET email = 'admin@litepos.com', pin = '123456' WHERE role = 'ADMIN' AND (email IS NULL OR email = '')`);
-    }
-    // Update CASHIER credentials
-    const [cashierRes] = await db.executeSql("SELECT count(*) as count FROM users WHERE role = 'CASHIER'");
-    if (cashierRes.rows.item(0).count > 0) {
-      await db.executeSql(`UPDATE users SET email = 'kasir@litepos.com', pin = '111111' WHERE role = 'CASHIER' AND (email IS NULL OR email = '')`);
-    }
-  }
+  // Jangan pernah membuat akun/PIN default di perangkat. Akun offline hanya
+  // dibuat setelah login server berhasil dan PIN disimpan sebagai hash bcrypt.
+  await db.executeSql(`UPDATE users SET pin = '' WHERE pin NOT LIKE '$2%'`);
 
   const [catResults] = await db.executeSql('SELECT count(*) as count FROM categories');
   if (catResults.rows.item(0).count === 0) {
@@ -388,31 +374,38 @@ export const seedInitialData = async (db: any) => {
     await db.executeSql(`INSERT INTO settings (key, value) VALUES ('enableTableOrder', 'false')`);
     await db.executeSql(`INSERT INTO settings (key, value) VALUES ('enableKitchenPrint', 'false')`);
     await db.executeSql(`INSERT INTO settings (key, value) VALUES ('theme', 'light')`);
-  } else {
-    // Ensure new settings keys exist
+  }
+
+    // Always ensure licensing keys exist, including on a brand-new installation.
     const settingKeys = [
       'storeAddress', 'storePhone', 'enablePreOrder', 'enableTableOrder', 'allowNegativeStock', 'receiptFooter', 'enableKitchenPrint',
+      'enableShiftReminder', 'shiftDurationMinutes', 'shiftReminderMinutes', 'shiftDayCutoff',
       'loyalty_active', 'loyalty_multiplier', 'loyalty_multiplier_amount', 'loyalty_point_value', 'loyalty_min_points',
-      'store_id', 'license_expire_date', 'license_type', 'google_sheet_url', 'apiBaseUrl'
+      'license_number', 'license_status', 'license_expire_date', 'license_type', 'license_offline', 'google_sheet_url', 'apiBaseUrl'
     ];
     for (const key of settingKeys) {
       let defaultVal = '';
       if (key === 'enablePreOrder' || key === 'enableTableOrder' || key === 'allowNegativeStock' || key === 'loyalty_active' || key === 'enableKitchenPrint') {
         defaultVal = 'false';
+      } else if (key === 'enableShiftReminder') {
+        defaultVal = 'true';
+      } else if (key === 'shiftDurationMinutes') {
+        defaultVal = '480';
+      } else if (key === 'shiftReminderMinutes') {
+        defaultVal = '15';
+      } else if (key === 'shiftDayCutoff') {
+        defaultVal = '23:50';
       } else if (key === 'loyalty_multiplier' || key === 'loyalty_multiplier_amount' || key === 'loyalty_point_value' || key === 'loyalty_min_points') {
         defaultVal = key === 'loyalty_multiplier_amount' ? '1000' : (key === 'loyalty_multiplier' ? '1' : '0');
-      } else if (key === 'store_id') {
-        defaultVal = 'TK-' + Math.random().toString(36).substr(2, 6).toUpperCase();
-      } else if (key === 'license_expire_date') {
-        const trialEnd = new Date();
-        trialEnd.setDate(trialEnd.getDate() + 14); // 14 Days Trial
-        defaultVal = trialEnd.toISOString();
+      } else if (key === 'license_status') {
+        defaultVal = 'UNKNOWN';
       } else if (key === 'license_type') {
         defaultVal = 'TRIAL';
+      } else if (key === 'license_offline') {
+        defaultVal = 'false';
       }
       try {
         await db.executeSql(`INSERT OR IGNORE INTO settings (key, value) VALUES ('${key}', '${defaultVal}')`);
       } catch (e) { }
     }
-  }
 };

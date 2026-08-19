@@ -6,6 +6,7 @@ import { Search, ChevronLeft, ChevronRight, Eye, RefreshCw, Calendar as Calendar
 import TransactionDetailModal from '../../../components/TransactionDetailModal';
 import { showAlert } from '../../../utils/swal';
 import { useStore } from '../../../store/useStore';
+import { getPaymentTypeLabel } from '../../../utils/paymentLabels';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -268,7 +269,7 @@ export default function TransactionsPage() {
                                         </td>
                                         <td className="px-6 py-4">
                                             <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-[10px] font-bold uppercase border border-gray-200">
-                                                {trx.payments?.[0]?.paymentType || '-'}
+                                                {getPaymentTypeLabel(trx.payments?.[0]?.paymentType)}
                                             </span>
                                         </td>
                                         <td className="px-6 py-4">

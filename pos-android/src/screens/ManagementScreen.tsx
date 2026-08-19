@@ -77,6 +77,7 @@ export default function ManagementScreen({ navigation }: any) {
             const [prodResults] = await db.executeSql(`
                 SELECT p.*, c.name as categoryName
                 FROM products p LEFT JOIN categories c ON p.categoryId = c.id
+                WHERE COALESCE(p.isActive, 1) = 1
             `);
             const prods: any[] = [];
             for (let i = 0; i < prodResults.rows.length; i++) prods.push(prodResults.rows.item(i));

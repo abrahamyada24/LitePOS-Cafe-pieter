@@ -570,7 +570,8 @@ exports.pushLocalData = async (req, res) => {
           // Hitung subTotal jika tidak dikirim (Android mungkin belum kirim)
           const grandTotal = Number(tx.grandTotal);
           const discountAmount = tx.discountAmount ? Number(tx.discountAmount) : 0;
-          const subTotal = grandTotal + discountAmount; // Asumsi sederhana
+          const taxAmount = tx.taxAmount ? Number(tx.taxAmount) : 0;
+          const subTotal = grandTotal + discountAmount - taxAmount; // grandTotal = subTotal - discount + tax
 
           // Resolve customerId dari androidId ke serverId
           let resolvedCustomerId = null;
@@ -668,7 +669,7 @@ exports.pushLocalData = async (req, res) => {
               androidId: tx.id,
               invoiceNumber: tx.invoiceNumber,
               subTotal: subTotal,
-              taxAmount: 0,
+              taxAmount: taxAmount,
               grandTotal: grandTotal,
               cashAmount: tx.cashAmount == null ? null : Number(tx.cashAmount),
               changeAmount: tx.changeAmount == null ? null : Number(tx.changeAmount),
@@ -1162,12 +1163,15 @@ exports.getTransactionHistory = async (req, res) => {
         preOrderConfirmed: tx.preOrderConfirmed,
         orderType: tx.orderType,
         tableName: tx.tableNumber,
+        taxAmount: tx.taxAmount == null ? 0 : Number(tx.taxAmount),
         items: tx.items.map(item => ({
           productId: item.product?.androidId || item.productId,
           serverProductId: item.productId,
           productName: item.product?.name || null,
           quantity: item.qty,
           price: Number(item.price),
+          originalPrice: Number(item.originalPrice || 0),
+          discountAmount: Number(item.discountAmount || 0),
           notes: item.notes
         }))
       };

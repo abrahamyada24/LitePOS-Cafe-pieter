@@ -30,8 +30,12 @@ export default function OrderNotificationWatcher() {
                 }).length;
 
                 if (previousCountRef.current !== null && count > previousCountRef.current) {
-                    NativeModules.OrderNotificationSound?.play();
-                    Vibration.vibrate(180);
+                    try {
+                        NativeModules.OrderNotificationSound?.play?.();
+                        Vibration.vibrate(180);
+                    } catch {
+                        // Notifikasi tidak boleh mengganggu penerimaan order.
+                    }
                 }
 
                 previousCountRef.current = count;

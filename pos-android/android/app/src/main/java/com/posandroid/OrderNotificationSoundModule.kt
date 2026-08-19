@@ -27,9 +27,8 @@ class OrderNotificationSoundModule(
           .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
           .build()
         ringtone?.play()
-      } catch (_: Exception) {
-        ringtone = RingtoneManager.getRingtone(reactContext, RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION))
-        ringtone?.play()
+      } catch (_: Throwable) {
+        ringtone = null
       }
     }
   }

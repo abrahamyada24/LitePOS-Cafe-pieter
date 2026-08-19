@@ -43,7 +43,9 @@ export default function ProductListScreen({ navigation }: any) {
             const db = await getDBConnection();
             const [prodRes] = await db.executeSql(`
                 SELECT p.*, c.name as categoryName FROM products p 
-                LEFT JOIN categories c ON p.categoryId = c.id ORDER BY p.name
+                LEFT JOIN categories c ON p.categoryId = c.id
+                WHERE COALESCE(p.isActive, 1) = 1
+                ORDER BY p.name
             `);
             const prods: any[] = [];
             for (let i = 0; i < prodRes.rows.length; i++) prods.push(prodRes.rows.item(i));

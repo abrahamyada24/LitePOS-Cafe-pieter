@@ -199,6 +199,7 @@ export default function POSScreen({ navigation, route }: any) {
                 SELECT p.* FROM products p
                 JOIN categories c ON p.categoryId = c.id
                 WHERE LOWER(c.name) NOT LIKE '%bahan baku%'
+                AND COALESCE(p.isActive, 1) = 1
             `;
             if (selectedCategory) prodQuery += ` AND p.categoryId = ${selectedCategory}`;
             

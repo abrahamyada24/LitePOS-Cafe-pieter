@@ -49,3 +49,7 @@ pos-android/generator.html
 pos-android/.license-generator-private.jwk
 
 .vercel
+
+# APK releases (too large for GitHub)
+releases/
+*.apk

@@ -1,0 +1,1 @@
+<section class="error-page"><div><span>500</span><h1>Terjadi kendala</h1><p>Permintaan belum dapat diproses. Silakan coba kembali beberapa saat lagi.</p><a class="button button-accent" href="<?= e(url('/')) ?>">Kembali ke beranda</a></div></section>

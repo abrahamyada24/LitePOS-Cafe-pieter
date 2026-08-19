@@ -109,7 +109,7 @@ export default function PaymentModal({
                                     </div>
                                     <div className="text-left">
                                         <span className="block font-bold text-gray-800">Tunai (Cash)</span>
-                                        <span className="text-[10px] text-gray-400">Bayar manual dengan uang fisik</span>
+                                        <span className="text-[10px] text-gray-400">Bayar dengan uang fisik</span>
                                     </div>
                                 </button>
 
@@ -121,7 +121,7 @@ export default function PaymentModal({
                                         <CreditCard size={24} />
                                     </div>
                                     <div className="text-left">
-                                        <span className="block font-bold text-gray-800">Transfer Bank (Manual)</span>
+                                        <span className="block font-bold text-gray-800">Transfer Bank</span>
                                         <span className="text-[10px] text-gray-400">Kasir konfirmasi setelah dana diterima</span>
                                     </div>
                                 </button>
@@ -149,7 +149,7 @@ export default function PaymentModal({
                                         <QrCode size={24} />
                                     </div>
                                     <div className="text-left">
-                                        <span className="block font-bold text-gray-800">QRIS Manual</span>
+                                        <span className="block font-bold text-gray-800">QRIS</span>
                                         <span className="text-[10px] text-gray-400">Kasir konfirmasi pembayaran QRIS statis</span>
                                     </div>
                                 </button>

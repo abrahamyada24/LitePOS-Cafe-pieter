@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { useStore } from '../../store/useStore';
 import { showAlert } from '../../utils/swal';
 import { getPosPendingTransactions } from '../../utils/savedTransactions';
+import { getPaymentTypeLabel } from '../../utils/paymentLabels';
 
 const SalesChart = lazy(() => import('../../components/SalesChart'));
 
@@ -732,7 +733,7 @@ export default function Dashboard() {
                       <td className="px-6 py-4 text-gray-700 font-medium text-xs">{trx.user?.name || '-'}</td>
                       <td className="px-6 py-4">
                         <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-[9px] font-bold uppercase border border-gray-200">
-                          {trx.payments?.[0]?.paymentType || '-'}
+                          {getPaymentTypeLabel(trx.payments?.[0]?.paymentType)}
                         </span>
                       </td>
                       <td className="px-6 py-4 font-bold text-gray-900 text-xs">{formatRp(trx.grandTotal)}</td>

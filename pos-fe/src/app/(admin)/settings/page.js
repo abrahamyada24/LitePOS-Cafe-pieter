@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { 
   Save, Store, CreditCard, ShieldCheck, UploadCloud, 
   Receipt, Printer, Smartphone, DollarSign, Loader2, Image as ImageIcon,
@@ -15,10 +15,13 @@ import {
   getPaperWidthMm,
   saveDevicePreferences,
 } from '../../../utils/devicePreferences';
+import { printReceiptElement } from '../../../utils/receiptPrint';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
 export default function SettingsPage() {
+  const printerTestRef = useRef(null);
+  const settingsFormDirtyRef = useRef(false);
   const { settings, fetchDataMaster, fetchSettings, user } = useStore();
   const canManageBusinessSettings = user?.role === 'OWNER' || user?.role === 'ADMIN';
   const [activeTab, setActiveTab] = useState(canManageBusinessSettings ? 'general' : 'theme');
@@ -102,7 +105,9 @@ export default function SettingsPage() {
   };
 
   useEffect(() => {
-    if (settings) {
+    // Background refresh runs every five seconds. Do not let it overwrite a
+    // draft while the user is editing this form.
+    if (settings && !settingsFormDirtyRef.current) {
       setForm({
         storeName: settings.storeName || '',
         phone: settings.phone || '',
@@ -141,13 +146,19 @@ export default function SettingsPage() {
     }
   }, [settings]);
 
+  const markSettingsFormDirty = () => {
+    settingsFormDirtyRef.current = true;
+  };
+
 
   const handleChange = (e) => {
     const { name, value } = e.target;
+    markSettingsFormDirty();
     setForm(prev => ({ ...prev, [name]: value }));
   };
 
   const handleToggle = (name) => {
+    markSettingsFormDirty();
     setForm(prev => {
       const next = { ...prev, [name]: !prev[name] };
       if (name === 'enableTableOrder' && !prev.enableTableOrder) next.enableDineTable = true;
@@ -159,6 +170,7 @@ export default function SettingsPage() {
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (file) {
+      markSettingsFormDirty();
       setForm(prev => ({ ...prev, logoFile: file }));
       setLogoPreview(URL.createObjectURL(file));
     }
@@ -194,6 +206,7 @@ export default function SettingsPage() {
         const result = await res.json();
         if (!res.ok || !result.success) throw new Error(result.message || result.error || "Gagal menyimpan pengaturan");
 
+        settingsFormDirtyRef.current = false;
         if (result.data) {
           setForm(current => ({
             ...current,
@@ -322,7 +335,7 @@ export default function SettingsPage() {
         }
       `}</style>
 
-      <div id="settings-printer-test" className="hidden text-[10px] leading-tight">
+      <div ref={printerTestRef} id="settings-printer-test" className="hidden text-[10px] leading-tight">
         {printableLogoUrl && (
           <img className="receipt-logo" src={printableLogoUrl} alt="Logo toko" />
         )}
@@ -466,7 +479,7 @@ export default function SettingsPage() {
                             <div className="p-3 bg-purple-100 text-purple-600 rounded-xl"><CreditCard size={24} /></div>
                             <div>
                                 <p className="font-bold text-gray-800">EDC / Debit</p>
-                                <p className="text-xs text-gray-500">Mesin EDC Bank (Manual Input)</p>
+                                <p className="text-xs text-gray-500">Mesin EDC Bank</p>
                             </div>
                         </div>
                         <label className="relative inline-flex items-center cursor-pointer">
@@ -632,7 +645,10 @@ export default function SettingsPage() {
                                             max="48"
                                             step="0.5"
                                             value={form.shiftDurationMinutes / 60}
-                                            onChange={(event) => setForm(prev => ({ ...prev, shiftDurationMinutes: Math.round(Number(event.target.value || 0) * 60) }))}
+                                            onChange={(event) => {
+                                                markSettingsFormDirty();
+                                                setForm(prev => ({ ...prev, shiftDurationMinutes: Math.round(Number(event.target.value || 0) * 60) }));
+                                            }}
                                             className="mt-1.5 w-full rounded-lg border border-blue-100 bg-white px-3 py-2.5 text-sm text-gray-800 outline-none focus:border-blue-400"
                                         />
                                     </label>
@@ -809,6 +825,7 @@ export default function SettingsPage() {
                         onKeyDown={(e) => {
                             if (e.key === 'Enter' && newTakeawayOption.trim()) {
                                 if (!takeawayOptions.includes(newTakeawayOption.trim())) {
+                                    markSettingsFormDirty();
                                     setTakeawayOptions([...takeawayOptions, newTakeawayOption.trim()]);
                                 }
                                 setNewTakeawayOption('');
@@ -820,6 +837,7 @@ export default function SettingsPage() {
                     <button 
                         onClick={() => {
                             if (newTakeawayOption.trim() && !takeawayOptions.includes(newTakeawayOption.trim())) {
+                                markSettingsFormDirty();
                                 setTakeawayOptions([...takeawayOptions, newTakeawayOption.trim()]);
                                 setNewTakeawayOption('');
                             }
@@ -844,7 +862,10 @@ export default function SettingsPage() {
                                     <span className="font-medium text-gray-800 text-sm">{opt}</span>
                                 </div>
                                 <button 
-                                    onClick={() => setTakeawayOptions(takeawayOptions.filter((_, i) => i !== idx))}
+                                    onClick={() => {
+                                        markSettingsFormDirty();
+                                        setTakeawayOptions(takeawayOptions.filter((_, i) => i !== idx));
+                                    }}
                                     className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
                                 >
                                     <Trash2 size={16} />
@@ -966,7 +987,16 @@ export default function SettingsPage() {
             </div>
             <button
               type="button"
-              onClick={() => window.print()}
+              onClick={async () => {
+                try {
+                  await printReceiptElement(printerTestRef.current, {
+                    paperWidthMm,
+                    printMarginMm: devicePreferences.printMarginMm,
+                  });
+                } catch (error) {
+                  showAlert.error('Gagal Mencetak', error?.message || 'Browser tidak dapat menyiapkan test print.');
+                }
+              }}
               className="w-full sm:w-auto rounded-xl bg-teal-600 px-5 py-3 text-sm font-bold text-white hover:bg-teal-700 flex items-center justify-center gap-2"
             >
               <Printer size={17} /> Test Print

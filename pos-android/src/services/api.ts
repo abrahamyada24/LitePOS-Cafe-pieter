@@ -1,5 +1,7 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { clearAuthSession, getAuthToken, OFFLINE_SESSION_TOKEN } from './secureAuthStorage';
+import { clearLicenseCache } from './secureLicenseStorage';
 
 export const DEFAULT_API_URL = 'https://103.150.227.178';
 export const API_BASE_URL_STORAGE_KEY = '@litepos_api_base_url';
@@ -45,7 +47,8 @@ export const getApiBaseUrl = async () => {
 
     if (savedUrl && LEGACY_API_URLS.has(stripApiSuffix(savedUrl.trim()).replace(/\/+$/, ''))) {
         await AsyncStorage.setItem(API_BASE_URL_STORAGE_KEY, normalized);
-        await AsyncStorage.multiRemove(['@auth_token', '@auth_user']);
+        await clearAuthSession();
+        await clearLicenseCache();
     }
 
     return normalized;
@@ -66,10 +69,11 @@ export const setApiBaseUrl = async (value: string) => {
     // JWT hanya valid untuk backend yang menerbitkannya. Saat server diganti,
     // buang sesi online lama agar token tidak terkirim ke instalasi lain.
     if (previous !== normalized) {
-        const token = await AsyncStorage.getItem('@auth_token');
-        if (token && token !== 'offline-mode-token') {
-            await AsyncStorage.multiRemove(['@auth_token', '@auth_user']);
+        const token = await getAuthToken();
+        if (token && token !== OFFLINE_SESSION_TOKEN) {
+            await clearAuthSession();
         }
+        await clearLicenseCache();
     }
 
     await AsyncStorage.setItem(API_BASE_URL_STORAGE_KEY, normalized);
@@ -90,8 +94,8 @@ api.interceptors.request.use(
             const baseUrl = await getApiBaseUrl();
             config.baseURL = buildApiBaseUrl(baseUrl);
 
-            const token = await AsyncStorage.getItem('@auth_token');
-            if (token && token !== 'offline-mode-token') {
+            const token = await getAuthToken();
+            if (token && token !== OFFLINE_SESSION_TOKEN) {
                 config.headers.Authorization = `Bearer ${token}`;
             }
         } catch (error) {

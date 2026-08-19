@@ -6,6 +6,7 @@ import { getDBConnection } from '../database/db';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import DatePickerDropdown from '../components/DatePickerDropdown';
 import { PreOrderPaymentStatus, getPaymentStatusLabel } from '../utils/preOrderPayment';
+import { syncService } from '../services/syncService';
 
 export default function CheckoutScreen({ navigation }: any) {
     useAppColorScheme(tw);
@@ -21,6 +22,9 @@ export default function CheckoutScreen({ navigation }: any) {
     const [guestName, setGuestName] = useState('');
     const [showCustomerModal, setShowCustomerModal] = useState(false);
     const [customerSearch, setCustomerSearch] = useState('');
+    const [showCreateCustomer, setShowCreateCustomer] = useState(false);
+    const [isSavingCustomer, setIsSavingCustomer] = useState(false);
+    const [newCustomer, setNewCustomer] = useState({ name: '', phone: '' });
 
     // Discount modal
     const [showDiscountModal, setShowDiscountModal] = useState(false);
@@ -54,10 +58,13 @@ export default function CheckoutScreen({ navigation }: any) {
     const [pointsToRedeem, setPointsToRedeem] = useState(0);
 
     const subtotal = cartSubtotal();
-    const totalBeforePoints = cartTotal();
+    const totalBeforeTaxAndPoints = cartTotal();
+    const discountAmount = subtotal - totalBeforeTaxAndPoints;
+    const taxRate = settings.taxRate ? Number(settings.taxRate) / 100 : 0;
+    const taxAmount = Math.round(totalBeforeTaxAndPoints * taxRate);
+    const totalBeforePoints = totalBeforeTaxAndPoints + taxAmount;
     const pointsValue = usePoints ? pointsToRedeem * (settings.loyalty_point_value || 0) : 0;
     const total = Math.max(0, totalBeforePoints - pointsValue);
-    const discountAmount = subtotal - total;
     const rawCash = parseInt(cashAmount.replace(/\D/g, '') || '0', 10);
     const rawDpAmount = parseInt(dpAmount.replace(/\D/g, '') || '0', 10);
     const isPreOrder = !!preOrderDate;
@@ -227,6 +234,75 @@ export default function CheckoutScreen({ navigation }: any) {
         setPointsToRedeem(0);
     };
 
+    const openCreateCustomer = () => {
+        setNewCustomer({ name: customerSearch.trim(), phone: '' });
+        setShowCreateCustomer(true);
+    };
+
+    const closeCustomerModal = () => {
+        setShowCustomerModal(false);
+        setShowCreateCustomer(false);
+        setCustomerSearch('');
+        setNewCustomer({ name: '', phone: '' });
+    };
+
+    const handleCreateCustomer = async () => {
+        const name = newCustomer.name.trim();
+        const phone = newCustomer.phone.trim();
+
+        if (!name) {
+            Alert.alert('Nama Belum Diisi', 'Masukkan nama pelanggan terlebih dahulu.');
+            return;
+        }
+        if (isSavingCustomer) return;
+
+        setIsSavingCustomer(true);
+        try {
+            const db = await getDBConnection();
+            if (phone) {
+                const [duplicate] = await db.executeSql(
+                    'SELECT id FROM customers WHERE TRIM(phone) = ? LIMIT 1',
+                    [phone]
+                );
+                if (duplicate.rows.length > 0) {
+                    Alert.alert('Nomor HP Sudah Terdaftar', 'Pilih pelanggan yang sudah ada atau gunakan nomor HP lain.');
+                    return;
+                }
+            }
+
+            const [result] = await db.executeSql(
+                'INSERT INTO customers (name, phone, notes, loyaltyDiscount, points, isSynced) VALUES (?, ?, ?, 0, 0, 0)',
+                [name, phone || null, null]
+            );
+            const createdCustomer = {
+                id: result.insertId,
+                name,
+                phone: phone || null,
+                notes: null,
+                loyaltyDiscount: 0,
+                points: 0,
+                isSynced: 0,
+            };
+
+            setCustomers(current => [...current, createdCustomer].sort((a, b) => a.name.localeCompare(b.name, 'id')));
+            setShowCreateCustomer(false);
+            setNewCustomer({ name: '', phone: '' });
+            selectCustomer(createdCustomer);
+
+            // SQLite tetap menjadi sumber utama supaya pembuatan pelanggan selalu
+            // berhasil offline. Saat online, coba sinkron sekarang; polling aplikasi
+            // akan mencoba kembali otomatis apabila jaringan belum tersedia.
+            void syncService.pushLocalData().catch(error => {
+                console.log('Pelanggan tersimpan offline dan akan disinkronkan nanti:', error?.message || error);
+            });
+        } catch (error) {
+            console.error('Create customer failed:', error);
+            Alert.alert('Gagal Menambah Pelanggan', 'Data belum dapat disimpan. Coba lagi.');
+        } finally {
+            setIsSavingCustomer(false);
+        }
+    };
+
     const toggleLoyaltyPoints = () => {
         if (!selectedCustomer) return;
         if (!settings.loyalty_active) {
@@ -298,8 +374,8 @@ export default function CheckoutScreen({ navigation }: any) {
             const custNameFinal = orderType === 'TAKE_AWAY' && takeAwayOption ? `${custNameBase} (${takeAwayOption})` : custNameBase;
 
             await db.executeSql(
-                `INSERT INTO transactions (id, invoiceNumber, grandTotal, discountAmount, paymentMethod, cashAmount, changeAmount, customerId, customerName, createdAt, preOrderDate, paymentStatus, paidAmount, remainingAmount, paidAt, orderType, tableName) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [trxId, invoiceNumber, total, discountAmount, effectivePaymentMethod,
+                `INSERT INTO transactions (id, invoiceNumber, grandTotal, discountAmount, taxAmount, paymentMethod, cashAmount, changeAmount, customerId, customerName, createdAt, preOrderDate, paymentStatus, paidAmount, remainingAmount, paidAt, orderType, tableName) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [trxId, invoiceNumber, total, discountAmount, taxAmount, effectivePaymentMethod,
                     paymentMethod === 'CASH' ? rawCash : amountDueNow,
                     paymentMethod === 'CASH' ? Math.max(0, changeAmount) : 0,
                     selectedCustomer?.id || null, custNameFinal,
@@ -343,7 +419,7 @@ export default function CheckoutScreen({ navigation }: any) {
                 invoiceNumber, createdAt, items: cart,
                 customerName: custNameFinal,
                 customerPhone: selectedCustomer?.phone || null,
-                subtotal, discountAmount, total, paymentMethod: effectivePaymentMethod,
+                subtotal, discountAmount, taxAmount, taxRate, total, paymentMethod: effectivePaymentMethod,
                 cashAmount: paymentMethod === 'CASH' ? rawCash : amountDueNow,
                 changeAmount: Math.max(0, changeAmount),
                 preOrderDate: preOrderDate || null,
@@ -352,7 +428,8 @@ export default function CheckoutScreen({ navigation }: any) {
                 remainingAmount,
                 paidAt: paidAmount > 0 ? createdAt : null,
                 orderType,
-                tableName: selectedTable?.number || null
+                tableName: selectedTable?.number || null,
+                takeAwayOption: orderType === 'TAKE_AWAY' ? takeAwayOption : null
             };
 
             clearCart();
@@ -693,6 +770,12 @@ export default function CheckoutScreen({ navigation }: any) {
                                 <Text style={tw`text-xs font-bold text-blue-500`}>+{Math.floor(total / (settings.loyalty_multiplier_amount || 1000)) * (settings.loyalty_multiplier || 1)} Poin</Text>
                             </View>
                         )}
+                        {taxAmount > 0 ? (
+                            <View style={tw`flex-row justify-between items-center mb-2`}>
+                                <Text style={tw`text-gray-600 dark:text-gray-300 text-sm`}>{taxRate > 0 ? `Pajak (${Number(settings.taxRate)}%)` : 'Pajak'}</Text>
+                                <Text style={tw`font-bold text-gray-800 dark:text-gray-100`}>{formatRp(taxAmount)}</Text>
+                            </View>
+                        ) : null}
                         <View style={tw`flex-row justify-between items-center border-t border-gray-200 dark:border-gray-700 pt-3`}>
                             <Text style={tw`font-black text-gray-800 dark:text-gray-100 uppercase text-sm`}>Total Bayar</Text>
                             <Text style={tw`text-2xl font-black text-blue-600`}>{formatRp(total)}</Text>
@@ -794,45 +877,88 @@ export default function CheckoutScreen({ navigation }: any) {
                 <View style={tw`flex-1 bg-black/50 justify-end`}>
                     <View style={tw`bg-white dark:bg-gray-800 rounded-t-3xl p-6 max-h-[80%]`}>
                         <View style={tw`flex-row justify-between items-center mb-4`}>
-                            <Text style={tw`text-xl font-bold text-gray-800 dark:text-gray-100`}>Pilih Pelanggan</Text>
-                            <TouchableOpacity onPress={() => setShowCustomerModal(false)} style={tw`p-2 bg-gray-100 dark:bg-gray-700 rounded-full`}>
+                            <Text style={tw`text-xl font-bold text-gray-800 dark:text-gray-100`}>{showCreateCustomer ? 'Tambah Pelanggan' : 'Pilih Pelanggan'}</Text>
+                            <TouchableOpacity onPress={closeCustomerModal} style={tw`p-2 bg-gray-100 dark:bg-gray-700 rounded-full`}>
                                 <Icon name="close" size={20} color={tw.color('gray-600')} />
                             </TouchableOpacity>
                         </View>
-                        <TextInput
-                            style={tw`bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3 mb-4 text-gray-800 dark:text-gray-100`}
-                            placeholder="Cari nama atau telepon..."
-                            value={customerSearch}
-                            onChangeText={setCustomerSearch}
-                        />
-                        <FlatList
-                            data={filteredCustomers}
-                            keyExtractor={item => String(item.id)}
-                            ListEmptyComponent={() => <Text style={tw`text-center text-gray-400 py-8`}>Belum ada pelanggan terdaftar</Text>}
-                            renderItem={({ item }) => (
-                                <TouchableOpacity
-                                    style={tw`flex-row items-center py-3 border-b border-gray-100 dark:border-gray-800`}
-                                    onPress={() => selectCustomer(item)}
-                                >
-                                    <View style={tw`w-10 h-10 bg-blue-50 rounded-full items-center justify-center mr-3`}>
-                                        <Icon name="account-multiple" size={16} color={tw.color('blue-600')} />
-                                    </View>
-                                    <View style={tw`flex-1`}>
-                                        <Text style={tw`font-bold text-gray-800 dark:text-gray-100`}>{item.name}</Text>
-                                        {item.phone ? <Text style={tw`text-xs text-gray-500`}>{item.phone}</Text> : null}
-                                        <View style={tw`flex-row items-center mt-1`}>
-                                            <Icon name="tag-outline" size={10} color={tw.color('blue-600')} style={tw`mr-1`} />
-                                            <Text style={tw`text-[10px] font-bold text-blue-600`}>{item.points || 0} Poin</Text>
-                                        </View>
-                                    </View>
-                                    {item.loyaltyDiscount > 0 && (
-                                        <View style={tw`bg-green-50 border border-green-200 px-2 py-1 rounded-full ml-2`}>
-                                            <Text style={tw`text-[10px] font-black text-green-600`}>{item.loyaltyDiscount}% OFF</Text>
-                                        </View>
-                                    )}
+                        {showCreateCustomer ? (
+                            <View>
+                                <TouchableOpacity onPress={() => setShowCreateCustomer(false)} style={tw`self-start flex-row items-center mb-4`}>
+                                    <Icon name="arrow-left" size={18} color={tw.color('blue-600')} />
+                                    <Text style={tw`ml-1 text-blue-600 font-bold text-sm`}>Kembali ke daftar</Text>
                                 </TouchableOpacity>
-                            )}
-                        />
+                                <TextInput
+                                    autoFocus
+                                    maxLength={255}
+                                    style={tw`bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3 mb-3 text-gray-800 dark:text-gray-100`}
+                                    placeholder="Nama pelanggan *"
+                                    value={newCustomer.name}
+                                    onChangeText={name => setNewCustomer(current => ({ ...current, name }))}
+                                />
+                                <TextInput
+                                    maxLength={20}
+                                    keyboardType="phone-pad"
+                                    style={tw`bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3 mb-3 text-gray-800 dark:text-gray-100`}
+                                    placeholder="Nomor HP (opsional)"
+                                    value={newCustomer.phone}
+                                    onChangeText={phone => setNewCustomer(current => ({ ...current, phone }))}
+                                />
+                                <TouchableOpacity
+                                    disabled={isSavingCustomer || !newCustomer.name.trim()}
+                                    onPress={handleCreateCustomer}
+                                    style={tw`bg-blue-600 py-3 rounded-xl flex-row items-center justify-center ${isSavingCustomer || !newCustomer.name.trim() ? 'opacity-50' : 'opacity-100'}`}
+                                >
+                                    <Icon name="content-save" size={17} color="white" />
+                                    <Text style={tw`ml-2 text-white font-black`}>{isSavingCustomer ? 'Menyimpan...' : 'Simpan & Pilih Pelanggan'}</Text>
+                                </TouchableOpacity>
+                                <Text style={tw`text-[11px] text-gray-400 text-center mt-3`}>Bisa disimpan tanpa internet dan akan disinkronkan otomatis.</Text>
+                            </View>
+                        ) : (
+                            <>
+                                <TextInput
+                                    style={tw`bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3 mb-3 text-gray-800 dark:text-gray-100`}
+                                    placeholder="Cari nama atau telepon..."
+                                    value={customerSearch}
+                                    onChangeText={setCustomerSearch}
+                                />
+                                <TouchableOpacity
+                                    style={tw`border border-dashed border-blue-300 bg-blue-50 dark:bg-blue-900 py-3 rounded-xl flex-row items-center justify-center mb-3`}
+                                    onPress={openCreateCustomer}
+                                >
+                                    <Icon name="account-plus" size={17} color={tw.color('blue-600')} />
+                                    <Text style={tw`text-blue-600 dark:text-blue-200 font-bold text-sm ml-2`}>Tambah Pelanggan Baru</Text>
+                                </TouchableOpacity>
+                                <FlatList
+                                    data={filteredCustomers}
+                                    keyExtractor={item => String(item.id)}
+                                    ListEmptyComponent={() => <Text style={tw`text-center text-gray-400 py-8`}>Belum ada pelanggan terdaftar</Text>}
+                                    renderItem={({ item }) => (
+                                        <TouchableOpacity
+                                            style={tw`flex-row items-center py-3 border-b border-gray-100 dark:border-gray-800`}
+                                            onPress={() => selectCustomer(item)}
+                                        >
+                                            <View style={tw`w-10 h-10 bg-blue-50 rounded-full items-center justify-center mr-3`}>
+                                                <Icon name="account-multiple" size={16} color={tw.color('blue-600')} />
+                                            </View>
+                                            <View style={tw`flex-1`}>
+                                                <Text style={tw`font-bold text-gray-800 dark:text-gray-100`}>{item.name}</Text>
+                                                {item.phone ? <Text style={tw`text-xs text-gray-500`}>{item.phone}</Text> : null}
+                                                <View style={tw`flex-row items-center mt-1`}>
+                                                    <Icon name="tag-outline" size={10} color={tw.color('blue-600')} style={tw`mr-1`} />
+                                                    <Text style={tw`text-[10px] font-bold text-blue-600`}>{item.points || 0} Poin</Text>
+                                                </View>
+                                            </View>
+                                            {item.loyaltyDiscount > 0 && (
+                                                <View style={tw`bg-green-50 border border-green-200 px-2 py-1 rounded-full ml-2`}>
+                                                    <Text style={tw`text-[10px] font-black text-green-600`}>{item.loyaltyDiscount}% OFF</Text>
+                                                </View>
+                                            )}
+                                        </TouchableOpacity>
+                                    )}
+                                />
+                            </>
+                        )}
                     </View>
                 </View>
             </Modal>

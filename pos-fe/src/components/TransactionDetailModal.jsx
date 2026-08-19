@@ -8,6 +8,8 @@ import { getItemOriginalPrice, getItemProductDiscountTotal, getProductDiscountTo
 import { shouldShowLitePosBranding } from '@/utils/receiptBranding';
 import { createReceiptImageBlob, getReceiptImageFilename, shareReceiptImage } from '@/utils/receiptImage';
 import { showAlert } from '@/utils/swal';
+import { printReceiptElement } from '@/utils/receiptPrint';
+import { getPaymentTypeLabel } from '@/utils/paymentLabels';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -115,6 +117,7 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
 
     // Payment info
     const paymentType = payments?.[0]?.paymentType || 'TUNAI';
+    const paymentTypeLabel = getPaymentTypeLabel(paymentType, 'Tunai');
     const rawPaymentStatus = transaction.paymentStatus || payments?.[0]?.paymentStatus || '';
     const paymentStatusLabel = {
         SETTLEMENT: 'Sudah dibayar',
@@ -128,8 +131,15 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
     const returnableTransaction = canReturn && ['PAID', 'COMPLETED'].includes(transaction.status);
 
     // --- FUNGSI CETAK STRUK ---
-    const handlePrint = () => {
-        window.print();
+    const handlePrint = async () => {
+        try {
+            await printReceiptElement(receiptRef.current, {
+                paperWidthMm,
+                printMarginMm: devicePreferences.printMarginMm,
+            });
+        } catch (error) {
+            showAlert.error('Gagal Mencetak', error?.message || 'Browser tidak dapat menyiapkan struk.');
+        }
     };
 
     const handleShareImage = async () => {
@@ -330,7 +340,7 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
                         <div className="flex justify-between text-[10px] font-bold text-gray-400 uppercase tracking-widest">
                             <span>Metode Pembayaran</span>
                             <span className="text-blue-400 flex items-center gap-1">
-                                <CreditCard size={12} /> {paymentType}
+                                <CreditCard size={12} /> {paymentTypeLabel}
                             </span>
                         </div>
                         {productDiscountTotal > 0 && (
@@ -402,14 +412,14 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
                                 }}
                             />
                         )}
-                        <h3 style={{ margin: '0', fontSize: '16px', fontWeight: 'bold' }}>{storeName.toUpperCase()}</h3>
+                        <h3 className="receipt-store-name" style={{ margin: '0', fontSize: '14px', fontWeight: 'bold' }}>{storeName}</h3>
                         {storeAddress && <p style={{ fontSize: '9px', margin: '2px 0' }}>{storeAddress}</p>}
                         {storePhone && <p style={{ fontSize: '9px', margin: '0' }}>Telp: {storePhone}</p>}
                     </div>
 
                     <div style={{ borderBottom: '1px dashed #000', margin: '10px 0' }}></div>
 
-                    <div style={{ fontSize: '10px', textTransform: 'uppercase' }}>
+                    <div style={{ fontSize: '10px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                             <span>INV : {transaction.invoiceNumber}</span>
                         </div>
@@ -427,14 +437,14 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
                     <div style={{ fontSize: '10px' }}>
                         {items.map((item, i) => (
                             <div key={i} style={{ marginBottom: '8px' }}>
-                                <div style={{ fontWeight: 'bold', textTransform: 'uppercase' }}>{item.product?.name}</div>
+                                <div style={{ fontWeight: 'bold' }}>{item.product?.name}</div>
                                 {hasProductDiscount(item) && (
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px' }}>
+                                    <div className="receipt-value-row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px' }}>
                                         <span>HARGA NORMAL {Number(getItemOriginalPrice(item)).toLocaleString('id-ID')}</span>
                                         <span>-{Number(getItemProductDiscountTotal(item)).toLocaleString('id-ID')}</span>
                                     </div>
                                 )}
-                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                <div className="receipt-value-row" style={{ display: 'flex', justifyContent: 'space-between' }}>
                                     <span>{item.qty} x {Number(item.price).toLocaleString('id-ID')}</span>
                                     <span>{(item.qty * Number(item.price)).toLocaleString('id-ID')}</span>
                                 </div>
@@ -449,47 +459,47 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
                     <div style={{ fontSize: '11px', fontWeight: 'bold' }}>
                         {productDiscountTotal > 0 && (
                             <>
-                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                <div className="receipt-value-row" style={{ display: 'flex', justifyContent: 'space-between' }}>
                                     <span>HARGA NORMAL</span>
                                     <span>{(Number(transaction.subTotal) + productDiscountTotal).toLocaleString('id-ID')}</span>
                                 </div>
-                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                <div className="receipt-value-row" style={{ display: 'flex', justifyContent: 'space-between' }}>
                                     <span>DISKON PRODUK</span>
                                     <span>-{productDiscountTotal.toLocaleString('id-ID')}</span>
                                 </div>
                             </>
                         )}
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <div className="receipt-value-row" style={{ display: 'flex', justifyContent: 'space-between' }}>
                             <span>SUBTOTAL</span>
                             <span>{Number(transaction.subTotal).toLocaleString('id-ID')}</span>
                         </div>
 
                         {taxPct > 0 && (
-                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <div className="receipt-value-row" style={{ display: 'flex', justifyContent: 'space-between' }}>
                                 <span>PAJAK ({taxPct}%)</span>
                                 <span>{Number(transaction.taxAmount).toLocaleString('id-ID')}</span>
                             </div>
                         )}
 
                         {Number(transaction.discountAmount || 0) > 0 && (
-                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <div className="receipt-value-row" style={{ display: 'flex', justifyContent: 'space-between' }}>
                                 <span>DISKON TRANSAKSI</span>
                                 <span>-{Number(transaction.discountAmount).toLocaleString('id-ID')}</span>
                             </div>
                         )}
 
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginTop: '5px', borderTop: '1px solid #000', paddingTop: '5px' }}>
+                        <div className="receipt-value-row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginTop: '5px', borderTop: '1px solid #000', paddingTop: '5px' }}>
                             <span>TOTAL</span>
                             <span>{Number(transaction.grandTotal).toLocaleString('id-ID')}</span>
                         </div>
 
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '5px', fontSize: '10px' }}>
-                            <span>BAYAR ({paymentType})</span>
+                        <div className="receipt-value-row" style={{ display: 'flex', justifyContent: 'space-between', marginTop: '5px', fontSize: '10px' }}>
+                            <span>BAYAR ({paymentTypeLabel})</span>
                             <span>{Number(paymentAmount).toLocaleString('id-ID')}</span>
                         </div>
 
                         {paymentType === 'CASH' && changeAmount > 0 && (
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px' }}>
+                            <div className="receipt-value-row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px' }}>
                                 <span>KEMBALI</span>
                                 <span>{changeAmount.toLocaleString('id-ID')}</span>
                             </div>

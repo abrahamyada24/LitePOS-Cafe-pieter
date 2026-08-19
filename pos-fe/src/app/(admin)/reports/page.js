@@ -11,6 +11,7 @@ import { useStore } from '@/store/useStore';
 import SalesChart from '@/components/SalesChart';
 import StatCard from '@/components/StatCard';
 import { buildReportExport, exportReportCsv, exportReportPdf } from '@/utils/reportExport';
+import { getPaymentTypeLabel } from '@/utils/paymentLabels';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -101,7 +102,7 @@ const TransactionDetailModal = ({ isOpen, onClose, transaction }) => {
                         <p className="text-sm font-bold text-gray-800 mb-2">Pembayaran</p>
                         {transaction.payments?.map((p, idx) => (
                             <div key={idx} className="flex justify-between text-sm">
-                                <span className="text-gray-500">{p.paymentType}</span>
+                                <span className="text-gray-500">{getPaymentTypeLabel(p.paymentType)}</span>
                                 <span className="font-bold">{formatRp(p.amount)}</span>
                             </div>
                         ))}

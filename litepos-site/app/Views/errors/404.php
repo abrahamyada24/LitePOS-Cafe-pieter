@@ -1,0 +1,1 @@
+<section class="error-page"><div><span>404</span><h1>Halaman tidak ditemukan</h1><p>Alamat yang Anda buka tidak tersedia.</p><a class="button button-accent" href="<?= e(url('/')) ?>">Kembali ke beranda</a></div></section>

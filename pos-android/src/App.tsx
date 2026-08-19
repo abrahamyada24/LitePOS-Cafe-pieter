@@ -1,17 +1,29 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { createNavigationContainerRef, NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { View, Text, TouchableOpacity, Modal, Alert, TextInput, StatusBar, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AppState, View, Text, TouchableOpacity, Alert, TextInput, StatusBar, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { getDBConnection, createTables, seedInitialData } from './database/db';
 import tw, { useAppColorScheme } from 'twrnc';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useStore } from './store/useStore';
 import { syncService } from './services/syncService';
-import { hydrateApiBaseUrl, setApiBaseUrl as persistApiBaseUrl } from './services/api';
+import api, { hydrateApiBaseUrl, setApiBaseUrl as persistApiBaseUrl } from './services/api';
 import { openCashierShift } from './services/shiftService';
+import {
+    AUTH_INACTIVITY_TIMEOUT_HOURS,
+    AUTH_INACTIVITY_TIMEOUT_MS,
+    clearAuthSession,
+    getLastAuthActivity,
+    markAuthActivity,
+} from './services/secureAuthStorage';
+import { licenseToSettings, resolveLicenseStatus } from './services/licenseService';
+import {
+    formatShiftDateTime,
+    getOpeningExpectedCloseAt,
+    getShiftReminder,
+} from './utils/shiftReminder';
 
 import LoginScreen from './screens/LoginScreen';
 import DashboardScreen from './screens/DashboardScreen';
@@ -37,6 +49,7 @@ import AppDialogProvider from './components/AppDialogProvider';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
+const navigationRef = createNavigationContainerRef<any>();
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ Guard: block POS when shift not open Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 function ShiftGuardedPOS({ navigation, route }: any) {
@@ -48,19 +61,35 @@ function ShiftGuardedPOS({ navigation, route }: any) {
     const [openingCashInput, setOpeningCashInput] = useState('');
     const [isOpeningShift, setIsOpeningShift] = useState(false);
 
-    const handleOpenShift = async () => {
+    const handleOpenShift = () => {
         if (isOpeningShift) return;
         const openingCash = Number(openingCashInput.replace(/[^0-9]/g, '') || '0');
-        setIsOpeningShift(true);
-        try {
-            const shift = await openCashierShift(user, openingCash);
-            setActiveShift(shift);
-        } catch (error) {
-            console.error('Open shift from POS failed:', error);
-            Alert.alert('Gagal Membuka Shift', 'Shift belum dapat dibuka. Silakan coba lagi.');
-        } finally {
-            setIsOpeningShift(false);
-        }
+        const expectedCloseAt = getOpeningExpectedCloseAt(settings);
+        Alert.alert(
+            'Konfirmasi Buka Shift',
+            `Kas awal: Rp ${openingCash.toLocaleString('id-ID')}\nTarget tutup: ${formatShiftDateTime(expectedCloseAt)}\n\nPastikan nominal kas awal sudah benar.`,
+            [
+                { text: 'Ubah Nominal', style: 'cancel' },
+                {
+                    text: 'Ya, Buka Shift',
+                    onPress: async () => {
+                        setIsOpeningShift(true);
+                        try {
+                            const shift = await openCashierShift(user, openingCash, settings);
+                            setActiveShift(shift);
+                        } catch (error: any) {
+                            console.error('Open shift from POS failed:', error);
+                            Alert.alert(
+                                'Gagal Membuka Shift',
+                                error?.response?.data?.message || error?.message || 'Shift belum dapat dibuka. Silakan coba lagi.'
+                            );
+                        } finally {
+                            setIsOpeningShift(false);
+                        }
+                    },
+                },
+            ]
+        );
     };
 
     // If shift feature is disabled in settings, or shift is active Ã¢â€ â€™ open POS
@@ -110,7 +139,9 @@ function ShiftGuardedPOS({ navigation, route }: any) {
                         </View>
                         <View style={tw`flex-row items-center mb-5`}>
                             <Icon name="information-outline" size={15} color={tw.color('gray-400')} />
-                            <Text style={tw`text-[11px] text-gray-400 ml-1.5`}>Boleh diisi Rp0 jika laci kasir kosong.</Text>
+                            <Text style={tw`text-[11px] text-gray-400 ml-1.5 flex-1`}>
+                                Boleh Rp0 jika kosong. Target tutup {formatShiftDateTime(getOpeningExpectedCloseAt(settings))}.
+                            </Text>
                         </View>
 
                         <TouchableOpacity
@@ -161,31 +192,102 @@ function MainTabNavigator() {
                     <Tab.Screen name="Inventori" component={InventoryScreen} />
                     <Tab.Screen name="Laporan" component={ReportScreen} />
                     <Tab.Screen name="Kontak" component={ContactScreen} />
-                    <Tab.Screen name="Pengaturan" component={SettingsScreen} />
                 </>
             )}
+            <Tab.Screen name="Pengaturan" component={SettingsScreen} />
         </Tab.Navigator>
     );
 }
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ App Root Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-const generateSignature = (storeId: string, days: string) => {
-    const str = storeId + days + "LITE_SECRET_2026";
-    let hash = 5381;
-    for (let i = 0; i < str.length; i++) {
-        hash = ((hash << 5) + hash) + str.charCodeAt(i);
-    }
-    return Math.abs(hash).toString(16).toUpperCase().substring(0, 4).padStart(4, '0');
-};
-
 function App(): React.JSX.Element {
     const settings = useStore((state) => state.settings);
     const setSettings = useStore((state) => state.setSettings);
     const user = useStore((state) => state.user);
+    const setUser = useStore((state) => state.setUser);
+    const activeShift = useStore((state) => state.activeShift);
     const setActiveShift = useStore((state) => state.setActiveShift);
     const [colorScheme, , setColorScheme] = useAppColorScheme(tw);
-    const [showTrialPopup, setShowTrialPopup] = useState(false);
-    const [activationCode, setActivationCode] = useState('');
+    const lastInteractionRef = useRef(Date.now());
+    const lastActivityWriteRef = useRef(0);
+    const timeoutHandledRef = useRef(false);
+    const shiftReminderGateRef = useRef({ key: '', nextAt: 0 });
+
+    const expireInactiveSession = useCallback(async () => {
+        if (!useStore.getState().user || timeoutHandledRef.current) return;
+        timeoutHandledRef.current = true;
+        try {
+            await api.post('/auth/logout');
+        } catch { /* sesi server mungkin sudah kedaluwarsa atau perangkat offline */ }
+        await clearAuthSession();
+        setUser(null);
+        setActiveShift(null);
+        if (navigationRef.isReady()) {
+            navigationRef.resetRoot({ index: 0, routes: [{ name: 'Login' }] });
+        }
+        Alert.alert('Sesi Berakhir', `Tidak ada aktivitas selama ${AUTH_INACTIVITY_TIMEOUT_HOURS} jam. Silakan login kembali.`);
+    }, [setActiveShift, setUser]);
+
+    const recordUserActivity = useCallback(() => {
+        if (!useStore.getState().user) return;
+        const now = Date.now();
+        lastInteractionRef.current = now;
+        timeoutHandledRef.current = false;
+        if (now - lastActivityWriteRef.current >= 10000) {
+            lastActivityWriteRef.current = now;
+            void markAuthActivity(now);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!user) return;
+        const now = Date.now();
+        lastInteractionRef.current = now;
+        lastActivityWriteRef.current = now;
+        timeoutHandledRef.current = false;
+        void markAuthActivity(now);
+
+        const timer = setInterval(() => {
+            if (Date.now() - lastInteractionRef.current >= AUTH_INACTIVITY_TIMEOUT_MS) {
+                void expireInactiveSession();
+            }
+        }, 15000);
+
+        const subscription = AppState.addEventListener('change', async (state) => {
+            if (state !== 'active' || !useStore.getState().user) return;
+            const lastActivity = await getLastAuthActivity();
+            if (!lastActivity || Date.now() - lastActivity >= AUTH_INACTIVITY_TIMEOUT_MS) {
+                await expireInactiveSession();
+                return;
+            }
+            lastInteractionRef.current = lastActivity;
+        });
+
+        return () => {
+            clearInterval(timer);
+            subscription.remove();
+        };
+    }, [user?.id, expireInactiveSession]);
+
+    useEffect(() => {
+        if (!user) return;
+        const refreshLicense = async () => {
+            const license = await resolveLicenseStatus();
+            setSettings({ ...useStore.getState().settings, ...licenseToSettings(license) });
+            if (!license.isActive && navigationRef.isReady()) {
+                navigationRef.resetRoot({ index: 0, routes: [{ name: 'Lock' }] });
+            }
+        };
+        void refreshLicense();
+        const interval = setInterval(refreshLicense, 5 * 60 * 1000);
+        const subscription = AppState.addEventListener('change', (state) => {
+            if (state === 'active') void refreshLicense();
+        });
+        return () => {
+            clearInterval(interval);
+            subscription.remove();
+        };
+    }, [user?.id, setSettings]);
 
     const reconcileActiveShift = useCallback(async () => {
         const db = await getDBConnection();
@@ -201,60 +303,10 @@ function App(): React.JSX.Element {
             id: shift.id,
             openingCash: Number(shift.openingCash || 0),
             openedAt: shift.openedAt,
+            expectedCloseAt: shift.expectedCloseAt || null,
+            userName: shift.userName || undefined,
         });
     }, [setActiveShift]);
-
-    const handleActivate = async () => {
-        const code = activationCode.trim().toUpperCase();
-        if (code.length < 4) {
-            Alert.alert("Kode Tidak Valid", "Kode aktivasi terlalu pendek.");
-            return;
-        }
-
-        const supportedDays = [14, 30, 60, 90, 180, 360, 365, 720, 1000];
-        let matchedDays = 0;
-        const storeId = settings.store_id || 'UNKNOWN';
-
-        for (const days of supportedDays) {
-            if (generateSignature(storeId, days.toString()) === code) {
-                matchedDays = days;
-                break;
-            }
-        }
-
-        if (matchedDays === 0) {
-            Alert.alert("Aktivasi Gagal", "Kode aktivasi salah atau tidak berlaku untuk mesin ini.");
-            return;
-        }
-
-        try {
-            const db = await getDBConnection();
-            const days = matchedDays;
-            
-            const now = new Date();
-            let baseDate = now;
-            if (settings.license_expire_date) {
-                const currentExpire = new Date(settings.license_expire_date);
-                if (currentExpire > now) {
-                    baseDate = currentExpire;
-                }
-            }
-
-            baseDate.setDate(baseDate.getDate() + days);
-            const newExpireISO = baseDate.toISOString();
-
-            await db.executeSql(`UPDATE settings SET value = ? WHERE key = 'license_expire_date'`, [newExpireISO]);
-            await db.executeSql(`INSERT OR REPLACE INTO settings (key, value) VALUES ('license_type', 'PREMIUM')`);
-            
-            setSettings({ ...settings, license_expire_date: newExpireISO, license_type: 'PREMIUM' });
-            setShowTrialPopup(false);
-            Alert.alert("Berhasil", `Aplikasi berhasil diaktivasi ulang (+${days} Hari).`);
-            setActivationCode('');
-
-        } catch (error) {
-            Alert.alert("Error", "Terjadi kesalahan saat menyimpan lisensi.");
-        }
-    };
 
     // Initialize DB and settings on mount
     useEffect(() => {
@@ -268,14 +320,18 @@ function App(): React.JSX.Element {
                 const rowCount = settingsRes.rows.length;
                 let loadedSettings: any = {
                     storeName: 'LitePOS', storeAddress: '', storePhone: '',
-                    storeLogo: null, enablePreOrder: false, enableShift: true, enableDineTable: false, enableTableOrder: false, enableKitchenPrint: false,
+                    storeLogo: null, enablePreOrder: false, enableShift: true, enableShiftReminder: true,
+                    shiftDurationMinutes: 480, shiftReminderMinutes: 15, shiftDayCutoff: '23:50',
+                    enableDineTable: false, enableTableOrder: false, enableKitchenPrint: false,
                     showImages: true, printerAddress: null, printerType: null, theme: 'light',
                     apiBaseUrl: '',
                 };
                 for (let i = 0; i < rowCount; i++) {
                     const row = settingsRes.rows.item(i);
-                    if (row.key === 'showImages' || row.key === 'enablePreOrder' || row.key === 'enableShift' || row.key === 'enableDineTable' || row.key === 'enableTableOrder' || row.key === 'enableKitchenPrint') {
+                    if (['showImages', 'enablePreOrder', 'enableShift', 'enableShiftReminder', 'enableDineTable', 'enableTableOrder', 'enableKitchenPrint'].includes(row.key)) {
                         loadedSettings[row.key] = row.value === 'true';
+                    } else if (['shiftDurationMinutes', 'shiftReminderMinutes'].includes(row.key)) {
+                        loadedSettings[row.key] = Number(row.value || 0);
                     } else {
                         loadedSettings[row.key] = row.value || null;
                     }
@@ -308,12 +364,82 @@ function App(): React.JSX.Element {
         restoreShift();
     }, [user?.id, reconcileActiveShift, setActiveShift]);
 
+    useEffect(() => {
+        if (!user || !activeShift || !settings.enableShift) {
+            shiftReminderGateRef.current = { key: '', nextAt: 0 };
+            return;
+        }
+
+        const checkReminder = () => {
+            const currentShift = useStore.getState().activeShift;
+            const currentSettings = useStore.getState().settings;
+            const reminder = getShiftReminder(currentShift, currentSettings);
+            if (!reminder || !currentShift) return;
+
+            const key = `${currentShift.id}:${reminder.phase}`;
+            const now = Date.now();
+            if (shiftReminderGateRef.current.key === key && shiftReminderGateRef.current.nextAt > now) return;
+            shiftReminderGateRef.current = { key, nextAt: now + 15 * 60 * 1000 };
+
+            Alert.alert(
+                reminder.title,
+                reminder.message,
+                [
+                    { text: 'Ingatkan 15 Menit', style: 'cancel' },
+                    {
+                        text: 'Tutup Shift',
+                        onPress: () => {
+                            if (navigationRef.isReady()) {
+                                navigationRef.navigate('Main', {
+                                    screen: 'Beranda',
+                                    params: { openCloseShift: true },
+                                });
+                            }
+                        },
+                    },
+                ]
+            );
+        };
+
+        checkReminder();
+        const interval = setInterval(checkReminder, 60 * 1000);
+        const subscription = AppState.addEventListener('change', state => {
+            if (state === 'active') checkReminder();
+        });
+        return () => {
+            clearInterval(interval);
+            subscription.remove();
+        };
+    }, [
+        activeShift?.id,
+        activeShift?.expectedCloseAt,
+        settings.enableShift,
+        settings.enableShiftReminder,
+        settings.shiftDurationMinutes,
+        settings.shiftReminderMinutes,
+        settings.shiftDayCutoff,
+        user?.id,
+    ]);
+
     // Setup Data Synchronization Polling (Foreground for now)
     useEffect(() => {
         if (!user) return; // Only sync when logged in
 
         const syncData = async () => {
             try {
+                // Reset outlet harus direkonsiliasi sebelum satu pun data lokal diunggah.
+                // Jika pemeriksaan gagal, sinkronisasi dihentikan agar data lama tidak hidup kembali.
+                const resetRes: any = await syncService.reconcileResetState();
+                if (!resetRes.success) {
+                    console.log('Status reset outlet gagal diperiksa; sinkronisasi ditunda.', resetRes.error);
+                    return;
+                }
+                if (resetRes.resetApplied) {
+                    if (resetRes.scopes?.includes('ALL')) setActiveShift(null);
+                    useStore.getState().clearCart();
+                    console.log(`Reset outlet versi ${resetRes.version} (${resetRes.scopes?.join(', ')}) diterapkan ke perangkat.`);
+                }
+
                 // Kirim perubahan lokal lebih dulu agar pull tidak menimpa data offline.
                 let pushRes: any = await syncService.pushLocalData();
                 if (!pushRes.success) {
@@ -334,18 +460,21 @@ function App(): React.JSX.Element {
                         const rowCount = settingsRes.rows.length;
                         let reloadedSettings: any = {
                             storeName: 'LitePOS', storeAddress: '', storePhone: '',
-                            storeLogo: null, enablePreOrder: false, enableShift: true, enableDineTable: false, enableTableOrder: false, enableKitchenPrint: false,
+                            storeLogo: null, enablePreOrder: false, enableShift: true, enableShiftReminder: true,
+                            shiftDurationMinutes: 480, shiftReminderMinutes: 15, shiftDayCutoff: '23:50',
+                            enableDineTable: false, enableTableOrder: false, enableKitchenPrint: false,
                             showImages: true, printerAddress: null, printerType: null, theme: 'light',
                             allowNegativeStock: false, receiptFooter: '',
                             loyalty_active: false, loyalty_multiplier: 1, loyalty_multiplier_amount: 1000,
                             loyalty_point_value: 0, loyalty_min_points: 0,
                             apiBaseUrl: '',
+                            dataResetVersion: 0, dataResetAt: '', dataResetType: '',
                         };
                         for (let i = 0; i < rowCount; i++) {
                             const row = settingsRes.rows.item(i);
-                            if (['showImages', 'enablePreOrder', 'enableShift', 'enableDineTable', 'enableTableOrder', 'allowNegativeStock', 'loyalty_active', 'enableKitchenPrint'].includes(row.key)) {
+                            if (['showImages', 'enablePreOrder', 'enableShift', 'enableShiftReminder', 'enableDineTable', 'enableTableOrder', 'allowNegativeStock', 'loyalty_active', 'enableKitchenPrint'].includes(row.key)) {
                                 reloadedSettings[row.key] = row.value === 'true';
-                            } else if (['loyalty_multiplier', 'loyalty_multiplier_amount', 'loyalty_point_value', 'loyalty_min_points'].includes(row.key)) {
+                            } else if (['shiftDurationMinutes', 'shiftReminderMinutes', 'loyalty_multiplier', 'loyalty_multiplier_amount', 'loyalty_point_value', 'loyalty_min_points', 'dataResetVersion'].includes(row.key)) {
                                 reloadedSettings[row.key] = Number(row.value || 0);
                             } else {
                                 reloadedSettings[row.key] = row.value || null;
@@ -406,45 +535,30 @@ function App(): React.JSX.Element {
         syncData();
 
         return () => clearInterval(intervalId);
-    }, [user, reconcileActiveShift]);
-
-    // Trial popup logic
-    useEffect(() => {
-        const checkTrialPopup = async () => {
-            if (settings.license_type !== 'TRIAL') return;
-            try {
-                const lastShown = await AsyncStorage.getItem('last_trial_popup');
-                const now = new Date().getTime();
-                if (!lastShown || now - parseInt(lastShown) > 12 * 60 * 60 * 1000) {
-                    setShowTrialPopup(true);
-                    await AsyncStorage.setItem('last_trial_popup', now.toString());
-                }
-            } catch (e) { }
-        };
-        if (settings.license_type === 'TRIAL') {
-            setTimeout(checkTrialPopup, 1000);
-        }
-    }, [settings.license_type]);
-
-    const isExpired = settings.license_expire_date ? new Date(settings.license_expire_date) < new Date() : false;
+    }, [user, reconcileActiveShift, setActiveShift]);
 
     return (
         <SafeAreaProvider>
             <AppDialogProvider>
                 <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} backgroundColor={colorScheme === 'dark' ? tw.color('gray-900') : tw.color('white')} />
-                <SafeAreaView style={tw`flex-1 bg-white dark:bg-gray-900`}>
-                    <NavigationContainer theme={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+                <SafeAreaView style={tw`flex-1 bg-white dark:bg-gray-900`} onTouchStart={recordUserActivity}>
+                    <NavigationContainer ref={navigationRef} theme={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
                         <Stack.Navigator screenOptions={{ headerShown: false }}>
-                            {isExpired ? (
-                                <Stack.Screen name="Lock" component={LockScreen} />
-                            ) : (
-                                <>
-                                    <Stack.Screen name="Login" component={LoginScreen} />
+                            <Stack.Screen name="Login" component={LoginScreen} />
+                            <Stack.Screen name="Lock" component={LockScreen} />
                                     <Stack.Screen name="Main" component={MainTabNavigator} />
                                     <Stack.Screen name="POS" component={ShiftGuardedPOS} />
                                     <Stack.Screen name="TableOrders" component={TableOrdersScreen} />
                                     <Stack.Screen name="Checkout" component={CheckoutScreen} />
-                                    <Stack.Screen name="ReceiptPreview" component={ReceiptPreviewScreen} />
+                                    <Stack.Screen
+                                        name="ReceiptPreview"
+                                        component={ReceiptPreviewScreen}
+                                        options={{
+                                            presentation: 'transparentModal',
+                                            animation: 'fade',
+                                            contentStyle: { backgroundColor: 'transparent' },
+                                        }}
+                                    />
                                     <Stack.Screen name="UserManagement" component={UserManagementScreen} />
                                     <Stack.Screen name="StockReceiving" component={StockReceivingScreen} />
                                     <Stack.Screen name="StockOpname" component={StockOpnameScreen} />
@@ -453,59 +567,16 @@ function App(): React.JSX.Element {
                                     <Stack.Screen name="PackageList" component={PackageScreen} />
                                     <Stack.Screen name="ProductList" component={ProductListScreen} />
                                     <Stack.Screen name="CategoryList" component={CategoryListScreen} />
-                                    <Stack.Screen name="StockHistory" component={StockHistoryScreen} />
-                                </>
-                            )}
+                            <Stack.Screen name="StockHistory" component={StockHistoryScreen} />
                         </Stack.Navigator>
                     </NavigationContainer>
                 
-                {/* Trial Watermark */}
-                {settings.license_type === 'TRIAL' && !isExpired && (
-                    <TouchableOpacity 
-                        style={tw`absolute top-12 right-0 bg-red-600 px-3 py-1.5 rounded-l-full shadow-lg z-50 flex-row items-center opacity-90`}
-                        onPress={() => setShowTrialPopup(true)}
-                    >
+                {settings.license_type === 'TRIAL' && settings.license_status === 'ACTIVE' && user && (
+                    <View style={tw`absolute top-12 right-0 bg-amber-600 px-3 py-1.5 rounded-l-full shadow-lg z-50 flex-row items-center opacity-90`}>
                         <Icon name="clock-outline" size={12} color="white" style={tw`mr-1.5`} />
                         <Text style={tw`text-white text-xs font-black tracking-wider`}>TRIAL MODE</Text>
-                    </TouchableOpacity>
-                )}
-
-                {/* Trial Pop-up Modal */}
-                <Modal visible={showTrialPopup} transparent animationType="fade">
-                    <View style={tw`flex-1 bg-black/60 justify-center items-center px-6`}>
-                        <View style={tw`bg-white dark:bg-gray-800 p-8 rounded-3xl w-full max-w-sm items-center shadow-2xl border border-gray-100 dark:border-gray-700`}>
-                            <View style={tw`bg-red-50 dark:bg-red-900/30 p-4 rounded-full mb-5`}>
-                                <Icon name="shield-alert-outline" size={48} color={tw.color('red-500')} />
-                            </View>
-                            <Text style={tw`text-xl font-black text-gray-800 dark:text-gray-100 text-center mb-3`}>Anda dalam Masa Trial</Text>
-                            <Text style={tw`text-sm text-gray-500 dark:text-gray-400 text-center leading-5 mb-8`}>
-                                Terimakasih telah mencoba aplikasi kami! Masa trial ini berlaku selama 14 hari. Ingin terus menggunakan semua fitur tanpa batas?
-                            </Text>
-                            
-                            <View style={tw`w-full mb-5`}>
-                                <Text style={tw`text-xs font-bold text-gray-500 mb-1`}>Masukkan Kode Aktivasi (ID: {settings.store_id || 'UNKNOWN'})</Text>
-                                <TextInput
-                                    style={tw`w-full bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3 text-gray-800 dark:text-gray-100 font-bold tracking-widest text-center`}
-                                    placeholder="Contoh: A4B1"
-                                    value={activationCode}
-                                    onChangeText={setActivationCode}
-                                    autoCapitalize="characters"
-                                    maxLength={4}
-                                />
-                            </View>
-
-                            <TouchableOpacity 
-                                style={tw`w-full bg-blue-600 py-4 rounded-xl items-center mb-3`} 
-                                onPress={handleActivate}
-                            >
-                                <Text style={tw`text-white font-black text-lg`}>Aktifkan</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity style={tw`w-full py-3 items-center`} onPress={() => setShowTrialPopup(false)}>
-                                <Text style={tw`text-gray-500 dark:text-gray-400 font-bold`}>Tutup</Text>
-                            </TouchableOpacity>
-                        </View>
                     </View>
-                </Modal>
+                )}
                 </SafeAreaView>
             </AppDialogProvider>
         </SafeAreaProvider>
