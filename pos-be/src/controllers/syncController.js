@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const { enterDataSync } = require('../services/dataResetCoordinator');
+const { reserveQueue } = require('../utils/orderQueue');
 const prisma = new PrismaClient();
 
 const normalizeAndroidPayment = (transaction) => {
@@ -607,6 +608,7 @@ exports.pushLocalData = async (req, res) => {
           // Resolve productId untuk setiap item. Paket Android disimpan sebagai satu
           // baris `pkg-{id}` dan harus diurai kembali ke komponen produk server.
           const resolvedItems = [];
+          const kitchenItems = [];
           for (const item of (tx.items || [])) {
               const requestedQty = parseInt(item.quantity) || 1;
               const packageMatch = String(item.productId || '').match(/^pkg-(\d+)$/i);
@@ -626,30 +628,49 @@ exports.pushLocalData = async (req, res) => {
                       throw new Error(`Paket ${localPackageId} tidak ditemukan atau kosong di server.`);
                   }
                   pkg.items.forEach((component, index) => {
+                      const compPrice = index === 0 ? Number(item.price) / component.qty : 0;
+                      const compOrig = index === 0 ? Number(item.originalPrice || item.price || 0) / component.qty : 0;
+                      const compDisc = index === 0 ? Number(item.discountAmount || 0) : 0;
+                      const notes = `[Paket ${pkg.name}] ${item.notes || ''}`.trim();
+                      
                       resolvedItems.push({
                           productId: component.productId,
                           qty: component.qty * requestedQty,
-                          price: index === 0 ? Number(item.price) / component.qty : 0,
-                          originalPrice: index === 0 ? Number(item.originalPrice || item.price || 0) / component.qty : 0,
-                          discountAmount: index === 0 ? Number(item.discountAmount || 0) : 0,
+                          price: compPrice,
+                          originalPrice: compOrig,
+                          discountAmount: compDisc,
                           costPrice: Number(component.product.costPrice || 0),
-                          notes: `[Paket ${pkg.name}] ${item.notes || ''}`.trim()
+                          notes: notes
+                      });
+                      kitchenItems.push({
+                          productId: component.productId,
+                          name: component.product.name.substring(0, 50),
+                          qty: component.qty * requestedQty,
+                          price: compPrice,
+                          originalPrice: compOrig,
+                          discountAmount: compDisc,
+                          notes: notes
                       });
                   });
                   continue;
               }
 
               let serverProductId = null;
+              let productName = 'Unknown';
               if (item.serverProductId) {
                   serverProductId = parseInt(item.serverProductId);
+                  const prod = await prisma.product.findUnique({ where: { id: serverProductId }});
+                  if (prod) productName = prod.name.substring(0, 50);
               } else {
                   const parsedProdId = parseInt(item.productId);
                   if (!isNaN(parsedProdId)) {
                       const product = await prisma.product.findUnique({ where: { androidId: parsedProdId }});
                       serverProductId = product ? product.id : parsedProdId;
+                      if (product) productName = product.name.substring(0, 50);
                   }
               }
               if (!serverProductId) throw new Error(`Produk ${item.productId} tidak dapat dipetakan ke server.`);
+              
               resolvedItems.push({
                   productId: serverProductId,
                   qty: requestedQty,
@@ -659,12 +680,21 @@ exports.pushLocalData = async (req, res) => {
                   costPrice: 0,
                   notes: item.notes || null,
               });
+              kitchenItems.push({
+                  productId: serverProductId,
+                  name: productName,
+                  qty: requestedQty,
+                  price: Number(item.price),
+                  originalPrice: Number(item.originalPrice || item.price || 0),
+                  discountAmount: Number(item.discountAmount || 0),
+                  notes: item.notes || null,
+              });
           }
 
           // Simpan transaksi dan perubahan stok secara atomik. Jika salah satu produk
           // tidak cukup, seluruh transaksi dibatalkan dan Android akan mencoba lagi.
           await prisma.$transaction(async (syncTx) => {
-          await syncTx.transaction.create({
+          const newTransaction = await syncTx.transaction.create({
             data: {
               androidId: tx.id,
               invoiceNumber: tx.invoiceNumber,
@@ -728,6 +758,28 @@ exports.pushLocalData = async (req, res) => {
                   }
               });
           }
+          
+          // === Generate Kitchen Order ===
+          if ((tx.orderType || 'TAKE_AWAY') !== 'PRE_ORDER') {
+              const kitchenQueue = await reserveQueue(syncTx);
+              await syncTx.kitchenOrder.create({
+                  data: {
+                      source: 'ANDROID',
+                      orderCode: tx.invoiceNumber,
+                      ...kitchenQueue,
+                      tableNumber: tx.tableName || null,
+                      customerName: tx.customerName || null,
+                      note: null, // Transaction-level notes not typically supported by Android yet
+                      total: grandTotal,
+                      itemsJson: JSON.stringify(kitchenItems),
+                      transactionId: newTransaction.id,
+                      status: incomingPayment.paymentStatus === 'PAID' ? 'PREPARING' : 'NEW',
+                      startedAt: incomingPayment.paymentStatus === 'PAID' ? new Date(tx.createdAt || Date.now()) : null,
+                      createdAt: new Date(tx.createdAt || Date.now())
+                  }
+              });
+          }
+
           }, { isolationLevel: 'Serializable' });
           savedTransactions++;
         }
