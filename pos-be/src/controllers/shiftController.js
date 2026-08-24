@@ -1,5 +1,5 @@
 const { PrismaClient } = require('@prisma/client');
-const { calculateShiftSummary } = require('../services/shiftSummaryService');
+const { calculateShiftSummary, enrichShiftsWithSummaries } = require('../services/shiftSummaryService');
 const {
     calculateExpectedCloseAt,
     normalizeShiftReminderSettings,
@@ -95,9 +95,13 @@ exports.openShift = async (req, res) => {
 exports.closeShift = async (req, res) => {
     try {
         const { id } = req.params;
-        const { closingCash } = req.body;
-        const parsedClosingCash = Number(closingCash);
-        if (!Number.isFinite(parsedClosingCash) || parsedClosingCash < 0) {
+        const hasClosingCash = req.body
+            && Object.prototype.hasOwnProperty.call(req.body, 'closingCash')
+            && req.body.closingCash !== ''
+            && req.body.closingCash !== null
+            && req.body.closingCash !== undefined;
+        const parsedClosingCash = hasClosingCash ? Number(req.body.closingCash) : null;
+        if (hasClosingCash && (!Number.isFinite(parsedClosingCash) || parsedClosingCash < 0)) {
             return res.status(400).json({ success: false, code: 'INVALID_CLOSING_CASH', message: 'Kas akhir tidak valid.' });
         }
 
@@ -217,8 +221,9 @@ exports.getAllShifts = async (req, res) => {
             where: whereClause,
             orderBy: { openedAt: 'desc' }
         });
+        const summarizedShifts = await enrichShiftsWithSummaries(prisma, shifts);
 
-        res.json({ success: true, data: shifts });
+        res.json({ success: true, data: summarizedShifts });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
@@ -243,11 +248,15 @@ exports.getCurrentShift = async (req, res) => {
             })
         ]);
 
+        const [summarizedShift] = shift
+            ? await enrichShiftsWithSummaries(prisma, [shift])
+            : [];
+
         res.json({
             success: true,
             enabled: setting?.enableShift !== false,
             reminderSettings: normalizeShiftReminderSettings(setting),
-            data: shift
+            data: summarizedShift || null
         });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });

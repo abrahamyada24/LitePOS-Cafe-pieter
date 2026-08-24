@@ -1,6 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const { Parser } = require('json2csv');
-const { calculateShiftSummary } = require('../services/shiftSummaryService');
+const { calculateShiftSummary, enrichShiftsWithSummaries } = require('../services/shiftSummaryService');
 const prisma = new PrismaClient();
 
 /**
@@ -319,7 +319,8 @@ exports.getShiftReport = async (req, res) => {
         }
 
         const shifts = await prisma.shift.findMany({ orderBy: { openedAt: 'desc' }, take: 20 });
-        res.json({ success: true, data: shifts });
+        const summarizedShifts = await enrichShiftsWithSummaries(prisma, shifts);
+        res.json({ success: true, data: summarizedShifts });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }

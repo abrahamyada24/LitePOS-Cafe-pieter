@@ -43,7 +43,62 @@ const calculateShiftSummary = ({ shift, transactions = [], expenses = [], closin
     };
 };
 
+const isWithinShift = (record, shift, now) => {
+    if (record.shiftId === shift.id) return true;
+    if (record.shiftId !== null && record.shiftId !== undefined) return false;
+
+    const createdAt = new Date(record.createdAt).getTime();
+    const openedAt = new Date(shift.openedAt).getTime();
+    const closedAt = new Date(shift.closedAt || now).getTime();
+    return Number.isFinite(createdAt)
+        && Number.isFinite(openedAt)
+        && Number.isFinite(closedAt)
+        && createdAt >= openedAt
+        && createdAt <= closedAt;
+};
+
+const enrichShiftsWithSummaries = async (db, shifts = [], now = new Date()) => {
+    if (!Array.isArray(shifts) || shifts.length === 0) return [];
+
+    const shiftIds = shifts.map(shift => shift.id);
+    const openedTimes = shifts.map(shift => new Date(shift.openedAt).getTime()).filter(Number.isFinite);
+    const closedTimes = shifts.map(shift => new Date(shift.closedAt || now).getTime()).filter(Number.isFinite);
+    const rangeStart = new Date(Math.min(...openedTimes));
+    const rangeEnd = new Date(Math.max(...closedTimes));
+
+    const [transactions, expenses] = await Promise.all([
+        db.transaction.findMany({
+            where: {
+                status: { in: [...PAID_TRANSACTION_STATUSES] },
+                OR: [
+                    { shiftId: { in: shiftIds } },
+                    { shiftId: null, createdAt: { gte: rangeStart, lte: rangeEnd } }
+                ]
+            },
+            include: { payments: true }
+        }),
+        db.expense.findMany({
+            where: {
+                OR: [
+                    { shiftId: { in: shiftIds } },
+                    { shiftId: null, createdAt: { gte: rangeStart, lte: rangeEnd } }
+                ]
+            }
+        })
+    ]);
+
+    return shifts.map(shift => ({
+        ...shift,
+        ...calculateShiftSummary({
+            shift,
+            transactions: transactions.filter(transaction => isWithinShift(transaction, shift, now)),
+            expenses: expenses.filter(expense => isWithinShift(expense, shift, now))
+        })
+    }));
+};
+
 module.exports = {
     PAID_TRANSACTION_STATUSES,
     calculateShiftSummary,
+    enrichShiftsWithSummaries,
 };
