@@ -3,6 +3,10 @@ const { serializeProductPrice } = require('../utils/productDiscount');
 const prisma = new PrismaClient();
 
 const optionalDate = (value) => value ? new Date(value) : null;
+const normalizeDescription = (value) => {
+  const description = String(value || '').trim();
+  return description ? description.slice(0, 1000) : null;
+};
 const parseDiscountData = (body) => ({
   discountActive: body.discountActive === 'true' || body.discountActive === true || body.discountActive === 1,
   discountType: ['PERCENT', 'NOMINAL'].includes(String(body.discountType || '').toUpperCase())
@@ -46,7 +50,7 @@ exports.getAllProducts = async (req, res) => {
 
 exports.createProduct = async (req, res) => {
   try {
-    let { sku, name, price, costPrice, stock, minStock, categoryId, isActive, displayType, barcode, isUnlimitedStock, enableCostPrice, addons } = req.body;
+    let { sku, name, description, price, costPrice, stock, minStock, categoryId, isActive, displayType, barcode, isUnlimitedStock, enableCostPrice, addons } = req.body;
 
     // Handle SKU Otomatis jika kosong
     if (!sku || sku.trim() === "" || sku === "undefined") {
@@ -67,6 +71,7 @@ exports.createProduct = async (req, res) => {
       data: {
         sku: sku.toUpperCase(),
         name,
+        description: normalizeDescription(description),
         price: parseFloat(price) || 0,
         costPrice: parseFloat(costPrice) || 0,
         stock: parseInt(stock) || 0,
@@ -106,10 +111,11 @@ exports.createProduct = async (req, res) => {
 exports.updateProduct = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, sku, price, costPrice, stock, minStock, categoryId, isActive, displayType, barcode, isUnlimitedStock, enableCostPrice, addons } = req.body;
+    const { name, description, sku, price, costPrice, stock, minStock, categoryId, isActive, displayType, barcode, isUnlimitedStock, enableCostPrice, addons } = req.body;
 
     const updateData = {};
     if (name) updateData.name = name;
+    if (description !== undefined) updateData.description = normalizeDescription(description);
     if (sku) {
       const existing = await prisma.product.findFirst({
         where: { sku: sku.toUpperCase(), NOT: { id: parseInt(id) } }

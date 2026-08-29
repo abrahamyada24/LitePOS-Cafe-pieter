@@ -169,6 +169,7 @@ model Product {
   categoryId        Int       @map("category_id")
   sku               String    @unique @db.VarChar(50)
   name              String    @db.VarChar(255)
+  description       String?   @db.Text
   imageUrl          String?   @map("image_url") @db.Text
   barcode           String?   @db.VarChar(100)
   displayType       String    @default("normal") @map("display_type")
