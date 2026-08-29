@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { X, Clock, Play, Trash2, ShoppingCart, Loader2 } from 'lucide-react';
 import { showAlert } from '@/utils/swal';
 import { getPosPendingTransactions } from '@/utils/savedTransactions';
+import { getCartItemLineTotal } from '@/utils/cartPricing';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -102,7 +103,7 @@ export default function SavedTransactionModal({ isOpen, onClose, onResume, onCha
                                 const cartData = Array.isArray(payload.items) ? payload.items : [];
                                 const itemCount = cartData.reduce((sum, item) => sum + Number(item.qty || item.quantity || 1), 0);
                                 const total = Number(payload.grandTotal || tx.total || cartData.reduce(
-                                    (sum, item) => sum + Number(item.price || 0) * Number(item.qty || item.quantity || 1),
+                                    (sum, item) => sum + getCartItemLineTotal(item),
                                     0
                                 ));
                                 

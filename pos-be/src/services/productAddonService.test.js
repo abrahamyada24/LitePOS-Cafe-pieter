@@ -5,6 +5,7 @@ const {
   normalizeAddonSelections,
   resolveSelectedAddons,
   buildAddonItemNotes,
+  calculateAddonAwareLinePricing,
 } = require('./productAddonService');
 
 test('normalizeAddonIds hanya menerima ID positif dan unik', () => {
@@ -48,4 +49,14 @@ test('buildAddonItemNotes menyimpan pilihan dan catatan pelanggan', () => {
     'tanpa gula'
   );
   assert.equal(notes, 'Add-on: Extra Shot x2, Oat Milk | tanpa gula');
+});
+
+test('harga produk dan jumlah add-on dihitung terpisah', () => {
+  const pricing = calculateAddonAwareLinePricing(
+    { effectivePrice: 8500, originalPrice: 8500 },
+    [{ price: 1000, quantity: 10 }],
+    10
+  );
+  assert.equal(pricing.lineTotal, 95000);
+  assert.equal(pricing.price, 9500);
 });

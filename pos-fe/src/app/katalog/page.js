@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { showAlert } from '@/utils/swal';
 import OrderStatusTracker from '@/components/catalog/OrderStatusTracker';
+import { getCartItemLineTotal } from '@/utils/cartPricing';
 
 const RAW_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 const API_URL = RAW_API_URL.replace(/\/api$/, "").replace(/\/$/, "");
@@ -126,7 +127,7 @@ export default function KatalogPage() {
   };
 
   const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
-  const cartTotal = cart.reduce((sum, item) => sum + Number(item.price) * item.quantity, 0);
+  const cartTotal = cart.reduce((sum, item) => sum + getCartItemLineTotal(item), 0);
 
   const filteredProducts = useMemo(() => {
     const keyword = searchQuery.trim().toLowerCase();
@@ -261,7 +262,6 @@ export default function KatalogPage() {
     const selectedAddons = (selectedProduct.addons || [])
       .map(addon => ({ ...addon, quantity: Number(detailAddonQuantities[Number(addon.id)] || 0) }))
       .filter(addon => addon.quantity > 0);
-    const addonTotal = selectedAddons.reduce((total, addon) => total + (Number(addon.price || 0) * addon.quantity), 0);
     const addonKey = selectedAddons.map(addon => `${addon.id}x${addon.quantity}`).sort().join('-') || 'regular';
     const cartItemId = `${selectedProduct.id}-${addonKey}-${cleanNotes.toLowerCase() || "none"}`;
     const addonNotes = selectedAddons.length > 0
@@ -304,8 +304,10 @@ export default function KatalogPage() {
           packageId: selectedProduct.packageId || null,
           name: selectedProduct.name,
           categoryName: selectedProduct.category?.name || null,
-          price: Number(selectedProduct.price) + addonTotal,
-          originalPrice: Number(selectedProduct.originalPrice ?? selectedProduct.price) + addonTotal,
+          price: Number(selectedProduct.price),
+          basePrice: Number(selectedProduct.price),
+          originalPrice: Number(selectedProduct.originalPrice ?? selectedProduct.price),
+          baseOriginalPrice: Number(selectedProduct.originalPrice ?? selectedProduct.price),
           discountAmount: Number(selectedProduct.discountAmount || 0),
           addons: selectedAddons,
           addonIds: selectedAddons.map(addon => Number(addon.id)),
@@ -768,8 +770,8 @@ export default function KatalogPage() {
                             ? "Hapus dari pesanan"
                             : "Tidak jadi pilih"
                           : `${detailCartItemId ? "Simpan" : "Tambah"} ${formatRupiah(
-                              (Number(selectedProduct.price) + (selectedProduct.addons || [])
-                                .reduce((total, addon) => total + (Number(addon.price || 0) * Number(detailAddonQuantities[Number(addon.id)] || 0)), 0)) * detailQty
+                              (Number(selectedProduct.price) * detailQty) + (selectedProduct.addons || [])
+                                .reduce((total, addon) => total + (Number(addon.price || 0) * Number(detailAddonQuantities[Number(addon.id)] || 0)), 0)
                             )}`}
                       </button>
                     </div>

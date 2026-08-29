@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import { getCartItemLineTotal } from '../utils/cartPricing';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -284,8 +285,7 @@ export const useStore = create(
 
       getCartTotal: () => {
         const { cart, settings, discount, discountType } = get();
-        // Harga item yang dikonfigurasi sudah mencakup seluruh add-on per unit.
-        const subTotal = cart.reduce((sum, item) => sum + (Number(item.price) * item.qty), 0);
+        const subTotal = cart.reduce((sum, item) => sum + getCartItemLineTotal(item), 0);
 
         // Calculate discount
         let discountAmount = 0;

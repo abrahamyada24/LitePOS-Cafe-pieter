@@ -1,7 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const { getProductPrice, serializeProductPrice } = require('../utils/productDiscount');
 const { reserveQueue } = require('../utils/orderQueue');
-const { resolveSelectedAddons, buildAddonItemNotes } = require('../services/productAddonService');
+const { resolveSelectedAddons, buildAddonItemNotes, calculateAddonAwareLinePricing } = require('../services/productAddonService');
 const prisma = new PrismaClient();
 
 const generateTableOrderCode = () => {
@@ -203,11 +203,9 @@ exports.createTableOrder = async (req, res) => {
 
             const priceInfo = getProductPrice(product);
             const selectedAddons = resolveSelectedAddons(product.addons, item.addons ?? item.addonSelections ?? item.addonIds, product.name);
-            const addonTotal = selectedAddons.reduce((total, addon) => total + (Number(addon.price || 0) * Number(addon.quantity || 1)), 0);
-            const price = priceInfo.effectivePrice + addonTotal;
-            const originalPrice = priceInfo.originalPrice + addonTotal;
+            const { lineTotal, price, originalPrice } = calculateAddonAwareLinePricing(priceInfo, selectedAddons, qty);
             const itemNotes = buildAddonItemNotes(selectedAddons, item.notes);
-            grandTotal += price * qty;
+            grandTotal += lineTotal;
             cartItems.push({
                 id: product.id,
                 productId: product.id,

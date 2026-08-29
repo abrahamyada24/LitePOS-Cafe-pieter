@@ -3,7 +3,7 @@ const midtransClient = require('midtrans-client');
 const { getProductPrice } = require('../utils/productDiscount');
 const { reserveQueue } = require('../utils/orderQueue');
 const { normalizePaymentType, resolvePaymentMethod } = require('../services/paymentMethodService');
-const { resolveSelectedAddons, buildAddonItemNotes } = require('../services/productAddonService');
+const { resolveSelectedAddons, buildAddonItemNotes, calculateAddonAwareLinePricing } = require('../services/productAddonService');
 const prisma = new PrismaClient();
 
 // Inisialisasi Midtrans Snap
@@ -146,11 +146,9 @@ exports.createTransaction = async (req, res) => {
 
                 const priceInfo = getProductPrice(product);
                 const selectedAddons = resolveSelectedAddons(product.addons, item.addons ?? item.addonSelections ?? item.addonIds, product.name);
-                const addonTotal = selectedAddons.reduce((total, addon) => total + (Number(addon.price || 0) * Number(addon.quantity || 1)), 0);
-                const price = priceInfo.effectivePrice + addonTotal;
-                const originalPrice = priceInfo.originalPrice + addonTotal;
+                const { lineTotal, price, originalPrice } = calculateAddonAwareLinePricing(priceInfo, selectedAddons, requestedQty);
                 const itemNotes = buildAddonItemNotes(selectedAddons, item.notes);
-                subTotal += price * requestedQty;
+                subTotal += lineTotal;
                 addStockDeduction(product, requestedQty);
 
                 transactionItemsData.push({
@@ -175,8 +173,8 @@ exports.createTransaction = async (req, res) => {
 
                 itemDetailsForMidtrans.push({
                     id: product.sku || product.id.toString(),
-                    price: Math.round(price),
-                    quantity: requestedQty,
+                    price: Math.round(lineTotal),
+                    quantity: 1,
                     name: product.name.substring(0, 50)
                 });
             }
