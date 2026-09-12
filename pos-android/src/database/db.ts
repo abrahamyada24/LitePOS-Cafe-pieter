@@ -45,6 +45,10 @@ export const createTables = async (db: any) => {
       discountEndTime TEXT,
       discountDays TEXT,
       discountLabel TEXT,
+      availabilityScheduleEnabled INTEGER DEFAULT 0,
+      availabilityStartTime TEXT,
+      availabilityEndTime TEXT,
+      availabilityDays TEXT,
       FOREIGN KEY (categoryId) REFERENCES categories(id)
     );
   `;
@@ -269,6 +273,10 @@ export const createTables = async (db: any) => {
     { table: 'products', column: 'discountEndTime', def: 'TEXT' },
     { table: 'products', column: 'discountDays', def: 'TEXT' },
     { table: 'products', column: 'discountLabel', def: 'TEXT' },
+    { table: 'products', column: 'availabilityScheduleEnabled', def: 'INTEGER DEFAULT 0' },
+    { table: 'products', column: 'availabilityStartTime', def: 'TEXT' },
+    { table: 'products', column: 'availabilityEndTime', def: 'TEXT' },
+    { table: 'products', column: 'availabilityDays', def: 'TEXT' },
     { table: 'transaction_items', column: 'originalPrice', def: 'REAL DEFAULT 0' },
     { table: 'transaction_items', column: 'discountAmount', def: 'REAL DEFAULT 0' },
     { table: 'expenses', column: 'type', def: "TEXT DEFAULT 'EXPENSE'" },

@@ -10,6 +10,7 @@ import { showAlert } from '@/utils/swal';
 import { createReceiptImageBlob, downloadReceiptImage, getReceiptImageFilename, shareReceiptImage } from '@/utils/receiptImage';
 import { printReceiptElement } from '@/utils/receiptPrint';
 import { getPaymentTypeLabel } from '@/utils/paymentLabels';
+import { buildReceiptText } from '@/utils/receiptText';
 
 export default function ReceiptPreviewModal({ isOpen, onClose, transaction, store, formatNumber }) {
     const receiptRef = useRef(null);
@@ -83,6 +84,10 @@ export default function ReceiptPreviewModal({ isOpen, onClose, transaction, stor
     const paperWidthMm = getPaperWidthMm(devicePreferences);
     const logoMaxWidthMm = paperWidthMm === 80 ? 58 : 42;
     const showLitePosBranding = shouldShowLitePosBranding(license);
+    const showReceiptLogo = Boolean(devicePreferences.showReceiptLogo);
+    const storeLogoUrl = store?.logoUrl
+        ? (store.logoUrl.startsWith('http') ? store.logoUrl : `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}${store.logoUrl}`)
+        : '';
 
     const receiptImageFilename = getReceiptImageFilename(transaction.invoiceNumber);
 
@@ -125,23 +130,39 @@ export default function ReceiptPreviewModal({ isOpen, onClose, transaction, stor
     const handlePrint = async () => {
         if (typeof window === 'undefined') return;
 
-        if (window.electronAPI?.printReceipt && receiptRef.current) {
-            const html = `<!doctype html><html><head><meta charset="utf-8"><style>
-                @page { size: ${paperWidthMm}mm auto; margin: 0; }
-                body { width: ${paperWidthMm}mm; margin: 0; padding: ${devicePreferences.printMarginMm}mm; box-sizing: border-box; font-family: monospace; color: #000; }
-                .receipt-logo { display: block; width: auto; height: auto; max-width: ${logoMaxWidthMm}mm; max-height: 16mm; margin: 0 auto 2mm; object-fit: contain; }
-            </style></head><body>${receiptRef.current.innerHTML}</body></html>`;
-            window.electronAPI.printReceipt(html);
-            return;
-        }
-
         try {
+            if (window.electronAPI?.printReceiptRaw) {
+                const result = await window.electronAPI.printReceiptRaw({
+                    text: buildReceiptText({
+                        transaction,
+                        store,
+                        paperWidthMm,
+                        showLitePosBranding,
+                    }),
+                    printerName: devicePreferences.printerName,
+                    logoUrl: showReceiptLogo ? storeLogoUrl : '',
+                });
+                showAlert.success('Struk Dicetak', `Dikirim ke printer ${result.printerName}.`);
+                return;
+            }
+
+            if (window.electronAPI?.printReceipt && receiptRef.current) {
+                const html = `<!doctype html><html><head><meta charset="utf-8"><style>
+                    @page { size: ${paperWidthMm}mm auto; margin: 0; }
+                    body { width: ${paperWidthMm}mm; margin: 0; padding: ${devicePreferences.printMarginMm}mm; box-sizing: border-box; font-family: monospace; color: #000; }
+                    .receipt-logo { display: ${showReceiptLogo ? 'block' : 'none'}; width: auto; height: auto; max-width: ${logoMaxWidthMm}mm; max-height: 16mm; margin: 0 auto 2mm; object-fit: contain; }
+                </style></head><body>${receiptRef.current.innerHTML}</body></html>`;
+                window.electronAPI.printReceipt(html);
+                return;
+            }
+
             await printReceiptElement(receiptRef.current, {
                 paperWidthMm,
                 printMarginMm: devicePreferences.printMarginMm,
+                showReceiptLogo,
             });
         } catch (error) {
-            showAlert.error('Gagal Mencetak', error?.message || 'Browser tidak dapat menyiapkan struk.');
+            showAlert.error('Gagal Mencetak', error?.message || 'Printer tidak dapat menyiapkan struk.');
         }
     };
 
@@ -213,9 +234,9 @@ export default function ReceiptPreviewModal({ isOpen, onClose, transaction, stor
                         }}
                     >
                         <div className="mb-3 text-center">
-                            {store?.logoUrl && (
+                            {showReceiptLogo && storeLogoUrl && (
                                 <img
-                                    src={store.logoUrl.startsWith('http') ? store.logoUrl : `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}${store.logoUrl}`}
+                                    src={storeLogoUrl}
                                     alt="Logo toko"
                                     className="receipt-logo grayscale"
                                     style={{

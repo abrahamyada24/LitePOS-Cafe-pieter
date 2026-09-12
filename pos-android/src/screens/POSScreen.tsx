@@ -9,6 +9,8 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { Camera, CameraType } from 'react-native-camera-kit';
 import { printKitchenTicket } from '../utils/kitchenPrinter';
 import { applyProductDiscount } from '../utils/productDiscount';
+import { getCartItemLineTotal } from '../utils/cartPricing';
+import { getProductAvailability, isProductAvailable } from '../utils/productAvailability';
 
 export default function POSScreen({ navigation, route }: any) {
     useAppColorScheme(tw);
@@ -206,7 +208,7 @@ export default function POSScreen({ navigation, route }: any) {
             const [prodResults] = await db.executeSql(prodQuery);
             const prods: any[] = [];
             for (let i = 0; i < prodResults.rows.length; i++) prods.push(prodResults.rows.item(i));
-            setProducts(prods.map(applyProductDiscount));
+            setProducts(prods.filter(product => isProductAvailable(product)).map(applyProductDiscount));
 
             // Load local pending sales
             const [pendingRes] = await db.executeSql('SELECT * FROM saved_transactions ORDER BY createdAt DESC');
@@ -259,6 +261,11 @@ export default function POSScreen({ navigation, route }: any) {
 
     useEffect(() => {
         loadData();
+    }, [loadData]);
+
+    useEffect(() => {
+        const interval = setInterval(loadData, 60000);
+        return () => clearInterval(interval);
     }, [loadData]);
 
     useEffect(() => {
@@ -384,7 +391,6 @@ export default function POSScreen({ navigation, route }: any) {
         const chosenAddons = productAddons
             .map(a => ({ ...a, quantity: Number(addonQuantities[Number(a.id)] || 0) }))
             .filter(a => a.quantity > 0);
-        const extraPrice = chosenAddons.reduce((sum, a) => sum + (Number(a.price || 0) * a.quantity), 0);
         const addonLabel = chosenAddons.length > 0
             ? `Add-on: ${chosenAddons.map(a => `${a.name}${a.quantity > 1 ? ` x${a.quantity}` : ''}`).join(', ')}`
             : '';
@@ -396,9 +402,9 @@ export default function POSScreen({ navigation, route }: any) {
         const patch = {
             notes: noteStr || undefined,
             customerNotes: cleanCustomerNotes || undefined,
-            price: basePrice + extraPrice,
+            price: basePrice,
             basePrice,
-            originalPrice: baseOriginalPrice + extraPrice,
+            originalPrice: baseOriginalPrice,
             baseOriginalPrice,
             addons: addonData,
             addonIds: addonData.map(addon => addon.id),
@@ -491,6 +497,17 @@ export default function POSScreen({ navigation, route }: any) {
             const [res] = await db.executeSql('SELECT * FROM products WHERE barcode = ?', [code.trim()]);
             if (res.rows.length > 0) {
                 const product = res.rows.item(0);
+                const availability = getProductAvailability(product);
+                if (!availability.isAvailable) {
+                    Alert.alert(
+                        'Produk Tidak Tersedia',
+                        availability.reason === 'INACTIVE'
+                            ? `${product.name} sedang dinonaktifkan.`
+                            : `${product.name} berada di luar jadwal hari atau jam aktif.`
+                    );
+                    setBarcodeInput('');
+                    return;
+                }
                 handleProductPress(product); // re-use existing logic
                 Vibration.vibrate(100); // haptic feedback on successful scan
                 setBarcodeInput('');
@@ -747,7 +764,7 @@ export default function POSScreen({ navigation, route }: any) {
                     <Icon name="plus" size={14} color={tw.color('gray-800')} />
                 </TouchableOpacity>
             </View>
-            <Text style={tw`font-black text-gray-800 dark:text-gray-100 text-sm w-20 text-right ml-2`}>{formatRp(item.price * item.quantity)}</Text>
+            <Text style={tw`font-black text-gray-800 dark:text-gray-100 text-sm w-20 text-right ml-2`}>{formatRp(getCartItemLineTotal(item))}</Text>
         </View>
     );
 
@@ -980,7 +997,7 @@ export default function POSScreen({ navigation, route }: any) {
                                             <Text style={tw`text-[10px] text-gray-400 italic`}>Tap untuk add-on / catatan</Text>
                                         )}
                                     </TouchableOpacity>
-                                    <Text style={tw`text-blue-600 text-[10px] font-bold mt-0.5`}>{formatRp(item.price * item.quantity)}</Text>
+                                    <Text style={tw`text-blue-600 text-[10px] font-bold mt-0.5`}>{formatRp(getCartItemLineTotal(item))}</Text>
                                 </View>
                                 <View style={tw`flex-row items-center bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700`}>
                                     <TouchableOpacity onPress={() => handleUpdateQuantity(item, item.quantity - 1)} style={tw`px-2 py-1.5`}>

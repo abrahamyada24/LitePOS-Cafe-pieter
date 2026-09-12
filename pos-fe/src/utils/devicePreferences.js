@@ -4,6 +4,8 @@ export const DEFAULT_DEVICE_PREFERENCES = Object.freeze({
   theme: 'light',
   paperWidth: '58',
   printMarginMm: 3,
+  printerName: '',
+  showReceiptLogo: false,
 });
 
 const normalizeTheme = (value) => (
@@ -21,10 +23,18 @@ const normalizePrintMargin = (value) => {
     : DEFAULT_DEVICE_PREFERENCES.printMarginMm;
 };
 
+const normalizePrinterName = (value) => String(value || '').slice(0, 256);
+
+const normalizeShowReceiptLogo = (value) => (
+  value === true || value === 'true'
+);
+
 export const normalizeDevicePreferences = (value = {}) => ({
   theme: normalizeTheme(value.theme),
   paperWidth: normalizePaperWidth(value.paperWidth),
   printMarginMm: normalizePrintMargin(value.printMarginMm),
+  printerName: normalizePrinterName(value.printerName),
+  showReceiptLogo: normalizeShowReceiptLogo(value.showReceiptLogo),
 });
 
 export const getDevicePreferences = () => {

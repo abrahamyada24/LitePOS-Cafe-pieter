@@ -64,6 +64,7 @@ exports.createTransaction = async (req, res) => {
 
         const result = await prisma.$transaction(async (tx) => {
             const setting = await tx.storeSetting.findFirst();
+            const isPreOrder = Boolean(preOrderDate);
             const { paymentType, isGatewayPayment, isInstantPayment } = resolvePaymentMethod(
                 requestedPaymentType,
                 { midtransEnabled: setting?.enableQris === true }
@@ -140,7 +141,7 @@ exports.createTransaction = async (req, res) => {
                     throw new Error(`Produk tidak valid.`);
                 }
                 // Skip stock check for unlimited stock products
-                if (!product.isUnlimitedStock && product.stock < requestedQty) {
+                if (!isPreOrder && !product.isUnlimitedStock && product.stock < requestedQty) {
                     throw new Error(`Stok ${product.name} tidak mencukupi.`);
                 }
 
@@ -180,6 +181,7 @@ exports.createTransaction = async (req, res) => {
             }
 
             for (const { product, qty } of stockDeductions.values()) {
+                if (isPreOrder) continue;
                 if (!product.isUnlimitedStock && product.stock < qty) {
                     throw new Error(`Stok ${product.name} tidak mencukupi.`);
                 }
@@ -247,7 +249,8 @@ exports.createTransaction = async (req, res) => {
             const paymentStatus = isInstantPayment ? 'SETTLEMENT' : 'PENDING';
 
             // Pembayaran manual langsung dikonfirmasi kasir dan mengurangi stok.
-            if (isInstantPayment) {
+            const checkoutStockDeductedAt = isInstantPayment && !isPreOrder ? new Date() : null;
+            if (checkoutStockDeductedAt) {
                 for (const { product, qty } of stockDeductions.values()) {
                     // Skip stock deduction for unlimited stock products
                     if (!product.isUnlimitedStock) {
@@ -289,6 +292,7 @@ exports.createTransaction = async (req, res) => {
                     note: note || null,
                     preOrderDate: preOrderDate ? new Date(preOrderDate) : null,
                     preOrderConfirmed: false,
+                    stockDeductedAt: checkoutStockDeductedAt,
                     items: { create: transactionItemsData },
                     payments: {
                         create: {
@@ -588,10 +592,15 @@ exports.handleMidtransNotification = async (req, res) => {
             });
 
             // JIKA PAID, KURANGI STOCK (untuk non-CASH payment)
-            if (newStatus === 'PAID' && transaction.status !== 'PAID') {
+            if (newStatus === 'PAID' && transaction.status !== 'PAID' && !transaction.preOrderDate && !transaction.stockDeductedAt) {
                 console.log('[OK] Payment confirmed! Reducing stock...');
 
-                for (const item of transaction.items) {
+                const claim = await tx.transaction.updateMany({
+                    where: { id: transaction.id, stockDeductedAt: null },
+                    data: { stockDeductedAt: new Date() }
+                });
+
+                for (const item of claim.count === 1 ? transaction.items : []) {
                     const product = await tx.product.findUnique({
                         where: { id: item.productId }
                     });
@@ -618,7 +627,7 @@ exports.handleMidtransNotification = async (req, res) => {
             }
 
             // JIKA CANCELLED/EXPIRED, CEK APAKAH PERLU ROLLBACK STOCK
-            if (newStatus === 'CANCELLED' && transaction.status === 'PAID') {
+            if (newStatus === 'CANCELLED' && transaction.status === 'PAID' && transaction.stockDeductedAt) {
                 console.log('[INFO] Transaction cancelled after payment, restoring stock...');
 
                 // Cari stock movements yang terkait
@@ -653,6 +662,10 @@ exports.handleMidtransNotification = async (req, res) => {
                         console.log(`  [OK] Restored ${product.name}: ${product.stock} -> ${product.stock + movement.qty}`);
                     }
                 }
+                await tx.transaction.update({
+                    where: { id: transaction.id },
+                    data: { stockDeductedAt: null }
+                });
             }
         });
 
@@ -720,8 +733,12 @@ exports.checkTransactionStatus = async (req, res) => {
                 });
 
                 // Kurangi stock jika baru jadi PAID
-                if (newStatus === 'PAID' && transaction.status !== 'PAID') {
-                    for (const item of transaction.items) {
+                if (newStatus === 'PAID' && transaction.status !== 'PAID' && !transaction.preOrderDate && !transaction.stockDeductedAt) {
+                    const claim = await tx.transaction.updateMany({
+                        where: { id: transaction.id, stockDeductedAt: null },
+                        data: { stockDeductedAt: new Date() }
+                    });
+                    for (const item of claim.count === 1 ? transaction.items : []) {
                         const product = await tx.product.findUnique({
                             where: { id: item.productId }
                         });
@@ -797,8 +814,8 @@ exports.returnTransaction = async (req, res) => {
                 data: { status: 'RETURNED' }
             });
 
-            // Revert stock
-            for (const item of transaction.items) {
+            // Stok hanya dikembalikan jika transaksi ini pernah menguranginya.
+            for (const item of transaction.stockDeductedAt ? transaction.items : []) {
                 const product = await tx.product.findUnique({ where: { id: item.productId } });
                 if (product && !product.isUnlimitedStock) {
                     await tx.product.update({
@@ -865,9 +882,66 @@ exports.confirmPreOrder = async (req, res) => {
     try {
         const { id } = req.params;
 
-        await prisma.transaction.update({
-            where: { id: parseInt(id) },
-            data: { preOrderConfirmed: true, status: 'COMPLETED' }
+        const transactionId = parseInt(id);
+        await prisma.$transaction(async (tx) => {
+            const transaction = await tx.transaction.findUnique({
+                where: { id: transactionId },
+                include: { items: { include: { product: true } } }
+            });
+            if (!transaction || !transaction.preOrderDate) throw new Error('Pre-order tidak ditemukan.');
+            if (transaction.preOrderConfirmed) return;
+
+            const confirmedAt = new Date();
+            if (!transaction.stockDeductedAt) {
+                const stockByProduct = new Map();
+                for (const item of transaction.items) {
+                    const current = stockByProduct.get(item.productId);
+                    stockByProduct.set(item.productId, {
+                        product: item.product,
+                        qty: (current?.qty || 0) + item.qty
+                    });
+                }
+
+                for (const { product, qty } of stockByProduct.values()) {
+                    if (!product) throw new Error('Produk pre-order tidak ditemukan.');
+                    if (!product.isUnlimitedStock && product.stock < qty) {
+                        throw new Error(`Stok ${product.name} tidak mencukupi.`);
+                    }
+                }
+
+                const claim = await tx.transaction.updateMany({
+                    where: { id: transactionId, preOrderConfirmed: false, stockDeductedAt: null },
+                    data: { stockDeductedAt: confirmedAt }
+                });
+
+                for (const { product, qty } of claim.count === 1 ? stockByProduct.values() : []) {
+                    if (!product.isUnlimitedStock) {
+                        await tx.product.update({
+                            where: { id: product.id },
+                            data: { stock: { decrement: qty } }
+                        });
+                    }
+                    await tx.stockMovement.create({
+                        data: {
+                            productId: product.id,
+                            type: 'OUT',
+                            qty,
+                            source: 'SALE',
+                            description: `Pengambilan pre-order - ${transaction.invoiceNumber}`,
+                            createdAt: confirmedAt
+                        }
+                    });
+                }
+            }
+
+            await tx.transaction.update({
+                where: { id: transactionId },
+                data: {
+                    preOrderConfirmed: true,
+                    status: 'COMPLETED',
+                    stockDeductedAt: transaction.stockDeductedAt || confirmedAt
+                }
+            });
         });
 
         res.json({ success: true, message: "Pre-order confirmed as picked up" });

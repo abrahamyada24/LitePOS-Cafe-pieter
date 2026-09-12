@@ -205,9 +205,7 @@ export default function Sidebar({ isMobileOpen, setIsMobileOpen }) {
               {enableKitchenQueue && (
                 <SidebarItem icon={ChefHat} label="Antrean Dapur" href="/kitchen" badge={kitchenNewCount} />
               )}
-              {isAdminOrOwner && (
-                <SidebarItem icon={Wallet} label="Pengeluaran" href="/expenses" />
-              )}
+              <SidebarItem icon={Wallet} label="Pengeluaran" href="/expenses" />
               {enableDineTable && (
                 <SidebarItem icon={UtensilsCrossed} label="Meja" href="/tables" />
               )}

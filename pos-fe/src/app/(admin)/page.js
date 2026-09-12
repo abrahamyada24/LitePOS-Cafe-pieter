@@ -85,14 +85,14 @@ function Modal({ open, onClose, title, children }) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden animate-in fade-in zoom-in-95" onClick={e => e.stopPropagation()}>
+      <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white shadow-2xl mx-4 animate-in fade-in zoom-in-95" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <h3 className="font-bold text-gray-800 text-lg">{title}</h3>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors text-gray-400 hover:text-gray-600">
             <X size={18} />
           </button>
         </div>
-        <div className="p-6">{children}</div>
+        <div className="overflow-y-auto p-6">{children}</div>
       </div>
     </div>
   );
@@ -418,12 +418,17 @@ export default function Dashboard() {
 
   const handleCloseShift = async () => {
     if (!activeShift) return;
+    if (closingCash.trim() === '') {
+      showAlert.warning('Tunai kasir belum diisi', 'Hitung seluruh uang tunai, lalu masukkan totalnya sebelum menutup shift.');
+      return;
+    }
+    const closingCashAmount = Number(closingCash);
     setShiftActionLoading(true);
     try {
       const res = await fetch(`${API_URL}/api/shifts/${activeShift.id}/close`, {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ closingCash: parseFloat(closingCash) || 0 })
+        body: JSON.stringify({ closingCash: closingCashAmount })
       });
       const json = await res.json();
       if (json.success) {
@@ -432,7 +437,7 @@ export default function Dashboard() {
         setClosingCash('');
         showAlert.success(
           'Shift berhasil ditutup',
-          `Tunai ${formatRp(json.data.cashSales)} • Pengeluaran ${formatRp(json.data.cashExpenses)} • Selisih ${formatRp(json.data.difference)}`
+          `Kas sistem ${formatRp(json.data.expectedCash)} • Tunai kasir ${formatRp(json.data.closingCash)} • Selisih ${Number(json.data.difference) > 0 ? '+' : ''}${formatRp(json.data.difference)}`
         );
       } else {
         showAlert.error('Gagal menutup shift', json.message || 'Coba lagi.');
@@ -552,7 +557,7 @@ export default function Dashboard() {
           shift={activeShift}
           loading={shiftLoading}
           onOpenShift={() => setOpenShiftModal(true)}
-          onCloseShift={() => setCloseShiftModal(true)}
+          onCloseShift={() => { setClosingCash(''); setCloseShiftModal(true); }}
         />
       )}
 
@@ -789,44 +794,94 @@ export default function Dashboard() {
       </Modal>
 
       {/* ── Close Shift Modal ── */}
-      <Modal open={closeShiftModal} onClose={() => setCloseShiftModal(false)} title="Tutup Shift">
+      <Modal open={closeShiftModal} onClose={() => { setCloseShiftModal(false); setClosingCash(''); }} title="Tutup Shift">
         <div className="space-y-4">
           {activeShift && (
-            <div className="p-4 bg-gray-50 rounded-xl border border-gray-100 space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Kas Awal</span>
-                <span className="font-bold text-gray-800">{formatRp(activeShift.openingCash)}</span>
+            <div className="space-y-3">
+              <div className="p-4 bg-gray-50 rounded-xl border border-gray-100 space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">Kas Awal</span>
+                  <span className="font-bold text-gray-800">{formatRp(activeShift.openingCash)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">Dibuka</span>
+                  <span className="font-medium text-gray-700">
+                    {new Date(activeShift.openedAt).toLocaleString('id-ID', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' })}
+                  </span>
+                </div>
               </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Dibuka</span>
-                <span className="font-medium text-gray-700">
-                  {new Date(activeShift.openedAt).toLocaleString('id-ID', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' })}
-                </span>
+              <p className="text-sm text-gray-500">Rekap dihitung otomatis dari transaksi shift.</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3">
+                  <p className="text-xs font-medium text-emerald-600">Tunai</p>
+                  <p className="mt-1 text-sm font-extrabold text-emerald-800">{formatRp(activeShift.cashSales)}</p>
+                </div>
+                <div className="rounded-xl border border-blue-100 bg-blue-50 p-3">
+                  <p className="text-xs font-medium text-blue-600">QRIS</p>
+                  <p className="mt-1 text-sm font-extrabold text-blue-800">{formatRp(activeShift.qrisSales)}</p>
+                </div>
+                <div className="rounded-xl border border-violet-100 bg-violet-50 p-3">
+                  <p className="text-xs font-medium text-violet-600">Transfer</p>
+                  <p className="mt-1 text-sm font-extrabold text-violet-800">{formatRp(activeShift.transferSales)}</p>
+                </div>
+                <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                  <p className="text-xs font-medium text-gray-500">Total Penjualan</p>
+                  <p className="mt-1 text-sm font-extrabold text-gray-800">{formatRp(activeShift.totalSales)}</p>
+                </div>
               </div>
+              <div className="flex justify-between rounded-xl border border-orange-100 bg-orange-50 px-3 py-2.5 text-sm">
+                <span className="text-orange-600">Pengeluaran tunai</span>
+                <span className="font-bold text-orange-800">{formatRp(activeShift.cashExpenses)}</span>
+              </div>
+              {(() => {
+                const expectedCash = Number(activeShift.expectedCash ?? (Number(activeShift.openingCash || 0) + Number(activeShift.cashSales || 0) - Number(activeShift.cashExpenses || 0)));
+                const hasClosingCash = closingCash.trim() !== '';
+                const difference = hasClosingCash ? Number(closingCash) - expectedCash : null;
+                return (
+                  <div className="space-y-3 border-t border-gray-100 pt-3">
+                    <div className="flex items-center justify-between rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3">
+                      <div>
+                        <p className="text-xs font-semibold text-indigo-600">Tunai menurut sistem</p>
+                        <p className="mt-0.5 text-[11px] text-indigo-500">Kas awal + tunai − pengeluaran</p>
+                      </div>
+                      <span className="font-extrabold text-indigo-800">{formatRp(expectedCash)}</span>
+                    </div>
+                    <label className="block">
+                      <span className="mb-1.5 block text-sm font-bold text-gray-700">Total Tunai yang Dihitung Kasir</span>
+                      <div className="flex items-center overflow-hidden rounded-xl border border-gray-200 bg-white focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
+                        <span className="border-r border-gray-200 bg-gray-50 px-4 py-3 text-sm font-bold text-gray-500">Rp</span>
+                        <input
+                          autoFocus
+                          required
+                          inputMode="numeric"
+                          value={closingCash ? Number(closingCash).toLocaleString('id-ID') : ''}
+                          onChange={(e) => setClosingCash(e.target.value.replace(/\D/g, ''))}
+                          placeholder="0"
+                          className="w-full px-4 py-3 text-lg font-extrabold text-gray-800 outline-none"
+                        />
+                      </div>
+                    </label>
+                    {difference !== null && (
+                      <div className={`flex items-center justify-between rounded-xl border px-4 py-2.5 text-sm ${difference === 0 ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : difference > 0 ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-red-200 bg-red-50 text-red-700'}`}>
+                        <span className="font-semibold">{difference === 0 ? 'Sesuai' : difference > 0 ? 'Lebih' : 'Kurang'}</span>
+                        <span className="font-extrabold">{difference > 0 ? '+' : ''}{formatRp(difference)}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           )}
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-2">Kas Akhir (Rp)</label>
-            <input
-              type="number"
-              value={closingCash}
-              onChange={e => setClosingCash(e.target.value)}
-              placeholder="Hitung uang di kasir"
-              className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all"
-              autoFocus
-            />
-            <p className="text-xs text-gray-400 mt-1.5">Masukkan jumlah uang tunai saat penutupan</p>
-          </div>
           <div className="flex gap-3 pt-2">
             <button
-              onClick={() => setCloseShiftModal(false)}
+              onClick={() => { setCloseShiftModal(false); setClosingCash(''); }}
               className="flex-1 px-4 py-3 border border-gray-200 text-gray-600 rounded-xl text-sm font-bold hover:bg-gray-50 transition-colors"
             >
               Batal
             </button>
             <button
               onClick={handleCloseShift}
-              disabled={shiftActionLoading}
+              disabled={shiftActionLoading || closingCash.trim() === ''}
               className="flex-1 px-4 py-3 bg-gradient-to-r from-red-500 to-rose-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-red-200 hover:shadow-xl disabled:opacity-50 transition-all flex items-center justify-center gap-2"
             >
               {shiftActionLoading ? <Loader2 size={16} className="animate-spin" /> : <StopCircle size={16} />}

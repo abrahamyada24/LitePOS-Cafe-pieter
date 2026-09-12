@@ -16,6 +16,7 @@ import {
   saveDevicePreferences,
 } from '../../../utils/devicePreferences';
 import { printReceiptElement } from '../../../utils/receiptPrint';
+import { buildPrinterTestText } from '../../../utils/receiptText';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -27,6 +28,10 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState(canManageBusinessSettings ? 'general' : 'theme');
   const [isLoading, setIsLoading] = useState(false);
   const [devicePreferences, setDevicePreferences] = useState(DEFAULT_DEVICE_PREFERENCES);
+  const [desktopPrinterSupported, setDesktopPrinterSupported] = useState(false);
+  const [desktopPrinters, setDesktopPrinters] = useState([]);
+  const [isLoadingPrinters, setIsLoadingPrinters] = useState(false);
+  const [printerLoadError, setPrinterLoadError] = useState('');
 
   const [form, setForm] = useState({
     storeName: '',
@@ -83,6 +88,10 @@ export default function SettingsPage() {
 
   useEffect(() => {
     setDevicePreferences(getDevicePreferences());
+    if (window.electronAPI?.getPrinters) {
+      setDesktopPrinterSupported(true);
+      refreshDesktopPrinters();
+    }
   }, []);
 
   useEffect(() => {
@@ -231,10 +240,47 @@ export default function SettingsPage() {
     setDevicePreferences(saveDevicePreferences(nextValue));
   };
 
+  const refreshDesktopPrinters = async () => {
+    if (!window.electronAPI?.getPrinters) return;
+    setIsLoadingPrinters(true);
+    setPrinterLoadError('');
+    try {
+      const printers = await window.electronAPI.getPrinters();
+      setDesktopPrinters(Array.isArray(printers) ? printers : []);
+    } catch (error) {
+      setDesktopPrinters([]);
+      setPrinterLoadError(error?.message || 'Daftar printer Windows tidak dapat dibaca.');
+    } finally {
+      setIsLoadingPrinters(false);
+    }
+  };
+
   const printableLogoUrl = settings?.logoUrl
     ? (settings.logoUrl.startsWith('http') ? settings.logoUrl : `${API_URL}${settings.logoUrl}`)
     : '';
   const paperWidthMm = getPaperWidthMm(devicePreferences);
+
+  const handlePrinterTest = async () => {
+    try {
+      if (window.electronAPI?.printReceiptRaw) {
+        const result = await window.electronAPI.printReceiptRaw({
+          text: buildPrinterTestText({ store: settings, paperWidthMm }),
+          printerName: devicePreferences.printerName,
+          logoUrl: devicePreferences.showReceiptLogo ? printableLogoUrl : '',
+        });
+        showAlert.success('Test Print Berhasil', `Dikirim ke printer ${result.printerName}.`);
+        return;
+      }
+
+      await printReceiptElement(printerTestRef.current, {
+        paperWidthMm,
+        printMarginMm: devicePreferences.printMarginMm,
+        showReceiptLogo: devicePreferences.showReceiptLogo,
+      });
+    } catch (error) {
+      showAlert.error('Gagal Mencetak', error?.message || 'Printer tidak dapat menyiapkan test print.');
+    }
+  };
 
   const handleSaveLoyalty = async () => {
     setIsLoading(true);
@@ -324,7 +370,7 @@ export default function SettingsPage() {
             font-family: monospace !important;
           }
           #settings-printer-test .receipt-logo {
-            display: block !important;
+            display: ${devicePreferences.showReceiptLogo ? 'block' : 'none'} !important;
             width: auto !important;
             height: auto !important;
             max-width: ${paperWidthMm === 80 ? 58 : 42}mm !important;
@@ -336,7 +382,7 @@ export default function SettingsPage() {
       `}</style>
 
       <div ref={printerTestRef} id="settings-printer-test" className="hidden text-[10px] leading-tight">
-        {printableLogoUrl && (
+        {devicePreferences.showReceiptLogo && printableLogoUrl && (
           <img className="receipt-logo" src={printableLogoUrl} alt="Logo toko" />
         )}
         <div className="text-center text-sm font-bold">{settings?.storeName || 'LITEPOS'}</div>
@@ -957,9 +1003,56 @@ export default function SettingsPage() {
               <h3 className="font-bold text-gray-800 mb-2 flex items-center gap-2">
                 <Printer size={20} className="text-teal-600" /> Printer Perangkat
               </h3>
-              <p className="text-sm text-gray-500">Browser memilih printer fisik melalui dialog cetak. Ukuran berikut disimpan khusus di perangkat ini.</p>
+              <p className="text-sm text-gray-500">
+                {desktopPrinterSupported
+                  ? 'Aplikasi desktop mencetak teks ESC/POS langsung dengan area aman agar hasil tidak terpotong pada printer thermal berbeda.'
+                  : 'Browser memilih printer fisik melalui dialog cetak. Pengaturan berikut hanya berlaku di perangkat ini.'}
+              </p>
+              {!desktopPrinterSupported && (
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-800">
+                  Saat dialog terbuka, pilih antrean printer thermal yang Online, gunakan kertas 58 mm,
+                  margin tanpa batas, dan skala 100%. Browser mencetak melalui driver Windows, bukan ESC/POS langsung.
+                </div>
+              )}
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {desktopPrinterSupported && (
+                <div className="sm:col-span-2">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <label className="block text-sm font-bold text-gray-700">Printer desktop</label>
+                    <button
+                      type="button"
+                      onClick={refreshDesktopPrinters}
+                      disabled={isLoadingPrinters}
+                      className="text-xs font-bold text-blue-600 hover:text-blue-700 disabled:opacity-50"
+                    >
+                      {isLoadingPrinters ? 'Memuat...' : 'Muat ulang'}
+                    </button>
+                  </div>
+                  <select
+                    value={devicePreferences.printerName}
+                    onChange={(event) => updateDevicePreferences({ printerName: event.target.value })}
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:border-blue-500 text-sm"
+                  >
+                    <option value="">Gunakan printer default Windows yang Online</option>
+                    {devicePreferences.printerName && !desktopPrinters.some((printer) => printer.name === devicePreferences.printerName) && (
+                      <option value={devicePreferences.printerName}>{devicePreferences.printerName} (tidak terdeteksi)</option>
+                    )}
+                    {desktopPrinters.map((printer) => (
+                      <option key={printer.name} value={printer.name} disabled={printer.workOffline}>
+                        {printer.displayName}
+                        {printer.portName ? ` — ${printer.portName}` : ''}
+                        {printer.workOffline ? ' — Offline' : ' — Siap'}
+                        {printer.isDefault ? ' — Default' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {printerLoadError && <p className="mt-2 text-xs font-medium text-red-600">{printerLoadError}</p>}
+                  {!printerLoadError && desktopPrinters.some((printer) => printer.workOffline) && (
+                    <p className="mt-2 text-xs text-gray-500">Printer Offline dinonaktifkan agar job tidak masuk ke antrean yang salah.</p>
+                  )}
+                </div>
+              )}
               <div>
                 <label className="block text-sm font-bold text-gray-700 mb-2">Lebar kertas</label>
                 <select
@@ -985,21 +1078,28 @@ export default function SettingsPage() {
                 </select>
               </div>
             </div>
+            <div className="flex items-center justify-between gap-4 rounded-2xl border border-gray-200 bg-gray-50 p-4">
+              <div>
+                <div className="text-sm font-bold text-gray-800">Tampilkan logo pada struk</div>
+                <p className="mt-1 text-xs text-gray-500">Nonaktifkan untuk cetakan teks paling cepat dan stabil.</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={devicePreferences.showReceiptLogo}
+                aria-label="Tampilkan logo pada struk"
+                onClick={() => updateDevicePreferences({ showReceiptLogo: !devicePreferences.showReceiptLogo })}
+                className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${devicePreferences.showReceiptLogo ? 'bg-blue-600' : 'bg-gray-300'}`}
+              >
+                <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-transform ${devicePreferences.showReceiptLogo ? 'left-6' : 'left-1'}`} />
+              </button>
+            </div>
             <button
               type="button"
-              onClick={async () => {
-                try {
-                  await printReceiptElement(printerTestRef.current, {
-                    paperWidthMm,
-                    printMarginMm: devicePreferences.printMarginMm,
-                  });
-                } catch (error) {
-                  showAlert.error('Gagal Mencetak', error?.message || 'Browser tidak dapat menyiapkan test print.');
-                }
-              }}
+              onClick={handlePrinterTest}
               className="w-full sm:w-auto rounded-xl bg-teal-600 px-5 py-3 text-sm font-bold text-white hover:bg-teal-700 flex items-center justify-center gap-2"
             >
-              <Printer size={17} /> Test Print
+              <Printer size={17} /> {desktopPrinterSupported ? 'Test Print' : 'Test Dialog Cetak'}
             </button>
           </div>
         </div>

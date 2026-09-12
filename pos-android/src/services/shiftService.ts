@@ -92,7 +92,7 @@ export const closeCashierShift = async (shift: ActiveShiftData, closingCash: num
         const status = error.response?.status;
         const closedAt = new Date().toISOString();
 
-        if (status === 400 && /sudah ditutup/i.test(error.response?.data?.message || '')) {
+        if (status === 409 && /sudah ditutup/i.test(error.response?.data?.message || '')) {
             await db.executeSql(
                 `UPDATE shifts SET status = 'CLOSED', closedAt = COALESCE(closedAt, ?),
                  closingCash = COALESCE(closingCash, ?), isSynced = 1 WHERE id = ?`,

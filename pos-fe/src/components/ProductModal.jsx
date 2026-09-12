@@ -14,6 +14,7 @@ export default function ProductModal({ isOpen, onClose, onSave, initialData, cat
 
   const [formData, setFormData] = useState({
     name: '',
+    description: '',
     sku: '',
     barcode: '',
     categoryId: '',
@@ -36,9 +37,14 @@ export default function ProductModal({ isOpen, onClose, onSave, initialData, cat
     discountTimeEnabled: false,
     discountDays: [],
     discountDaysEnabled: false,
-    discountLabel: ''
+    discountLabel: '',
+    availabilityScheduleEnabled: false,
+    availabilityStartTime: '00:00',
+    availabilityEndTime: '23:59',
+    availabilityDays: [0, 1, 2, 3, 4, 5, 6]
   });
   const [previewUrl, setPreviewUrl] = useState('');
+  const [isDesktopApp, setIsDesktopApp] = useState(false);
 
   // ADDONS STATE
   const [addons, setAddons] = useState([]);
@@ -66,10 +72,15 @@ export default function ProductModal({ isOpen, onClose, onSave, initialData, cat
   };
 
   useEffect(() => {
+    setIsDesktopApp(Boolean(window.electronAPI));
+  }, []);
+
+  useEffect(() => {
     if (isOpen) {
       if (initialData) {
         setFormData({
           name: initialData.name,
+          description: initialData.description || '',
           sku: initialData.sku || '',
           barcode: initialData.barcode || '',
           categoryId: initialData.categoryId || '',
@@ -92,13 +103,20 @@ export default function ProductModal({ isOpen, onClose, onSave, initialData, cat
           discountTimeEnabled: Boolean(initialData.discountStartTime || initialData.discountEndTime),
           discountDays: initialData.discountDays ? String(initialData.discountDays).split(',').map(Number) : [],
           discountDaysEnabled: Boolean(initialData.discountDays),
-          discountLabel: initialData.discountLabel || ''
+          discountLabel: initialData.discountLabel || '',
+          availabilityScheduleEnabled: Boolean(initialData.availabilityScheduleEnabled),
+          availabilityStartTime: initialData.availabilityStartTime || '00:00',
+          availabilityEndTime: initialData.availabilityEndTime || '23:59',
+          availabilityDays: initialData.availabilityDays
+            ? String(initialData.availabilityDays).split(',').map(Number)
+            : [0, 1, 2, 3, 4, 5, 6]
         });
         setPreviewUrl(getImageUrl(initialData.imageUrl));
         fetchAddons(initialData.id);
       } else {
         setFormData({
           name: '',
+          description: '',
           sku: '',
           barcode: '',
           categoryId: categories && categories.length > 0 ? categories[0].id : '',
@@ -121,7 +139,11 @@ export default function ProductModal({ isOpen, onClose, onSave, initialData, cat
           discountTimeEnabled: false,
           discountDays: [],
           discountDaysEnabled: false,
-          discountLabel: ''
+          discountLabel: '',
+          availabilityScheduleEnabled: false,
+          availabilityStartTime: '00:00',
+          availabilityEndTime: '23:59',
+          availabilityDays: [0, 1, 2, 3, 4, 5, 6]
         });
         setPreviewUrl('');
         setAddons([]);
@@ -195,6 +217,16 @@ export default function ProductModal({ isOpen, onClose, onSave, initialData, cat
       showAlert.warning('Hari berlaku belum dipilih', 'Pilih minimal satu hari untuk jadwal diskon.');
       return;
     }
+    if (isDesktopApp && formData.status === 'active' && formData.availabilityScheduleEnabled) {
+      if (!formData.availabilityStartTime || !formData.availabilityEndTime) {
+        showAlert.warning('Jam aktif belum lengkap', 'Isi jam mulai dan jam selesai produk.');
+        return;
+      }
+      if (formData.availabilityDays.length === 0) {
+        showAlert.warning('Hari aktif belum dipilih', 'Pilih minimal satu hari aktif untuk produk.');
+        return;
+      }
+    }
 
     onSave({
       ...formData,
@@ -211,6 +243,13 @@ export default function ProductModal({ isOpen, onClose, onSave, initialData, cat
       ? formData.discountDays.filter(item => item !== day)
       : [...formData.discountDays, day].sort();
     setFormData({ ...formData, discountDays: days });
+  };
+
+  const toggleAvailabilityDay = (day) => {
+    const days = formData.availabilityDays.includes(day)
+      ? formData.availabilityDays.filter(item => item !== day)
+      : [...formData.availabilityDays, day].sort((left, right) => left - right);
+    setFormData({ ...formData, availabilityDays: days });
   };
 
   if (!isOpen) return null;
@@ -305,6 +344,20 @@ export default function ProductModal({ isOpen, onClose, onSave, initialData, cat
                     className="w-full px-8 py-6 bg-gray-50 border-2 border-gray-100 rounded-[1.5rem] text-gray-950 font-black text-2xl focus:outline-none focus:border-blue-500 focus:bg-white transition-all placeholder:text-gray-200"
                     placeholder="Nasi Goreng Wagyu..."
                   />
+                  <div>
+                    <textarea
+                      value={formData.description}
+                      onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                      maxLength={1000}
+                      rows={3}
+                      className="w-full resize-none rounded-2xl border-2 border-gray-100 bg-gray-50 px-6 py-4 text-sm font-medium leading-relaxed text-gray-700 outline-none transition-all placeholder:text-gray-300 focus:border-blue-500 focus:bg-white"
+                      placeholder="Deskripsi menu, bahan utama, rasa, atau informasi singkat untuk pelanggan..."
+                    />
+                    <div className="mt-1 flex items-center justify-between px-1 text-[10px] font-bold text-gray-400">
+                      <span>Deskripsi Menu (Website & Desktop)</span>
+                      <span>{formData.description.length}/1000</span>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-6">
@@ -559,6 +612,62 @@ export default function ProductModal({ isOpen, onClose, onSave, initialData, cat
                     </button>
                   </div>
                 </div>
+
+                {isDesktopApp && formData.status === 'active' && (
+                  <section className="mt-6 space-y-4 rounded-2xl border border-emerald-100 bg-emerald-50/60 p-5">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700">
+                          <CalendarClock size={18} />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-black text-gray-900">Masa Aktif Produk</h4>
+                          <p className="text-xs text-gray-500">Hari dan jam produk dapat dijual</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={formData.availabilityScheduleEnabled}
+                        onClick={() => setFormData({ ...formData, availabilityScheduleEnabled: !formData.availabilityScheduleEnabled })}
+                        className={`h-7 w-12 rounded-full p-1 transition-colors ${formData.availabilityScheduleEnabled ? 'bg-emerald-600' : 'bg-gray-300'}`}
+                      >
+                        <span className={`block h-5 w-5 rounded-full bg-white transition-transform ${formData.availabilityScheduleEnabled ? 'translate-x-5' : ''}`} />
+                      </button>
+                    </div>
+
+                    {formData.availabilityScheduleEnabled && (
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-3">
+                          <label className="text-[10px] font-black uppercase text-gray-500">
+                            Jam mulai
+                            <input type="time" value={formData.availabilityStartTime} onChange={(e) => setFormData({ ...formData, availabilityStartTime: e.target.value })} className="mt-1 h-11 w-full rounded-lg border border-emerald-100 bg-white px-3 text-sm text-gray-800" />
+                          </label>
+                          <label className="text-[10px] font-black uppercase text-gray-500">
+                            Jam selesai
+                            <input type="time" value={formData.availabilityEndTime} onChange={(e) => setFormData({ ...formData, availabilityEndTime: e.target.value })} className="mt-1 h-11 w-full rounded-lg border border-emerald-100 bg-white px-3 text-sm text-gray-800" />
+                          </label>
+                        </div>
+                        <div>
+                          <p className="mb-2 text-[10px] font-black uppercase text-gray-500">Hari aktif</p>
+                          <div className="grid grid-cols-7 gap-1">
+                            {['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'].map((label, day) => (
+                              <button
+                                key={label}
+                                type="button"
+                                onClick={() => toggleAvailabilityDay(day)}
+                                className={`h-9 rounded-md text-[10px] font-black ${formData.availabilityDays.includes(day) ? 'bg-emerald-600 text-white' : 'border border-emerald-100 bg-white text-gray-500'}`}
+                              >
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                          <p className="mt-2 text-[10px] text-gray-400">Jadwal melewati tengah malam didukung, misalnya 18:00–02:00.</p>
+                        </div>
+                      </div>
+                    )}
+                  </section>
+                )}
                 
                 {initialData && (
                   <div className="p-6 bg-blue-50/50 rounded-[2rem] border border-blue-100 space-y-4">

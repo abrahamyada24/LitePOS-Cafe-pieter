@@ -1,6 +1,6 @@
 {
   "name": "litepos-cafe-pieter-desktop",
-  "version": "1.1.0",
+  "version": "1.2.8",
   "description": "LitePOS desktop client for Cafe Pieter",
   "main": "main.js",
   "scripts": {
@@ -11,9 +11,15 @@
     "appId": "com.litepos.cafepieter",
     "productName": "LitePOS Cafe Pieter",
     "artifactName": "LitePOS-Cafe-Pieter-Setup-${version}.${ext}",
+    "extraResources": [
+      {
+        "from": "../pos-fe/public/icon.png",
+        "to": "icon.png"
+      }
+    ],
     "win": {
       "target": "nsis",
-      "icon": "icon.png"
+      "icon": "../pos-fe/public/icon.png"
     }
   },
   "keywords": [],
@@ -22,7 +28,6 @@
   "type": "commonjs",
   "devDependencies": {
     "electron": "^42.4.1",
-    "electron-builder": "^26.15.3",
-    "electron-pos-printer": "^1.4.0"
+    "electron-builder": "^26.15.3"
   }
 }

@@ -178,6 +178,10 @@ model Product {
   stock             Int       @default(0)
   minStock          Int       @default(0) @map("min_stock")
   isActive          Boolean   @default(true) @map("is_active")
+  availabilityScheduleEnabled Boolean @default(false) @map("availability_schedule_enabled")
+  availabilityStartTime String? @map("availability_start_time") @db.VarChar(5)
+  availabilityEndTime   String? @map("availability_end_time") @db.VarChar(5)
+  availabilityDays      String? @map("availability_days") @db.VarChar(30)
   isUnlimitedStock  Boolean   @default(false) @map("is_unlimited_stock")
   enableCostPrice   Boolean   @default(false) @map("enable_cost_price")
   discountActive    Boolean   @default(false) @map("discount_active")
@@ -242,6 +246,7 @@ model Transaction {
   note              String?           @db.Text
   preOrderDate      DateTime?         @map("pre_order_date")
   preOrderConfirmed Boolean           @default(false) @map("pre_order_confirmed")
+  stockDeductedAt   DateTime?         @default(now()) @map("stock_deducted_at")
   createdAt         DateTime          @default(now()) @map("created_at")
   updatedAt         DateTime          @updatedAt @map("updated_at")
   user              User              @relation(fields: [userId], references: [id])

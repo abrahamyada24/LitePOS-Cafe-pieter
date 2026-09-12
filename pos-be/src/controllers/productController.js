@@ -20,6 +20,28 @@ const parseDiscountData = (body) => ({
   discountDays: Array.isArray(body.discountDays) ? body.discountDays.join(',') : (body.discountDays || null),
   discountLabel: body.discountLabel || null
 });
+const parseProductAvailabilityData = (body) => {
+  const scheduleEnabled = body.availabilityScheduleEnabled === 'true'
+    || body.availabilityScheduleEnabled === true
+    || body.availabilityScheduleEnabled === 1;
+  const normalizeTime = (value) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || ''))
+    ? String(value).slice(0, 5)
+    : null;
+  const days = String(Array.isArray(body.availabilityDays) ? body.availabilityDays.join(',') : (body.availabilityDays || ''))
+    .split(',')
+    .map(Number)
+    .filter(day => Number.isInteger(day) && day >= 0 && day <= 6)
+    .filter((day, index, values) => values.indexOf(day) === index)
+    .sort((left, right) => left - right)
+    .join(',');
+
+  return {
+    availabilityScheduleEnabled: scheduleEnabled,
+    availabilityStartTime: scheduleEnabled ? normalizeTime(body.availabilityStartTime) : null,
+    availabilityEndTime: scheduleEnabled ? normalizeTime(body.availabilityEndTime) : null,
+    availabilityDays: scheduleEnabled && days ? days : null,
+  };
+};
 
 // Helper: Generate SKU Otomatis (Format: PROD-0001)
 const generateAutoSKU = async () => {
@@ -83,6 +105,7 @@ exports.createProduct = async (req, res) => {
         isUnlimitedStock: isUnlimitedStock === 'true' || isUnlimitedStock === true,
         enableCostPrice: enableCostPrice === 'true' || enableCostPrice === true,
         minStock: parseInt(minStock) || 0,
+        ...parseProductAvailabilityData(req.body),
         ...parseDiscountData(req.body)
       }
     });
@@ -134,6 +157,9 @@ exports.updateProduct = async (req, res) => {
     if (isUnlimitedStock !== undefined) updateData.isUnlimitedStock = isUnlimitedStock === 'true' || isUnlimitedStock === true;
     if (enableCostPrice !== undefined) updateData.enableCostPrice = enableCostPrice === 'true' || enableCostPrice === true;
     if (minStock !== undefined) updateData.minStock = parseInt(minStock) || 0;
+    if (req.body.availabilityScheduleEnabled !== undefined) {
+      Object.assign(updateData, parseProductAvailabilityData(req.body));
+    }
     if (req.body.discountActive !== undefined) Object.assign(updateData, parseDiscountData(req.body));
 
     // Handle upload gambar jika ada

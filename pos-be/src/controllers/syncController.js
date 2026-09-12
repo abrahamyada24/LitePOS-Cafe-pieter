@@ -3,6 +3,31 @@ const { enterDataSync } = require('../services/dataResetCoordinator');
 const { reserveQueue } = require('../utils/orderQueue');
 const prisma = new PrismaClient();
 
+const normalizeProductAvailability = (product) => {
+  const scheduleEnabled = product.availabilityScheduleEnabled === true
+    || Number(product.availabilityScheduleEnabled) === 1;
+  const validTime = (value) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || ''))
+    ? String(value).slice(0, 5)
+    : null;
+  const days = String(product.availabilityDays || '')
+    .split(',')
+    .map(Number)
+    .filter(day => Number.isInteger(day) && day >= 0 && day <= 6)
+    .filter((day, index, values) => values.indexOf(day) === index)
+    .sort((left, right) => left - right)
+    .join(',');
+
+  return {
+    isActive: product.isActive === undefined
+      ? true
+      : product.isActive === true || Number(product.isActive) === 1,
+    availabilityScheduleEnabled: scheduleEnabled,
+    availabilityStartTime: scheduleEnabled ? validTime(product.availabilityStartTime) : null,
+    availabilityEndTime: scheduleEnabled ? validTime(product.availabilityEndTime) : null,
+    availabilityDays: scheduleEnabled && days ? days : null,
+  };
+};
+
 const normalizeAndroidPayment = (transaction) => {
   const grandTotal = Math.max(0, Number(transaction.grandTotal) || 0);
   const requestedStatus = String(transaction.paymentStatus || 'PAID').toUpperCase();
@@ -401,6 +426,7 @@ exports.pushLocalData = async (req, res) => {
     if (products && Array.isArray(products)) {
         for (const prod of products) {
             try {
+                const availability = normalizeProductAvailability(prod);
                 let serverProd = await prisma.product.findUnique({ where: { androidId: prod.id }});
                 // Fallback: jika produk dibuat dari web (tidak punya androidId), cari berdasarkan serverId
                 if (!serverProd && prod.serverId) {
@@ -422,7 +448,7 @@ exports.pushLocalData = async (req, res) => {
                             price: Number(prod.price),
                             costPrice: Number(prod.costPrice || 0),
                             stock: Number(prod.stock || 0),
-                            isActive: true,
+                            ...availability,
                             isUnlimitedStock: Boolean(prod.isUnlimitedStock),
                             discountActive: prod.discountActive === true || Number(prod.discountActive) === 1,
                             discountType: prod.discountType || null,
@@ -459,7 +485,8 @@ exports.pushLocalData = async (req, res) => {
                             discountStartTime: prod.discountStartTime !== undefined ? (prod.discountStartTime || null) : serverProd.discountStartTime,
                             discountEndTime: prod.discountEndTime !== undefined ? (prod.discountEndTime || null) : serverProd.discountEndTime,
                             discountDays: prod.discountDays !== undefined ? (prod.discountDays || null) : serverProd.discountDays,
-                            discountLabel: prod.discountLabel !== undefined ? (prod.discountLabel || null) : serverProd.discountLabel
+                            discountLabel: prod.discountLabel !== undefined ? (prod.discountLabel || null) : serverProd.discountLabel,
+                            ...availability,
                         }
                     });
                     savedProducts++;
@@ -471,6 +498,10 @@ exports.pushLocalData = async (req, res) => {
         }
     }
 
+    // Produk yang ikut dalam batch sudah membawa nilai stok absolut terbaru.
+    // Mutasi transaksi tetap dicatat, tetapi nilai stok tidak dikurangi lagi.
+    const pushedServerProductIds = new Set(productIdMap.map(item => Number(item.serverId)));
+
     // A. Proses Transactions
     if (transactions && Array.isArray(transactions)) {
       for (const tx of transactions) {
@@ -478,9 +509,10 @@ exports.pushLocalData = async (req, res) => {
         // Cek jika sudah ada (identity check menggunakan androidId)
         const exists = await prisma.transaction.findUnique({
           where: { androidId: tx.id },
-          include: { payments: true }
+          include: { payments: true, items: true }
         });
         const isPreOrderConfirmed = tx.preOrderConfirmed === true || Number(tx.preOrderConfirmed) === 1;
+        const incomingStockDeductedAt = tx.stockDeductedAt ? new Date(tx.stockDeductedAt) : null;
         const incomingPayment = normalizeAndroidPayment(tx);
         const paymentType = String(tx.paymentMethod || 'CASH').toUpperCase();
         const validPaymentType = ['CASH', 'QRIS', 'QRIS_MANUAL', 'TRANSFER'].includes(paymentType) ? paymentType : 'CASH';
@@ -499,16 +531,20 @@ exports.pushLocalData = async (req, res) => {
             data: { status: 'RETURNED' }
           });
 
-          // Kembalikan stok di server (reverse stock decrement)
+          // Kembalikan stok di server hanya jika transaksi pernah mengurangi stok.
           const existingItems = await prisma.transactionItem.findMany({
             where: { transactionId: exists.id }
           });
-          for (const item of existingItems) {
+          for (const item of exists.stockDeductedAt ? existingItems : []) {
             try {
-              await prisma.product.updateMany({
-                where: { id: item.productId, isUnlimitedStock: false },
-                data: { stock: { increment: item.qty } }
-              });
+              // Produk dalam batch yang sama sudah membawa stok absolut setelah
+              // retur dari Android; jangan menambahnya untuk kedua kali.
+              if (!pushedServerProductIds.has(item.productId)) {
+                await prisma.product.updateMany({
+                  where: { id: item.productId, isUnlimitedStock: false },
+                  data: { stock: { increment: item.qty } }
+                });
+              }
               await prisma.stockMovement.create({
                 data: {
                   productId: item.productId,
@@ -528,6 +564,44 @@ exports.pushLocalData = async (req, res) => {
           const existingPayment = summarizePayments(exists);
           const shouldApplyPayment = incomingPayment.paidAmount > existingPayment.paidAmount;
           const transactionData = {};
+
+          // Konfirmasi stok dari Android baru selalu membawa timestamp eksplisit.
+          // Produk finite wajib hadir dalam batch yang sama agar stok absolutnya
+          // sudah tersinkron sebelum mutasi audit dibuat.
+          if (incomingStockDeductedAt && !exists.stockDeductedAt) {
+            await prisma.$transaction(async (syncTx) => {
+              const stockByProduct = new Map();
+              for (const item of exists.items) {
+                stockByProduct.set(item.productId, (stockByProduct.get(item.productId) || 0) + item.qty);
+              }
+              for (const [productId] of stockByProduct.entries()) {
+                const product = await syncTx.product.findUnique({ where: { id: productId } });
+                if (!product) throw new Error(`Produk ${productId} tidak ditemukan di server.`);
+                if (!product.isUnlimitedStock && !pushedServerProductIds.has(productId)) {
+                  throw new Error(`Stok ${product.name} belum tersinkron. Ulangi sinkronisasi.`);
+                }
+              }
+
+              const claim = await syncTx.transaction.updateMany({
+                where: { id: exists.id, stockDeductedAt: null },
+                data: { stockDeductedAt: incomingStockDeductedAt }
+              });
+              if (claim.count !== 1) return;
+
+              for (const [productId, qty] of stockByProduct.entries()) {
+                await syncTx.stockMovement.create({
+                  data: {
+                    productId,
+                    type: 'OUT',
+                    qty,
+                    source: 'SALE',
+                    description: `Pengambilan pre-order/offline via sync (INV: ${exists.invoiceNumber})`,
+                    createdAt: incomingStockDeductedAt
+                  }
+                });
+              }
+            });
+          }
 
           // Konfirmasi pengambilan bersifat satu arah (false -> true), sehingga
           // data Android yang lebih lama tidak dapat membatalkan konfirmasi web.
@@ -711,6 +785,7 @@ exports.pushLocalData = async (req, res) => {
               tableNumber: tx.tableName || null,
               preOrderDate: tx.preOrderDate ? new Date(tx.preOrderDate) : null,
               preOrderConfirmed: isPreOrderConfirmed,
+              stockDeductedAt: incomingStockDeductedAt,
               discountAmount: discountAmount,
               createdAt: new Date(tx.createdAt),
               
@@ -733,11 +808,11 @@ exports.pushLocalData = async (req, res) => {
               stockByProduct.set(item.productId, (stockByProduct.get(item.productId) || 0) + item.qty);
           }
 
-          for (const [serverProductId, qty] of stockByProduct.entries()) {
+          for (const [serverProductId, qty] of incomingStockDeductedAt ? stockByProduct.entries() : []) {
               const product = await syncTx.product.findUnique({ where: { id: serverProductId } });
               if (!product) throw new Error(`Produk ${serverProductId} tidak ditemukan di server.`);
 
-              if (!product.isUnlimitedStock) {
+              if (!product.isUnlimitedStock && !pushedServerProductIds.has(serverProductId)) {
                   const stockUpdate = await syncTx.product.updateMany({
                       where: { id: serverProductId, stock: { gte: qty }, isUnlimitedStock: false },
                       data: { stock: { decrement: qty } }
@@ -754,13 +829,13 @@ exports.pushLocalData = async (req, res) => {
                       qty,
                       source: 'SALE',
                       description: `Penjualan offline via sync (INV: ${tx.invoiceNumber})`,
-                      createdAt: new Date(tx.createdAt || Date.now())
+                      createdAt: incomingStockDeductedAt
                   }
               });
           }
           
           // === Generate Kitchen Order ===
-          if ((tx.orderType || 'TAKE_AWAY') !== 'PRE_ORDER') {
+          if (!tx.preOrderDate && (tx.orderType || 'TAKE_AWAY') !== 'PRE_ORDER') {
               const kitchenQueue = await reserveQueue(syncTx);
               await syncTx.kitchenOrder.create({
                   data: {
@@ -1213,6 +1288,8 @@ exports.getTransactionHistory = async (req, res) => {
         status: tx.status,
         preOrderDate: tx.preOrderDate ? tx.preOrderDate.toISOString() : null,
         preOrderConfirmed: tx.preOrderConfirmed,
+        stockDeductedAt: tx.stockDeductedAt ? tx.stockDeductedAt.toISOString() : null,
+        shiftId: tx.shiftId,
         orderType: tx.orderType,
         tableName: tx.tableNumber,
         taxAmount: tx.taxAmount == null ? 0 : Number(tx.taxAmount),
@@ -1243,13 +1320,20 @@ exports.getTransactionHistory = async (req, res) => {
       amount: Number(exp.amount),
       category: exp.category,
       type: exp.type,
+      shiftId: exp.shiftId,
       createdAt: exp.createdAt.toISOString()
     }));
 
     // Ambil shifts 30 hari terakhir
     const shifts = await prisma.shift.findMany({
       where: {
-        openedAt: { gte: thirtyDaysAgo }
+        OR: [
+          { openedAt: { gte: thirtyDaysAgo } },
+          // Shift yang masih terbuka adalah state operasional, bukan sekadar histori.
+          // Tetap kirim meski dibuka lebih dari 30 hari lalu agar Android tidak
+          // menganggap outlet tidak mempunyai shift aktif.
+          { status: 'OPEN' }
+        ]
       },
       orderBy: { openedAt: 'desc' }
     });

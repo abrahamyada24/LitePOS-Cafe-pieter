@@ -9,8 +9,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import {
     View, Text, TouchableOpacity, ScrollView, Modal, FlatList,
-    Linking, Alert, TextInput, StyleSheet, Animated, Dimensions,
-    Platform, StatusBar,
+    Linking, Alert, TextInput, StyleSheet, Animated, useWindowDimensions,
+    KeyboardAvoidingView, Platform, StatusBar,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useStore } from '../store/useStore';
@@ -25,9 +25,6 @@ import {
     getOpeningExpectedCloseAt,
     getShiftExpectedCloseAt,
 } from '../utils/shiftReminder';
-
-const { width } = Dimensions.get('window');
-const isTablet = width >= 768;
 
 // ─── DESIGN TOKENS ───────────────────────────────────────────────────────────
 const getColors = (isDark: boolean) => ({
@@ -85,7 +82,7 @@ const toLocalDate = (isoDay: string) => {
 };
 
 // ─── STAT CARD COMPONENT ─────────────────────────────────────────────────────
-const StatCard = ({ icon, label, value, sub, color, bgColor, onPress, delay = 0, fill = true }: any) => {
+const StatCard = ({ icon, label, value, sub, color, bgColor, onPress, delay = 0, fill = true, compact = false }: any) => {
     const COLORS = useThemeColors();
     const styles = useStyles();
     const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -114,14 +111,26 @@ const StatCard = ({ icon, label, value, sub, color, bgColor, onPress, delay = 0,
                 onPress={onPress}
                 onPressIn={handlePressIn}
                 onPressOut={handlePressOut}
-                style={[styles.statCard, { backgroundColor: bgColor }]}
+                style={[styles.statCard, compact && styles.statCardCompact, { backgroundColor: bgColor }]}
             >
-                <View style={[styles.statIconWrap, { backgroundColor: color + '22' }]}>
+                <View style={[styles.statIconWrap, compact && styles.statIconWrapCompact, { backgroundColor: color + '22' }]}>
                     <Icon name={icon} size={20} color={color} />
                 </View>
-                <Text style={[styles.statLabel, { color: color }]}>{label}</Text>
-                <Text style={[styles.statValue, { color: COLORS.textPrimary }]}>{value}</Text>
-                {sub ? <Text style={styles.statSub}>{sub}</Text> : null}
+                {compact ? (
+                    <View style={styles.statContentCompact}>
+                        <Text style={[styles.statLabel, { color: color }]}>{label}</Text>
+                        <View style={styles.statValueRowCompact}>
+                            <Text style={[styles.statValue, styles.statValueCompact, { color: COLORS.textPrimary }]}>{value}</Text>
+                            {sub ? <Text style={[styles.statSub, styles.statSubCompact]}>{sub}</Text> : null}
+                        </View>
+                    </View>
+                ) : (
+                    <>
+                        <Text style={[styles.statLabel, { color: color }]}>{label}</Text>
+                        <Text style={[styles.statValue, { color: COLORS.textPrimary }]}>{value}</Text>
+                        {sub ? <Text style={styles.statSub}>{sub}</Text> : null}
+                    </>
+                )}
             </TouchableOpacity>
         </Animated.View>
     );
@@ -199,14 +208,16 @@ const MenuItem = ({ icon, title, subtitle, color, bgColor, primary, onPress, del
 export default function DashboardScreen({ navigation, route }: any) {
     const COLORS = useThemeColors();
     const styles = useStyles();
+    const { width: windowWidth } = useWindowDimensions();
+    const isTablet = windowWidth >= 768;
     const user = useStore((state) => state.user);
     const setUser = useStore((state) => state.setUser);
     const activeShift = useStore((state) => state.activeShift);
     const setActiveShift = useStore((state) => state.setActiveShift);
     const [summary, setSummary] = useState({ todayRevenue: 0, todayCount: 0, todayReturns: 0, productsCount: 0, lowStockCount: 0 });
     const [openingCashInput, setOpeningCashInput] = useState('');
-    const [isOpeningShift, setIsOpeningShift] = useState(false);
     const [closingCashInput, setClosingCashInput] = useState('');
+    const [isOpeningShift, setIsOpeningShift] = useState(false);
     const [showCloseShiftModal, setShowCloseShiftModal] = useState(false);
     const [pendingCount, setPendingCount] = useState(0);
     const tableOrderNotificationCount = useStore((state) => state.tableOrderNotificationCount);
@@ -223,7 +234,7 @@ export default function DashboardScreen({ navigation, route }: any) {
     const [selectedDateOrders, setSelectedDateOrders] = useState<any[]>([]);
     const [selectedDate, setSelectedDate] = useState('');
     const [showPreOrderModal, setShowPreOrderModal] = useState(false);
-    const [shiftSummary, setShiftSummary] = useState({ totalSales: 0, totalExpenses: 0 });
+    const [shiftSummary, setShiftSummary] = useState({ cashSales: 0, qrisSales: 0, transferSales: 0, totalSales: 0, totalExpenses: 0 });
     const [pickupPaymentOrder, setPickupPaymentOrder] = useState<any>(null);
     const [pickupPaymentMethod, setPickupPaymentMethod] = useState('CASH');
     const [pickupCashAmount, setPickupCashAmount] = useState('');
@@ -282,12 +293,18 @@ export default function DashboardScreen({ navigation, route }: any) {
             if (currentShift?.openedAt) {
                 const since = currentShift.openedAt;
                 const [salesRes] = await db.executeSql(
-                    `SELECT COALESCE(SUM(
-                        CASE
-                            WHEN COALESCE(paidAmount, 0) > 0 THEN paidAmount
-                            ELSE grandTotal
-                        END
-                    ), 0) as total FROM transactions
+                    `SELECT
+                        COALESCE(SUM(CASE WHEN UPPER(COALESCE(paymentMethod, '')) = 'CASH' THEN
+                            CASE WHEN COALESCE(paidAmount, 0) > 0 THEN paidAmount ELSE grandTotal END
+                        ELSE 0 END), 0) as cashSales,
+                        COALESCE(SUM(CASE WHEN UPPER(COALESCE(paymentMethod, '')) IN ('QRIS', 'QRIS_MANUAL') THEN
+                            CASE WHEN COALESCE(paidAmount, 0) > 0 THEN paidAmount ELSE grandTotal END
+                        ELSE 0 END), 0) as qrisSales,
+                        COALESCE(SUM(CASE WHEN UPPER(COALESCE(paymentMethod, '')) = 'TRANSFER' THEN
+                            CASE WHEN COALESCE(paidAmount, 0) > 0 THEN paidAmount ELSE grandTotal END
+                        ELSE 0 END), 0) as transferSales,
+                        COALESCE(SUM(CASE WHEN COALESCE(paidAmount, 0) > 0 THEN paidAmount ELSE grandTotal END), 0) as totalSales
+                     FROM transactions
                      WHERE COALESCE(paidAt, createdAt) >= ?
                        AND status = 'COMPLETED'
                        AND COALESCE(paymentStatus, 'PAID') = 'PAID'`,
@@ -298,11 +315,14 @@ export default function DashboardScreen({ navigation, route }: any) {
                     [since]
                 );
                 setShiftSummary({
-                    totalSales: salesRes.rows.item(0).total || 0,
+                    cashSales: salesRes.rows.item(0).cashSales || 0,
+                    qrisSales: salesRes.rows.item(0).qrisSales || 0,
+                    transferSales: salesRes.rows.item(0).transferSales || 0,
+                    totalSales: salesRes.rows.item(0).totalSales || 0,
                     totalExpenses: expRes.rows.item(0).total || 0,
                 });
             } else {
-                setShiftSummary({ totalSales: 0, totalExpenses: 0 });
+                setShiftSummary({ cashSales: 0, qrisSales: 0, transferSales: 0, totalSales: 0, totalExpenses: 0 });
             }
         } catch (e) {
             console.error('Dashboard error', e);
@@ -371,23 +391,31 @@ export default function DashboardScreen({ navigation, route }: any) {
 
     const confirmCloseShift = async () => {
         if (!activeShift) return;
-        const closingCash = parseFloat(closingCashInput.replace(/[^0-9]/g, '') || '0');
+        if (closingCashInput.trim() === '') {
+            Alert.alert('Tunai kasir belum diisi', 'Hitung seluruh uang tunai, lalu masukkan totalnya sebelum menutup shift.');
+            return;
+        }
+        const closingCash = parseInt(closingCashInput.replace(/\D/g, '') || '0', 10);
+        const expectedCash = Number(activeShift.openingCash || 0) + Number(shiftSummary.cashSales || 0) - Number(shiftSummary.totalExpenses || 0);
         try {
-            await closeCashierShift(activeShift, closingCash);
-            const accumulated = activeShift.openingCash + shiftSummary.totalSales - shiftSummary.totalExpenses;
-            const diff = closingCash - accumulated;
+            const result: any = await closeCashierShift(activeShift, closingCash);
+            const finalExpectedCash = Number(result?.expectedCash ?? expectedCash);
+            const difference = Number(result?.difference ?? (closingCash - finalExpectedCash));
             setShowCloseShiftModal(false);
+            setClosingCashInput('');
             setActiveShift(null);
-            setShiftSummary({ totalSales: 0, totalExpenses: 0 });
+            setShiftSummary({ cashSales: 0, qrisSales: 0, transferSales: 0, totalSales: 0, totalExpenses: 0 });
             Alert.alert(
                 'Shift Ditutup',
                 `Kas Awal      : ${formatRp(activeShift.openingCash)}\n` +
-                `+ Penjualan   : ${formatRp(shiftSummary.totalSales)}\n` +
-                `− Pengeluaran : ${formatRp(shiftSummary.totalExpenses)}\n` +
+                `Tunai         : ${formatRp(shiftSummary.cashSales)}\n` +
+                `QRIS          : ${formatRp(shiftSummary.qrisSales)}\n` +
+                `Transfer      : ${formatRp(shiftSummary.transferSales)}\n` +
+                `Pengeluaran   : ${formatRp(shiftSummary.totalExpenses)}\n` +
                 `─────────────────────\n` +
-                `Saldo Akumulasi: ${formatRp(accumulated)}\n` +
-                `Kas Fisik Akhir: ${formatRp(closingCash)}\n` +
-                `Selisih Kas   : ${diff >= 0 ? '+' : ''}${formatRp(diff)}`
+                `Kas Sistem    : ${formatRp(finalExpectedCash)}\n` +
+                `Tunai Kasir   : ${formatRp(closingCash)}\n` +
+                `Selisih       : ${difference > 0 ? '+' : ''}${formatRp(difference)}`
             );
         } catch (e: any) {
             Alert.alert('Error', e.response?.data?.message || e.message || 'Gagal menutup shift.');
@@ -629,28 +657,32 @@ export default function DashboardScreen({ navigation, route }: any) {
                         </View>
                         <View style={styles.shiftBalanceRow}>
                             <View>
-                                <Text style={styles.shiftBalanceLabel}>Saldo kas seharusnya</Text>
-                                <Text style={styles.shiftBalanceHint}>Kas awal + penjualan - pengeluaran</Text>
+                                <Text style={styles.shiftBalanceLabel}>Total penjualan shift</Text>
+                                <Text style={styles.shiftBalanceHint}>Tunai + QRIS + transfer</Text>
                             </View>
                             <Text style={styles.shiftTotalValue} numberOfLines={1} adjustsFontSizeToFit>
-                                {formatRp(activeShift.openingCash + shiftSummary.totalSales - shiftSummary.totalExpenses)}
+                                {formatRp(shiftSummary.totalSales)}
                             </Text>
                         </View>
                         <View style={styles.shiftBreakdown}>
                             <View style={styles.shiftMetric}>
-                                <Text style={styles.shiftRowLabel}>Kas awal</Text>
-                                <Text style={styles.shiftRowValue} numberOfLines={1} adjustsFontSizeToFit>{formatRp(activeShift.openingCash)}</Text>
+                                <Text style={styles.shiftRowLabel}>Tunai</Text>
+                                <Text style={[styles.shiftRowValue, styles.shiftSalesValue]} numberOfLines={1} adjustsFontSizeToFit>{formatRp(shiftSummary.cashSales)}</Text>
                             </View>
                             <View style={styles.shiftMetricDivider} />
                             <View style={styles.shiftMetric}>
-                                <Text style={styles.shiftRowLabel}>Penjualan</Text>
-                                <Text style={[styles.shiftRowValue, styles.shiftSalesValue]} numberOfLines={1} adjustsFontSizeToFit>+{formatRp(shiftSummary.totalSales)}</Text>
+                                <Text style={styles.shiftRowLabel}>QRIS</Text>
+                                <Text style={styles.shiftRowValue} numberOfLines={1} adjustsFontSizeToFit>{formatRp(shiftSummary.qrisSales)}</Text>
                             </View>
                             <View style={styles.shiftMetricDivider} />
                             <View style={styles.shiftMetric}>
-                                <Text style={styles.shiftRowLabel}>Pengeluaran</Text>
-                                <Text style={[styles.shiftRowValue, styles.shiftExpenseValue]} numberOfLines={1} adjustsFontSizeToFit>-{formatRp(shiftSummary.totalExpenses)}</Text>
+                                <Text style={styles.shiftRowLabel}>Transfer</Text>
+                                <Text style={styles.shiftRowValue} numberOfLines={1} adjustsFontSizeToFit>{formatRp(shiftSummary.transferSales)}</Text>
                             </View>
+                        </View>
+                        <View style={styles.shiftMetaRow}>
+                            <Text style={styles.shiftBalanceHint}>Kas awal {formatRp(activeShift.openingCash)}</Text>
+                            <Text style={[styles.shiftBalanceHint, styles.shiftExpenseValue]}>Pengeluaran {formatRp(shiftSummary.totalExpenses)}</Text>
                         </View>
                     </View>
                 ))}
@@ -703,6 +735,7 @@ export default function DashboardScreen({ navigation, route }: any) {
                                 color={COLORS.accent}
                                 bgColor={COLORS.accentLight}
                                 fill={false}
+                                compact
                                 delay={100}
                                 onPress={() => navigation.navigate('Laporan')}
                             />
@@ -715,6 +748,7 @@ export default function DashboardScreen({ navigation, route }: any) {
                                 color={COLORS.primary}
                                 bgColor={COLORS.primaryLight}
                                 fill={false}
+                                compact
                                 delay={150}
                                 onPress={() => navigation.navigate('Main', { screen: 'Inventori' })}
                             />
@@ -727,6 +761,7 @@ export default function DashboardScreen({ navigation, route }: any) {
                                 color={COLORS.warning}
                                 bgColor={COLORS.warningLight}
                                 fill={false}
+                                compact
                                 delay={200}
                                 onPress={() => navigation.navigate('Main', { screen: 'Inventori' })}
                             />
@@ -914,6 +949,22 @@ export default function DashboardScreen({ navigation, route }: any) {
                                 bgColor="#ECFDF5"
                                 delay={280}
                                 onPress={() => navigation.navigate('TableOrders')}
+                                style={isTablet ? styles.tabletMenuHalf : {}}
+                            />
+                        </>
+                    )}
+
+                    {user?.role === 'CASHIER' && (
+                        <>
+                            {!isTablet && <View style={{ height: 12 }} />}
+                            <MenuItem
+                                icon="wallet-outline"
+                                title="Pengeluaran"
+                                subtitle="Catat biaya operasional outlet"
+                                color="#DC2626"
+                                bgColor="#FEF2F2"
+                                delay={290}
+                                onPress={() => navigation.navigate('Main', { screen: 'Pengeluaran' })}
                                 style={isTablet ? styles.tabletMenuHalf : {}}
                             />
                         </>
@@ -1193,7 +1244,8 @@ export default function DashboardScreen({ navigation, route }: any) {
             ) : null}
 
             <Modal visible={showCloseShiftModal} transparent animationType="fade">
-                <View style={styles.shiftModalOverlay}>
+                <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.shiftModalOverlay}>
+                    <ScrollView style={{ width: '100%' }} contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
                     <View style={styles.shiftModalCard}>
                         <View style={{ alignItems: 'center', marginBottom: 20 }}>
                             <View style={styles.shiftModalIcon}>
@@ -1206,32 +1258,80 @@ export default function DashboardScreen({ navigation, route }: any) {
                                 </Text>
                             )}
                         </View>
-                        <Text style={styles.shiftInputLabel}>Kas Akhir (Rp)</Text>
-                        <View style={styles.shiftInputWrap}>
-                            <View style={styles.shiftInputPrefix}>
-                                <Text style={styles.shiftInputPrefixText}>Rp</Text>
+                        <Text style={styles.shiftSummaryHint}>Rekap dihitung otomatis dari transaksi shift.</Text>
+                        <View style={styles.shiftPaymentGrid}>
+                            <View style={styles.shiftPaymentCard}>
+                                <Text style={styles.shiftPaymentLabel}>Tunai</Text>
+                                <Text style={[styles.shiftPaymentValue, { color: COLORS.accent }]}>{formatRp(shiftSummary.cashSales)}</Text>
                             </View>
-                            <TextInput
-                                style={styles.shiftCashInput}
-                                keyboardType="numeric"
-                                placeholder="0"
-                                placeholderTextColor={COLORS.textMuted}
-                                value={closingCashInput ? parseInt(closingCashInput.replace(/[^0-9]/g, '') || '0').toLocaleString('id-ID') : ''}
-                                onChangeText={t => setClosingCashInput(t.replace(/[^0-9]/g, ''))}
-                                autoFocus
-                            />
+                            <View style={styles.shiftPaymentCard}>
+                                <Text style={styles.shiftPaymentLabel}>QRIS</Text>
+                                <Text style={[styles.shiftPaymentValue, { color: COLORS.primary }]}>{formatRp(shiftSummary.qrisSales)}</Text>
+                            </View>
+                            <View style={styles.shiftPaymentCard}>
+                                <Text style={styles.shiftPaymentLabel}>Transfer</Text>
+                                <Text style={[styles.shiftPaymentValue, { color: COLORS.primaryMid }]}>{formatRp(shiftSummary.transferSales)}</Text>
+                            </View>
+                            <View style={styles.shiftPaymentCard}>
+                                <Text style={styles.shiftPaymentLabel}>Total Penjualan</Text>
+                                <Text style={styles.shiftPaymentValue}>{formatRp(shiftSummary.totalSales)}</Text>
+                            </View>
                         </View>
+                        <View style={styles.shiftExpenseSummary}>
+                            <Text style={styles.shiftPaymentLabel}>Pengeluaran tunai</Text>
+                            <Text style={[styles.shiftPaymentValue, { color: COLORS.danger }]}>{formatRp(shiftSummary.totalExpenses)}</Text>
+                        </View>
+                        {activeShift && (() => {
+                            const expectedCash = Number(activeShift.openingCash || 0) + Number(shiftSummary.cashSales || 0) - Number(shiftSummary.totalExpenses || 0);
+                            const hasClosingCash = closingCashInput.trim() !== '';
+                            const closingCash = parseInt(closingCashInput.replace(/\D/g, '') || '0', 10);
+                            const difference = hasClosingCash ? closingCash - expectedCash : null;
+                            const differenceColor = difference === 0 ? COLORS.accent : Number(difference) > 0 ? COLORS.primary : COLORS.danger;
+                            return (
+                                <>
+                                    <View style={styles.shiftExpectedSummary}>
+                                        <View style={{ flex: 1 }}>
+                                            <Text style={styles.shiftExpectedLabel}>Tunai menurut sistem</Text>
+                                            <Text style={styles.shiftExpectedHint}>Kas awal + tunai − pengeluaran</Text>
+                                        </View>
+                                        <Text style={styles.shiftExpectedValue}>{formatRp(expectedCash)}</Text>
+                                    </View>
+                                    <Text style={styles.shiftInputLabel}>Total Tunai yang Dihitung Kasir</Text>
+                                    <View style={styles.shiftInputWrap}>
+                                        <View style={styles.shiftInputPrefix}>
+                                            <Text style={styles.shiftInputPrefixText}>Rp</Text>
+                                        </View>
+                                        <TextInput
+                                            style={styles.shiftCashInput}
+                                            keyboardType="numeric"
+                                            placeholder="0"
+                                            placeholderTextColor={COLORS.textMuted}
+                                            value={closingCashInput ? closingCash.toLocaleString('id-ID') : ''}
+                                            onChangeText={text => setClosingCashInput(text.replace(/\D/g, ''))}
+                                        />
+                                    </View>
+                                    {difference !== null && (
+                                        <View style={[styles.shiftDifferenceSummary, { borderColor: differenceColor + '55', backgroundColor: differenceColor + '12' }]}>
+                                            <Text style={[styles.shiftDifferenceLabel, { color: differenceColor }]}>{difference === 0 ? 'Sesuai' : difference > 0 ? 'Lebih' : 'Kurang'}</Text>
+                                            <Text style={[styles.shiftDifferenceValue, { color: differenceColor }]}>{difference > 0 ? '+' : ''}{formatRp(difference)}</Text>
+                                        </View>
+                                    )}
+                                </>
+                            );
+                        })()}
                         <TouchableOpacity
-                            style={styles.shiftConfirmBtn}
+                            style={[styles.shiftConfirmBtn, closingCashInput.trim() === '' && { opacity: 0.45 }]}
                             onPress={confirmCloseShift}
+                            disabled={closingCashInput.trim() === ''}
                         >
                             <Text style={styles.shiftConfirmBtnText}>Tutup Shift Sekarang</Text>
                         </TouchableOpacity>
-                        <TouchableOpacity style={{ alignItems: 'center', paddingVertical: 8 }} onPress={() => setShowCloseShiftModal(false)}>
+                        <TouchableOpacity style={{ alignItems: 'center', paddingVertical: 8 }} onPress={() => { setShowCloseShiftModal(false); setClosingCashInput(''); }}>
                             <Text style={styles.shiftCancelText}>Batal</Text>
                         </TouchableOpacity>
                     </View>
-                </View>
+                    </ScrollView>
+                </KeyboardAvoidingView>
             </Modal>
         </View>
     );
@@ -1504,6 +1604,15 @@ const getStyles = (COLORS: any) => StyleSheet.create({
         alignItems: 'stretch',
         paddingTop: 11,
     },
+    shiftMetaRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingTop: 10,
+        marginTop: 10,
+        borderTopWidth: 1,
+        borderTopColor: COLORS.border,
+    },
     shiftMetric: {
         flex: 1,
         minWidth: 0,
@@ -1644,6 +1753,13 @@ const getStyles = (COLORS: any) => StyleSheet.create({
         shadowRadius: 8,
         elevation: 3,
     },
+    statCardCompact: {
+        minHeight: 62,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
     statIconWrap: {
         width: 36,
         height: 36,
@@ -1651,6 +1767,18 @@ const getStyles = (COLORS: any) => StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         marginBottom: 8,
+    },
+    statIconWrapCompact: {
+        marginBottom: 0,
+        marginRight: 12,
+    },
+    statContentCompact: {
+        flex: 1,
+        minWidth: 0,
+    },
+    statValueRowCompact: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
     },
     statLabel: {
         ...FONTS.medium,
@@ -1664,11 +1792,19 @@ const getStyles = (COLORS: any) => StyleSheet.create({
         fontSize: 20,
         color: COLORS.textPrimary,
     },
+    statValueCompact: {
+        fontSize: 18,
+        marginRight: 7,
+    },
     statSub: {
         ...FONTS.regular,
         fontSize: 10,
         color: COLORS.textSecondary,
         marginTop: 1,
+    },
+    statSubCompact: {
+        flexShrink: 1,
+        marginTop: 0,
     },
 
     // Pending Alert
@@ -2165,6 +2301,77 @@ const getStyles = (COLORS: any) => StyleSheet.create({
         marginTop: 4,
         textAlign: 'center',
     },
+    shiftSummaryHint: {
+        ...FONTS.regular,
+        fontSize: 12,
+        color: COLORS.textMuted,
+        marginBottom: 12,
+        textAlign: 'center',
+    },
+    shiftPaymentGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'space-between',
+    },
+    shiftPaymentCard: {
+        width: '48.5%',
+        backgroundColor: COLORS.bg,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+        borderRadius: 14,
+        padding: 12,
+        marginBottom: 10,
+    },
+    shiftPaymentLabel: {
+        ...FONTS.regular,
+        fontSize: 11,
+        color: COLORS.textMuted,
+        marginBottom: 4,
+    },
+    shiftPaymentValue: {
+        ...FONTS.bold,
+        fontSize: 14,
+        color: COLORS.textPrimary,
+    },
+    shiftExpenseSummary: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        backgroundColor: COLORS.dangerLight,
+        borderRadius: 14,
+        paddingHorizontal: 14,
+        paddingVertical: 11,
+        marginBottom: 14,
+    },
+    shiftExpectedSummary: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        backgroundColor: COLORS.primaryLight,
+        borderWidth: 1,
+        borderColor: COLORS.primary + '33',
+        borderRadius: 14,
+        paddingHorizontal: 14,
+        paddingVertical: 11,
+        marginBottom: 14,
+    },
+    shiftExpectedLabel: {
+        ...FONTS.bold,
+        fontSize: 12,
+        color: COLORS.primaryDeep,
+    },
+    shiftExpectedHint: {
+        ...FONTS.regular,
+        fontSize: 10,
+        color: COLORS.textMuted,
+        marginTop: 2,
+    },
+    shiftExpectedValue: {
+        ...FONTS.bold,
+        fontSize: 15,
+        color: COLORS.primaryDeep,
+        marginLeft: 10,
+    },
     shiftInputLabel: {
         ...FONTS.bold,
         fontSize: 14,
@@ -2180,6 +2387,25 @@ const getStyles = (COLORS: any) => StyleSheet.create({
         borderRadius: 16,
         overflow: 'hidden',
         marginBottom: 20,
+    },
+    shiftDifferenceSummary: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderRadius: 14,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        marginTop: -10,
+        marginBottom: 14,
+    },
+    shiftDifferenceLabel: {
+        ...FONTS.bold,
+        fontSize: 13,
+    },
+    shiftDifferenceValue: {
+        ...FONTS.bold,
+        fontSize: 14,
     },
     shiftInputPrefix: {
         backgroundColor: COLORS.dangerLight,
@@ -2225,12 +2451,13 @@ const getStyles = (COLORS: any) => StyleSheet.create({
     },
     tabletStatColumn: {
         flex: 1,
+        justifyContent: 'space-between',
     },
     tabletHeroCard: {
         flex: 2,
         marginRight: 16,
         marginBottom: 0,
-        minHeight: 188,
+        minHeight: 226,
         alignSelf: 'flex-start',
         padding: 22,
     },

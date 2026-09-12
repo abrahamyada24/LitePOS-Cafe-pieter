@@ -1,6 +1,6 @@
 "use client";
 import React, { useEffect, useRef, useState } from 'react';
-import { Clock, Play, Square, Loader2, DollarSign, ShoppingCart, Power } from 'lucide-react';
+import { Clock, Play, Square, Loader2, Power } from 'lucide-react';
 import { showAlert } from '@/utils/swal';
 import {
     DEFAULT_SHIFT_REMINDER_SETTINGS,
@@ -46,6 +46,7 @@ export default function ShiftsPage() {
                 const params = new URLSearchParams(window.location.search);
                 if (currentData.data && params.get('close') === '1') {
                     suppressNextReminderRef.current = true;
+                    setClosingCash('');
                     setShowCloseModal(true);
                     params.delete('close');
                     const query = params.toString();
@@ -89,7 +90,10 @@ export default function ShiftsPage() {
         reminderGateRef.current = { key, nextAt: now + 15 * 60 * 1000 };
 
         showAlert.confirm(reminder.title, reminder.message, 'Tutup Shift Sekarang', 'Ingatkan 15 Menit').then(confirmed => {
-            if (confirmed) setShowCloseModal(true);
+            if (confirmed) {
+                setClosingCash('');
+                setShowCloseModal(true);
+            }
         });
     }, [currentShift, reminderSettings]);
 
@@ -120,13 +124,25 @@ export default function ShiftsPage() {
     const handleCloseShift = async (e) => {
         e.preventDefault();
         if (!currentShift) return;
+        if (closingCash.trim() === '') {
+            showAlert.warning('Tunai kasir belum diisi', 'Hitung seluruh uang tunai, lalu masukkan totalnya sebelum menutup shift.');
+            return;
+        }
         try {
             const res = await fetch(`${API_URL}/api/shifts/${currentShift.id}/close`, {
                 method: 'POST', headers: headers(),
-                body: JSON.stringify({ closingCash })
+                body: JSON.stringify({ closingCash: Number(closingCash) })
             });
             const data = await res.json();
-            if (data.success) { setShowCloseModal(false); setClosingCash(''); loadData(); showAlert.success('Shift ditutup', `Penjualan ${formatRp(data.data.totalSales)}. Selisih ${formatRp(data.data.difference)}.`); }
+            if (data.success) {
+                setShowCloseModal(false);
+                setClosingCash('');
+                loadData();
+                showAlert.success(
+                    'Shift ditutup',
+                    `Kas sistem ${formatRp(data.data.expectedCash)} • Tunai kasir ${formatRp(data.data.closingCash)} • Selisih ${Number(data.data.difference) > 0 ? '+' : ''}${formatRp(data.data.difference)}`
+                );
+            }
             else showAlert.error('Gagal menutup shift', data.message || data.error);
         } catch (e) { showAlert.error('Gagal menutup shift', e.message || 'Coba lagi.'); }
     };
@@ -143,7 +159,7 @@ export default function ShiftsPage() {
                         <Power size={17} /> Shift Nonaktif
                     </span>
                 ) : currentShift ? (
-                    <button onClick={() => setShowCloseModal(true)} className="flex items-center gap-2 px-5 py-2.5 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-all shadow-lg">
+                    <button onClick={() => { setClosingCash(''); setShowCloseModal(true); }} className="flex items-center gap-2 px-5 py-2.5 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-all shadow-lg">
                         <Square size={18} /> Tutup Shift
                     </button>
                 ) : (
@@ -178,13 +194,78 @@ export default function ShiftsPage() {
 
             {/* Open/Close Modals */}
             {(showOpenModal || showCloseModal) && (
-                <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => { setShowOpenModal(false); setShowCloseModal(false); }}>
-                    <form onClick={e => e.stopPropagation()} onSubmit={showOpenModal ? handleOpenShift : handleCloseShift} className="bg-white rounded-2xl p-6 w-full max-w-md space-y-4 shadow-2xl">
+                <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => { setShowOpenModal(false); setShowCloseModal(false); setClosingCash(''); }}>
+                    <form onClick={e => e.stopPropagation()} onSubmit={showOpenModal ? handleOpenShift : handleCloseShift} className="max-h-[calc(100vh-2rem)] w-full max-w-md space-y-4 overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
                         <h2 className="text-lg font-bold text-gray-800">{showOpenModal ? 'Buka Shift Baru' : 'Tutup Shift'}</h2>
-                        <input required type="number" placeholder={showOpenModal ? "Kas Awal (Rp)" : "Kas Akhir (Rp)"} value={showOpenModal ? openingCash : closingCash} onChange={e => showOpenModal ? setOpeningCash(e.target.value) : setClosingCash(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm focus:border-blue-500 outline-none" />
+                        {showOpenModal ? (
+                            <input required type="number" placeholder="Kas Awal (Rp)" value={openingCash} onChange={e => setOpeningCash(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm focus:border-blue-500 outline-none" />
+                        ) : currentShift ? (
+                            <div className="space-y-3">
+                                <p className="text-sm text-gray-500">Rekap dihitung otomatis dari transaksi pada shift ini.</p>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3">
+                                        <p className="text-xs font-medium text-emerald-600">Tunai</p>
+                                        <p className="mt-1 text-sm font-extrabold text-emerald-800">{formatRp(currentShift.cashSales)}</p>
+                                    </div>
+                                    <div className="rounded-xl border border-blue-100 bg-blue-50 p-3">
+                                        <p className="text-xs font-medium text-blue-600">QRIS</p>
+                                        <p className="mt-1 text-sm font-extrabold text-blue-800">{formatRp(currentShift.qrisSales)}</p>
+                                    </div>
+                                    <div className="rounded-xl border border-violet-100 bg-violet-50 p-3">
+                                        <p className="text-xs font-medium text-violet-600">Transfer</p>
+                                        <p className="mt-1 text-sm font-extrabold text-violet-800">{formatRp(currentShift.transferSales)}</p>
+                                    </div>
+                                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                                        <p className="text-xs font-medium text-gray-500">Total Penjualan</p>
+                                        <p className="mt-1 text-sm font-extrabold text-gray-800">{formatRp(currentShift.totalSales)}</p>
+                                    </div>
+                                </div>
+                                <div className="flex justify-between rounded-xl border border-orange-100 bg-orange-50 px-3 py-2.5 text-sm">
+                                    <span className="text-orange-600">Pengeluaran tunai</span>
+                                    <span className="font-bold text-orange-800">{formatRp(currentShift.cashExpenses)}</span>
+                                </div>
+                                {(() => {
+                                    const expectedCash = Number(currentShift.expectedCash ?? (Number(currentShift.openingCash || 0) + Number(currentShift.cashSales || 0) - Number(currentShift.cashExpenses || 0)));
+                                    const hasClosingCash = closingCash.trim() !== '';
+                                    const difference = hasClosingCash ? Number(closingCash) - expectedCash : null;
+                                    return (
+                                        <div className="space-y-3 border-t border-gray-100 pt-3">
+                                            <div className="flex items-center justify-between rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3">
+                                                <div>
+                                                    <p className="text-xs font-semibold text-indigo-600">Tunai menurut sistem</p>
+                                                    <p className="mt-0.5 text-[11px] text-indigo-500">Kas awal + tunai − pengeluaran</p>
+                                                </div>
+                                                <span className="font-extrabold text-indigo-800">{formatRp(expectedCash)}</span>
+                                            </div>
+                                            <label className="block">
+                                                <span className="mb-1.5 block text-sm font-bold text-gray-700">Total Tunai yang Dihitung Kasir</span>
+                                                <div className="flex items-center overflow-hidden rounded-xl border border-gray-200 bg-white focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
+                                                    <span className="border-r border-gray-200 bg-gray-50 px-4 py-3 text-sm font-bold text-gray-500">Rp</span>
+                                                    <input
+                                                        autoFocus
+                                                        required
+                                                        inputMode="numeric"
+                                                        value={closingCash ? Number(closingCash).toLocaleString('id-ID') : ''}
+                                                        onChange={e => setClosingCash(e.target.value.replace(/\D/g, ''))}
+                                                        placeholder="0"
+                                                        className="w-full px-4 py-3 text-lg font-extrabold text-gray-800 outline-none"
+                                                    />
+                                                </div>
+                                            </label>
+                                            {difference !== null && (
+                                                <div className={`flex items-center justify-between rounded-xl border px-4 py-2.5 text-sm ${difference === 0 ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : difference > 0 ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-red-200 bg-red-50 text-red-700'}`}>
+                                                    <span className="font-semibold">{difference === 0 ? 'Sesuai' : difference > 0 ? 'Lebih' : 'Kurang'}</span>
+                                                    <span className="font-extrabold">{difference > 0 ? '+' : ''}{formatRp(difference)}</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
+                            </div>
+                        ) : null}
                         <div className="flex gap-3">
-                            <button type="button" onClick={() => { setShowOpenModal(false); setShowCloseModal(false); }} className="flex-1 py-3 rounded-xl border border-gray-200 text-sm font-bold text-gray-600 hover:bg-gray-50">Batal</button>
-                            <button type="submit" className={`flex-1 py-3 rounded-xl text-white text-sm font-bold ${showOpenModal ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}>{showOpenModal ? 'Buka Shift' : 'Tutup Shift'}</button>
+                            <button type="button" onClick={() => { setShowOpenModal(false); setShowCloseModal(false); setClosingCash(''); }} className="flex-1 py-3 rounded-xl border border-gray-200 text-sm font-bold text-gray-600 hover:bg-gray-50">Batal</button>
+                            <button type="submit" disabled={showCloseModal && closingCash.trim() === ''} className={`flex-1 py-3 rounded-xl text-white text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50 ${showOpenModal ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}>{showOpenModal ? 'Buka Shift' : 'Tutup Shift'}</button>
                         </div>
                     </form>
                 </div>
@@ -197,13 +278,20 @@ export default function ShiftsPage() {
                 ) : shifts.length === 0 ? (
                     <div className="text-center py-20 text-gray-400"><Clock size={48} className="mx-auto mb-3 opacity-50" /><p className="font-medium">Belum ada riwayat shift</p></div>
                 ) : (
-                    <table className="w-full">
+                    <div className="overflow-x-auto">
+                    <table className="w-full min-w-[1500px]">
                         <thead><tr className="bg-gray-50 border-b border-gray-100">
                             <th className="text-left px-6 py-3.5 text-xs font-bold text-gray-500 uppercase">Kasir</th>
                             <th className="text-left px-6 py-3.5 text-xs font-bold text-gray-500 uppercase">Dibuka</th>
                             <th className="text-left px-6 py-3.5 text-xs font-bold text-gray-500 uppercase">Ditutup</th>
                             <th className="text-right px-6 py-3.5 text-xs font-bold text-gray-500 uppercase">Kas Awal</th>
-                            <th className="text-right px-6 py-3.5 text-xs font-bold text-gray-500 uppercase">Kas Akhir</th>
+                            <th className="text-right px-6 py-3.5 text-xs font-bold text-gray-500 uppercase">Tunai</th>
+                            <th className="text-right px-6 py-3.5 text-xs font-bold text-gray-500 uppercase">QRIS</th>
+                            <th className="text-right px-6 py-3.5 text-xs font-bold text-gray-500 uppercase">Transfer</th>
+                            <th className="text-right px-6 py-3.5 text-xs font-bold text-gray-500 uppercase">Total</th>
+                            <th className="text-right px-6 py-3.5 text-xs font-bold text-gray-500 uppercase">Kas Sistem</th>
+                            <th className="text-right px-6 py-3.5 text-xs font-bold text-gray-500 uppercase">Tunai Kasir</th>
+                            <th className="text-right px-6 py-3.5 text-xs font-bold text-gray-500 uppercase">Selisih</th>
                             <th className="text-center px-6 py-3.5 text-xs font-bold text-gray-500 uppercase">Status</th>
                         </tr></thead>
                         <tbody>
@@ -213,7 +301,15 @@ export default function ShiftsPage() {
                                     <td className="px-6 py-4 text-sm text-gray-600">{new Date(s.openedAt).toLocaleString('id-ID')}</td>
                                     <td className="px-6 py-4 text-sm text-gray-600">{s.closedAt ? new Date(s.closedAt).toLocaleString('id-ID') : '-'}</td>
                                     <td className="px-6 py-4 text-sm font-bold text-gray-700 text-right">{formatRp(Number(s.openingCash))}</td>
-                                    <td className="px-6 py-4 text-sm font-bold text-gray-700 text-right">{s.closingCash ? formatRp(Number(s.closingCash)) : '-'}</td>
+                                    <td className="px-6 py-4 text-sm font-bold text-emerald-700 text-right">{formatRp(s.cashSales)}</td>
+                                    <td className="px-6 py-4 text-sm font-bold text-blue-700 text-right">{formatRp(s.qrisSales)}</td>
+                                    <td className="px-6 py-4 text-sm font-bold text-violet-700 text-right">{formatRp(s.transferSales)}</td>
+                                    <td className="px-6 py-4 text-sm font-extrabold text-gray-800 text-right">{formatRp(s.totalSales)}</td>
+                                    <td className="px-6 py-4 text-sm font-bold text-indigo-700 text-right">{formatRp(s.expectedCash ?? (Number(s.openingCash || 0) + Number(s.cashSales || 0) - Number(s.cashExpenses || 0)))}</td>
+                                    <td className="px-6 py-4 text-sm font-bold text-gray-700 text-right">{s.closingCash !== null && s.closingCash !== undefined ? formatRp(s.closingCash) : '-'}</td>
+                                    <td className={`px-6 py-4 text-sm font-extrabold text-right ${Number(s.difference) === 0 ? 'text-emerald-700' : Number(s.difference) > 0 ? 'text-blue-700' : 'text-red-600'}`}>
+                                        {s.difference !== null && s.difference !== undefined ? `${Number(s.difference) > 0 ? '+' : ''}${formatRp(s.difference)}` : '-'}
+                                    </td>
                                     <td className="px-6 py-4 text-center">
                                         <span className={`px-3 py-1 rounded-full text-xs font-bold ${s.status === 'OPEN' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{s.status}</span>
                                     </td>
@@ -221,6 +317,7 @@ export default function ShiftsPage() {
                             ))}
                         </tbody>
                     </table>
+                    </div>
                 )}
             </div>
         </div>

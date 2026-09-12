@@ -6,6 +6,7 @@ import { Search, Plus, Edit, Trash2, ImageIcon, ChevronLeft, ChevronRight, Filte
 import { useStore } from '../../../store/useStore';
 import ProductModal from '../../../components/ProductModal';
 import { showAlert } from '../../../utils/swal';
+import { getProductAvailability } from '../../../utils/productAvailability';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -19,9 +20,17 @@ export default function ProductsPage() {
 
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingProduct, setEditingProduct] = useState(null);
+    const [isDesktopApp, setIsDesktopApp] = useState(false);
+    const [availabilityTick, setAvailabilityTick] = useState(0);
 
     useEffect(() => {
         fetchDataMaster();
+    }, []);
+
+    useEffect(() => {
+        setIsDesktopApp(Boolean(window.electronAPI));
+        const interval = setInterval(() => setAvailabilityTick(value => value + 1), 60000);
+        return () => clearInterval(interval);
     }, []);
 
     const getImageUrl = (path) => {
@@ -55,7 +64,7 @@ export default function ProductsPage() {
     const filteredProducts = useMemo(() => {
         return products.filter(product => {
             // Sembunyikan produk yang sudah di-soft delete
-            if (product.isActive === false) return false;
+            if (!isDesktopApp && product.isActive === false) return false;
 
             const name = product.name || '';
             const sku = product.sku || '';
@@ -67,7 +76,7 @@ export default function ProductsPage() {
 
             return matchesSearch && matchesCategory;
         });
-    }, [products, searchQuery, selectedCategory]);
+    }, [products, searchQuery, selectedCategory, isDesktopApp, availabilityTick]);
 
     const totalPages = Math.ceil(filteredProducts.length / itemsPerPage) || 1;
     const startIndex = (currentPage - 1) * itemsPerPage;
@@ -117,6 +126,7 @@ export default function ProductsPage() {
         const token = localStorage.getItem('token');
         const data = new FormData();
         data.append('name', formData.name);
+        data.append('description', formData.description || '');
         data.append('sku', formData.sku || '');
         data.append('barcode', formData.barcode || '');
         data.append('price', formData.price);
@@ -136,6 +146,10 @@ export default function ProductsPage() {
         data.append('discountEndTime', formData.discountEndTime || '');
         data.append('discountDays', Array.isArray(formData.discountDays) ? formData.discountDays.join(',') : '');
         data.append('discountLabel', formData.discountLabel || '');
+        data.append('availabilityScheduleEnabled', formData.availabilityScheduleEnabled === true);
+        data.append('availabilityStartTime', formData.availabilityScheduleEnabled ? (formData.availabilityStartTime || '') : '');
+        data.append('availabilityEndTime', formData.availabilityScheduleEnabled ? (formData.availabilityEndTime || '') : '');
+        data.append('availabilityDays', formData.availabilityScheduleEnabled && Array.isArray(formData.availabilityDays) ? formData.availabilityDays.join(',') : '');
 
         if (formData.imageFile) {
             data.append('image', formData.imageFile);
@@ -213,10 +227,12 @@ export default function ProductsPage() {
                 )}
 
                 {/* List Produk */}
-                {currentProducts.map((item) => (
+                {currentProducts.map((item) => {
+                    const availability = getProductAvailability(item);
+                    return (
                     <div
                         key={item.id}
-                        className={`group relative rounded-3xl overflow-hidden border border-gray-100 bg-white hover:shadow-xl transition-all duration-300 cursor-pointer ${getSpanClass(item.displayType || 'normal')}`}
+                        className={`group relative rounded-3xl overflow-hidden border border-gray-100 bg-white hover:shadow-xl transition-all duration-300 cursor-pointer ${isDesktopApp && !availability.isAvailable ? 'opacity-65 grayscale' : ''} ${getSpanClass(item.displayType || 'normal')}`}
                         onClick={() => handleEdit(item, { stopPropagation: () => { } })}
                     >
                         <div className="absolute inset-0">
@@ -238,6 +254,11 @@ export default function ProductsPage() {
                                     {item.discountLabel || 'Promo'}
                                 </span>
                             )}
+                            {isDesktopApp && (
+                                <span className={`px-2 py-1 text-white text-[10px] font-bold rounded-lg uppercase ${availability.isAvailable ? 'bg-emerald-600' : 'bg-gray-700'}`}>
+                                    {availability.label}
+                                </span>
+                            )}
                         </div>
 
                         {/* Hover Actions (Top Right) */}
@@ -257,7 +278,8 @@ export default function ProductsPage() {
                             </div>
                         </div>
                     </div>
-                ))}
+                    );
+                })}
             </div>
 
             {/* Pagination Controls */}

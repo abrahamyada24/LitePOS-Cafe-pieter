@@ -25,7 +25,7 @@ export default function AuthGuard({ children }) {
     }
 
     if (user.role === 'CASHIER') {
-      const allowedPaths = ['/', '/pos', '/transactions', '/tables', '/shifts', '/order-meja', '/kitchen', '/settings', '/license'];
+      const allowedPaths = ['/', '/pos', '/transactions', '/expenses', '/tables', '/shifts', '/order-meja', '/kitchen', '/settings', '/license'];
       const isAllowed = allowedPaths.some((path) => pathname === path || pathname.startsWith(`${path}/`));
       if (!isAllowed) {
         router.replace('/');

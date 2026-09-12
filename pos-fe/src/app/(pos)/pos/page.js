@@ -27,6 +27,7 @@ import {
 import { getPosPendingTransactions } from '@/utils/savedTransactions';
 import { getProductDiscountTotal } from '@/utils/transactionDiscounts';
 import { getCartItemLineTotal } from '@/utils/cartPricing';
+import { getProductAvailability, isProductAvailable } from '@/utils/productAvailability';
 import { useStore } from '@/store/useStore';
 
 const RAW_API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
@@ -58,6 +59,8 @@ export default function POSPage() {
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Semua');
   const [mobileView, setMobileView] = useState('menu'); 
+  const [isDesktopApp, setIsDesktopApp] = useState(false);
+  const [availabilityTick, setAvailabilityTick] = useState(0);
 
   // Member State
   const [selectedMember, setSelectedMember] = useState(null);
@@ -138,6 +141,12 @@ export default function POSPage() {
       console.error('Failed to count saved transactions', error);
     }
   };
+
+  useEffect(() => {
+    setIsDesktopApp(Boolean(window.electronAPI));
+    const interval = setInterval(() => setAvailabilityTick(value => value + 1), 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   // --- 1. FETCH DATA ---
   useEffect(() => {
@@ -376,12 +385,13 @@ export default function POSPage() {
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
       if (p.isActive === false) return false;
+      if (isDesktopApp && !isProductAvailable(p)) return false;
       const matchSearch = p.name.toLowerCase().includes(search.toLowerCase());
       const categoryName = p.category ? p.category.name : 'Uncategorized';
       const matchCategory = selectedCategory === 'Semua' || categoryName === selectedCategory;
       return matchSearch && matchCategory;
     });
-  }, [search, selectedCategory, products]);
+  }, [search, selectedCategory, products, isDesktopApp, availabilityTick]);
 
   const filteredMembers = useMemo(() => {
       if(!memberSearch) return members;
@@ -401,6 +411,9 @@ export default function POSPage() {
   };
 
   const addProductDirectly = (product) => {
+    if (isDesktopApp && !isProductAvailable(product)) {
+      return showAlert.warning('Produk Tidak Tersedia', `${product.name} sedang nonaktif atau berada di luar jadwal aktif.`);
+    }
     if (product.stock <= 0 && !product.isUnlimitedStock) return showAlert.warning("Stok Habis", "Produk ini tidak bisa dipilih.");
     
     const existing = cart.find(item => item.id === product.id);
@@ -413,6 +426,10 @@ export default function POSPage() {
   };
 
   const openAddonModal = (product) => {
+    if (isDesktopApp && !isProductAvailable(product)) {
+      showAlert.warning('Produk Tidak Tersedia', `${product.name} sedang nonaktif atau berada di luar jadwal aktif.`);
+      return;
+    }
     if (product.stock <= 0 && !product.isUnlimitedStock) {
       showAlert.warning("Stok Habis", "Produk ini tidak bisa dipilih.");
       return;
@@ -465,6 +482,10 @@ export default function POSPage() {
     setCart(cart.map(item => {
       if (item.id === id) {
         const product = products.find(p => p.id === id) || item;
+        if (delta > 0 && isDesktopApp && !isProductAvailable(product)) {
+            showAlert.warning('Produk Tidak Tersedia', `${product.name} sedang nonaktif atau berada di luar jadwal aktif.`);
+            return item;
+        }
         if (delta > 0 && item.qty + 1 > product.stock && !product.isUnlimitedStock) {
             showAlert.warning("Batas Stok", "Stok produk tidak mencukupi.");
             return item;
@@ -745,6 +766,14 @@ export default function POSPage() {
     if (pendingOrderContext && !pendingOrderContext.accepted) {
       showAlert.warning('Order sedang diterima', 'Tunggu sebentar sampai order meja terkonfirmasi oleh server.');
       return;
+    }
+    if (isDesktopApp) {
+      const unavailableProduct = cart.find(item => !item.packageId && !isProductAvailable(item));
+      if (unavailableProduct) {
+        const availability = getProductAvailability(unavailableProduct);
+        showAlert.warning('Produk Tidak Tersedia', `${unavailableProduct.name} ${availability.reason === 'INACTIVE' ? 'sedang nonaktif' : 'berada di luar jadwal aktif'}. Hapus dari keranjang untuk melanjutkan.`);
+        return;
+      }
     }
     setPaymentStep('SELECT');
     setPaymentMethod('');

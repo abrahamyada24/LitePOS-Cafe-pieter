@@ -45,6 +45,7 @@ import PackageScreen from './screens/PackageScreen';
 import ProductListScreen from './screens/ProductListScreen';
 import CategoryListScreen from './screens/CategoryListScreen';
 import LockScreen from './screens/LockScreen';
+import ExpenseScreen from './screens/ExpenseScreen';
 import AppDialogProvider from './components/AppDialogProvider';
 
 const Stack = createNativeStackNavigator();
@@ -178,6 +179,7 @@ function MainTabNavigator() {
                     if (route.name === 'Laporan') return <Icon name="file-document-outline" size={size} color={color} />;
                     if (route.name === 'Kontak') return <Icon name="account-box-outline" size={size} color={color} />;
                     if (route.name === 'Pengaturan') return <Icon name="cog-outline" size={size} color={color} />;
+                    if (route.name === 'Pengeluaran') return <Icon name="wallet-outline" size={size} color={color} />;
                     return <Icon name="home" size={size} color={color} />;
                 },
                 tabBarActiveTintColor: tw.color('blue-600'),
@@ -193,6 +195,9 @@ function MainTabNavigator() {
                     <Tab.Screen name="Laporan" component={ReportScreen} />
                     <Tab.Screen name="Kontak" component={ContactScreen} />
                 </>
+            )}
+            {normalizedRole === 'CASHIER' && (
+                <Tab.Screen name="Pengeluaran" component={ExpenseScreen} />
             )}
             <Tab.Screen name="Pengaturan" component={SettingsScreen} />
         </Tab.Navigator>
@@ -324,13 +329,14 @@ function App(): React.JSX.Element {
                     shiftDurationMinutes: 480, shiftReminderMinutes: 15, shiftDayCutoff: '23:50',
                     enableDineTable: false, enableTableOrder: false, enableKitchenPrint: false,
                     showImages: true, printerAddress: null, printerType: null, theme: 'light',
+                    enableKitchenQueue: false, taxRate: 0, serviceCharge: 0,
                     apiBaseUrl: '',
                 };
                 for (let i = 0; i < rowCount; i++) {
                     const row = settingsRes.rows.item(i);
-                    if (['showImages', 'enablePreOrder', 'enableShift', 'enableShiftReminder', 'enableDineTable', 'enableTableOrder', 'enableKitchenPrint'].includes(row.key)) {
+                    if (['showImages', 'enablePreOrder', 'enableShift', 'enableShiftReminder', 'enableDineTable', 'enableTableOrder', 'enableKitchenQueue', 'enableKitchenPrint'].includes(row.key)) {
                         loadedSettings[row.key] = row.value === 'true';
-                    } else if (['shiftDurationMinutes', 'shiftReminderMinutes'].includes(row.key)) {
+                    } else if (['shiftDurationMinutes', 'shiftReminderMinutes', 'taxRate', 'serviceCharge'].includes(row.key)) {
                         loadedSettings[row.key] = Number(row.value || 0);
                     } else {
                         loadedSettings[row.key] = row.value || null;
@@ -465,6 +471,7 @@ function App(): React.JSX.Element {
                             enableDineTable: false, enableTableOrder: false, enableKitchenPrint: false,
                             showImages: true, printerAddress: null, printerType: null, theme: 'light',
                             allowNegativeStock: false, receiptFooter: '',
+                            enableKitchenQueue: false, taxRate: 0, serviceCharge: 0,
                             loyalty_active: false, loyalty_multiplier: 1, loyalty_multiplier_amount: 1000,
                             loyalty_point_value: 0, loyalty_min_points: 0,
                             apiBaseUrl: '',
@@ -472,9 +479,9 @@ function App(): React.JSX.Element {
                         };
                         for (let i = 0; i < rowCount; i++) {
                             const row = settingsRes.rows.item(i);
-                            if (['showImages', 'enablePreOrder', 'enableShift', 'enableShiftReminder', 'enableDineTable', 'enableTableOrder', 'allowNegativeStock', 'loyalty_active', 'enableKitchenPrint'].includes(row.key)) {
+                            if (['showImages', 'enablePreOrder', 'enableShift', 'enableShiftReminder', 'enableDineTable', 'enableTableOrder', 'enableKitchenQueue', 'allowNegativeStock', 'loyalty_active', 'enableKitchenPrint'].includes(row.key)) {
                                 reloadedSettings[row.key] = row.value === 'true';
-                            } else if (['shiftDurationMinutes', 'shiftReminderMinutes', 'loyalty_multiplier', 'loyalty_multiplier_amount', 'loyalty_point_value', 'loyalty_min_points', 'dataResetVersion'].includes(row.key)) {
+                            } else if (['shiftDurationMinutes', 'shiftReminderMinutes', 'taxRate', 'serviceCharge', 'loyalty_multiplier', 'loyalty_multiplier_amount', 'loyalty_point_value', 'loyalty_min_points', 'dataResetVersion'].includes(row.key)) {
                                 reloadedSettings[row.key] = Number(row.value || 0);
                             } else {
                                 reloadedSettings[row.key] = row.value || null;

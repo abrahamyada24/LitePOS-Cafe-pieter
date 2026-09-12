@@ -10,6 +10,7 @@ import { createReceiptImageBlob, getReceiptImageFilename, shareReceiptImage } fr
 import { showAlert } from '@/utils/swal';
 import { printReceiptElement } from '@/utils/receiptPrint';
 import { getPaymentTypeLabel } from '@/utils/paymentLabels';
+import { buildReceiptText } from '@/utils/receiptText';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -114,6 +115,7 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
     const paperWidthMm = getPaperWidthMm(devicePreferences);
     const logoMaxWidthMm = paperWidthMm === 80 ? 58 : 42;
     const showLitePosBranding = shouldShowLitePosBranding(license);
+    const showReceiptLogo = Boolean(devicePreferences.showReceiptLogo);
 
     // Payment info
     const paymentType = payments?.[0]?.paymentType || 'TUNAI';
@@ -133,12 +135,43 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
     // --- FUNGSI CETAK STRUK ---
     const handlePrint = async () => {
         try {
+            if (window.electronAPI?.printReceiptRaw) {
+                const result = await window.electronAPI.printReceiptRaw({
+                    text: buildReceiptText({
+                        transaction,
+                        store: storeSettings,
+                        paperWidthMm,
+                        showLitePosBranding,
+                    }),
+                    printerName: devicePreferences.printerName,
+                    logoUrl: showReceiptLogo ? storeLogo : '',
+                });
+                showAlert.success('Struk Dicetak', `Dikirim ke printer ${result.printerName}.`);
+                return;
+            }
+
+            // Keep transaction reprints compatible with desktop builds that
+            // expose the legacy Electron print bridge but not printReceiptRaw.
+            // Without this branch Electron falls through to the browser print
+            // dialog, which may select a stale Windows printer queue.
+            if (window.electronAPI?.printReceipt && receiptRef.current) {
+                const html = `<!doctype html><html><head><meta charset="utf-8"><style>
+                    @page { size: ${paperWidthMm}mm auto; margin: 0; }
+                    body { width: ${paperWidthMm}mm; margin: 0; padding: ${devicePreferences.printMarginMm}mm; box-sizing: border-box; font-family: monospace; color: #000; }
+                    .receipt-logo { display: ${showReceiptLogo ? 'block' : 'none'}; width: auto; height: auto; max-width: ${logoMaxWidthMm}mm; max-height: 16mm; margin: 0 auto 2mm; object-fit: contain; }
+                </style></head><body>${receiptRef.current.innerHTML}</body></html>`;
+                await window.electronAPI.printReceipt(html);
+                showAlert.success('Struk Dicetak', 'Dikirim melalui aplikasi desktop.');
+                return;
+            }
+
             await printReceiptElement(receiptRef.current, {
                 paperWidthMm,
                 printMarginMm: devicePreferences.printMarginMm,
+                showReceiptLogo,
             });
         } catch (error) {
-            showAlert.error('Gagal Mencetak', error?.message || 'Browser tidak dapat menyiapkan struk.');
+            showAlert.error('Gagal Mencetak', error?.message || 'Printer tidak dapat menyiapkan struk.');
         }
     };
 
@@ -396,7 +429,7 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
                     }}
                 >
                     <div className="mb-3 text-center">
-                        {storeLogo && (
+                        {showReceiptLogo && storeLogo && (
                             <img
                                 src={storeLogo}
                                 alt="Logo toko"

@@ -482,15 +482,18 @@ export default function ReportsPage() {
             
             case 'SHIFT':
                 return (
-                    <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden animate-in fade-in">
-                        <table className="w-full text-left border-collapse text-sm">
+                    <div className="bg-white rounded-2xl border border-gray-100 overflow-x-auto animate-in fade-in">
+                        <table className="w-full min-w-[1100px] text-left border-collapse text-sm">
                             <thead>
                                 <tr className="bg-gray-50 border-b border-gray-100">
                                     <th className="px-6 py-4 font-bold text-gray-500">Kasir</th>
                                     <th className="px-6 py-4 font-bold text-gray-500">Dibuka</th>
                                     <th className="px-6 py-4 font-bold text-gray-500">Ditutup</th>
                                     <th className="px-6 py-4 font-bold text-gray-500 text-right">Kas Awal</th>
-                                    <th className="px-6 py-4 font-bold text-gray-500 text-right">Kas Akhir</th>
+                                    <th className="px-6 py-4 font-bold text-gray-500 text-right">Tunai</th>
+                                    <th className="px-6 py-4 font-bold text-gray-500 text-right">QRIS</th>
+                                    <th className="px-6 py-4 font-bold text-gray-500 text-right">Transfer</th>
+                                    <th className="px-6 py-4 font-bold text-gray-500 text-right">Total</th>
                                     <th className="px-6 py-4 font-bold text-gray-500 text-center">Status</th>
                                 </tr>
                             </thead>
@@ -501,7 +504,10 @@ export default function ReportsPage() {
                                         <td className="px-6 py-4 text-gray-600">{new Date(s.openedAt).toLocaleString('id-ID')}</td>
                                         <td className="px-6 py-4 text-gray-600">{s.closedAt ? new Date(s.closedAt).toLocaleString('id-ID') : '-'}</td>
                                         <td className="px-6 py-4 font-bold text-gray-700 text-right">{formatRp(s.openingCash)}</td>
-                                        <td className="px-6 py-4 font-bold text-gray-700 text-right">{s.closingCash ? formatRp(s.closingCash) : '-'}</td>
+                                        <td className="px-6 py-4 font-bold text-emerald-700 text-right">{formatRp(s.cashSales)}</td>
+                                        <td className="px-6 py-4 font-bold text-blue-700 text-right">{formatRp(s.qrisSales)}</td>
+                                        <td className="px-6 py-4 font-bold text-violet-700 text-right">{formatRp(s.transferSales)}</td>
+                                        <td className="px-6 py-4 font-extrabold text-gray-800 text-right">{formatRp(s.totalSales)}</td>
                                         <td className="px-6 py-4 text-center">
                                             <span className={`px-2 py-1 rounded text-xs font-bold ${s.status === 'OPEN' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{s.status}</span>
                                         </td>

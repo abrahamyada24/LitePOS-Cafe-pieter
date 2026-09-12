@@ -18,14 +18,27 @@ const waitForPrintableAssets = async (doc) => {
     });
   })]);
 
-  if (doc.fonts?.ready) await doc.fonts.ready;
+  if (doc.fonts?.ready) await doc.fonts.ready.catch(() => undefined);
 };
 
 const nextPaint = (targetWindow) => new Promise((resolve) => {
   targetWindow.requestAnimationFrame(() => targetWindow.requestAnimationFrame(resolve));
 });
 
-export const printReceiptElement = async (node, { paperWidthMm = 58, printMarginMm = 3 } = {}) => {
+const waitAtMost = (promise, timeoutMs) => new Promise((resolve) => {
+  const timeout = window.setTimeout(resolve, timeoutMs);
+  Promise.resolve(promise)
+    .catch(() => undefined)
+    .finally(() => {
+      window.clearTimeout(timeout);
+      resolve();
+    });
+});
+
+export const printReceiptElement = async (
+  node,
+  { paperWidthMm = 58, printMarginMm = 3, showReceiptLogo = false } = {},
+) => {
   if (typeof window === 'undefined' || !node) {
     throw new Error('Struk belum siap dicetak.');
   }
@@ -48,7 +61,7 @@ export const printReceiptElement = async (node, { paperWidthMm = 58, printMargin
     position: 'fixed',
     right: '0',
     bottom: '0',
-    width: '1px',
+    width: `${printableWidth}mm`,
     height: '1px',
     border: '0',
     opacity: '0',
@@ -67,6 +80,9 @@ export const printReceiptElement = async (node, { paperWidthMm = 58, printMargin
 
     const receipt = node.cloneNode(true);
     receipt.setAttribute('data-receipt-print-root', 'true');
+    if (!showReceiptLogo) {
+      receipt.querySelectorAll('.receipt-logo').forEach((logo) => logo.remove());
+    }
     const styles = Array.from(document.head.querySelectorAll('link[rel="stylesheet"], style'))
       .map((element) => element.outerHTML)
       .join('\n');
@@ -79,7 +95,7 @@ export const printReceiptElement = async (node, { paperWidthMm = 58, printMargin
           <base href="${document.baseURI}">
           ${styles}
           <style>
-            @page { margin: 0; }
+            @page { size: auto; margin: 0; }
             html, body {
               width: ${printableWidth}mm !important;
               min-width: ${printableWidth}mm !important;
@@ -170,7 +186,16 @@ export const printReceiptElement = async (node, { paperWidthMm = 58, printMargin
               font-variant-numeric: tabular-nums !important;
             }
             [data-receipt-print-root="true"] .receipt-logo {
-              display: none !important;
+              display: ${showReceiptLogo ? 'block' : 'none'} !important;
+              width: auto !important;
+              height: auto !important;
+              max-width: ${width === 80 ? 58 : 42}mm !important;
+              max-height: 16mm !important;
+              margin: 0 auto 2mm !important;
+              object-fit: contain !important;
+              image-rendering: pixelated !important;
+              -webkit-filter: grayscale(100%) contrast(120%) !important;
+              filter: grayscale(100%) contrast(120%) !important;
             }
             [data-receipt-print-root="true"] [class~="text-center"] {
               text-align: center !important;
@@ -245,8 +270,15 @@ export const printReceiptElement = async (node, { paperWidthMm = 58, printMargin
       </html>`);
     printDocument.close();
 
-    await waitForPrintableAssets(printDocument);
+    // A stylesheet or remote logo must never make a browser print appear to
+    // hang. Continue with the receipt after a short asset deadline.
+    await waitAtMost(waitForPrintableAssets(printDocument), 8_000);
     await nextPaint(printWindow);
+    printDocument.documentElement.getBoundingClientRect();
+
+    if (typeof printWindow.print !== 'function') {
+      throw new Error('Fitur dialog cetak tidak tersedia di browser ini.');
+    }
 
     let cleaned = false;
     const cleanupOnce = () => {
@@ -258,8 +290,10 @@ export const printReceiptElement = async (node, { paperWidthMm = 58, printMargin
     window.setTimeout(cleanupOnce, 60_000);
     printWindow.focus();
     printWindow.print();
+    return { mode: 'browser-dialog' };
   } catch (error) {
     cleanup();
-    throw error;
+    const reason = error instanceof Error ? error.message : String(error || 'Kesalahan tidak dikenal.');
+    throw new Error(`Dialog cetak browser tidak dapat dibuka. ${reason}`);
   }
 };

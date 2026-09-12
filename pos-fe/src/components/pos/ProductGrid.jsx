@@ -70,6 +70,11 @@ const ProductCard = ({ product, cart, addToCart, updateQty, getImageUrl }) => {
                     {product.category ? product.category.name : 'Umum'}
                 </p>
                 <h3 className="font-bold text-gray-800 text-xs lg:text-sm leading-snug mb-1 lg:mb-2 line-clamp-2">{product.name}</h3>
+                {product.description && (
+                    <p className="mb-2 line-clamp-2 text-[10px] font-medium leading-relaxed text-gray-500 lg:text-xs">
+                        {product.description}
+                    </p>
+                )}
                 <div className="mt-auto flex justify-between items-end">
                     <div>
                         {product.isDiscountActive && (

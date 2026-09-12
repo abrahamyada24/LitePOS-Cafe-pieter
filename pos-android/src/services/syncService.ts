@@ -429,14 +429,14 @@ export const syncService = {
                                 );
                             } else {
                                 await tx.executeSql(
-                                    'UPDATE products SET categoryId = ?, name = ?, price = ?, costPrice = ?, enableCostPrice = ?, stock = ?, imageUrl = ?, isUnlimitedStock = ?, barcode = ?, minStock = ?, discountActive = ?, discountType = ?, discountValue = ?, discountStartAt = ?, discountEndAt = ?, discountStartTime = ?, discountEndTime = ?, discountDays = ?, discountLabel = ?, isActive = ?, serverId = ?, isSynced = 1 WHERE id = ?',
-                                    [localCategoryId, p.name, p.price, p.costPrice || 0, p.enableCostPrice ? 1 : 0, p.stock || 0, p.imageUrl, p.isUnlimitedStock ? 1 : 0, p.barcode, p.minStock || 0, p.discountActive ? 1 : 0, p.discountType || null, p.discountValue || 0, p.discountStartAt || null, p.discountEndAt || null, p.discountStartTime || null, p.discountEndTime || null, p.discountDays || null, p.discountLabel || null, isActive, p.id, localId]
+                                    'UPDATE products SET categoryId = ?, name = ?, price = ?, costPrice = ?, enableCostPrice = ?, stock = ?, imageUrl = ?, isUnlimitedStock = ?, barcode = ?, minStock = ?, discountActive = ?, discountType = ?, discountValue = ?, discountStartAt = ?, discountEndAt = ?, discountStartTime = ?, discountEndTime = ?, discountDays = ?, discountLabel = ?, isActive = ?, availabilityScheduleEnabled = ?, availabilityStartTime = ?, availabilityEndTime = ?, availabilityDays = ?, serverId = ?, isSynced = 1 WHERE id = ?',
+                                    [localCategoryId, p.name, p.price, p.costPrice || 0, p.enableCostPrice ? 1 : 0, p.stock || 0, p.imageUrl, p.isUnlimitedStock ? 1 : 0, p.barcode, p.minStock || 0, p.discountActive ? 1 : 0, p.discountType || null, p.discountValue || 0, p.discountStartAt || null, p.discountEndAt || null, p.discountStartTime || null, p.discountEndTime || null, p.discountDays || null, p.discountLabel || null, isActive, p.availabilityScheduleEnabled ? 1 : 0, p.availabilityStartTime || null, p.availabilityEndTime || null, p.availabilityDays || null, p.id, localId]
                                 );
                             }
                         } else {
                             await tx.executeSql(
-                                'INSERT INTO products (categoryId, name, price, costPrice, enableCostPrice, stock, imageUrl, isUnlimitedStock, barcode, minStock, discountActive, discountType, discountValue, discountStartAt, discountEndAt, discountStartTime, discountEndTime, discountDays, discountLabel, isActive, serverId, isSynced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)',
-                                [localCategoryId, p.name, p.price, p.costPrice || 0, p.enableCostPrice ? 1 : 0, p.stock || 0, p.imageUrl, p.isUnlimitedStock ? 1 : 0, p.barcode, p.minStock || 0, p.discountActive ? 1 : 0, p.discountType || null, p.discountValue || 0, p.discountStartAt || null, p.discountEndAt || null, p.discountStartTime || null, p.discountEndTime || null, p.discountDays || null, p.discountLabel || null, isActive, p.id]
+                                'INSERT INTO products (categoryId, name, price, costPrice, enableCostPrice, stock, imageUrl, isUnlimitedStock, barcode, minStock, discountActive, discountType, discountValue, discountStartAt, discountEndAt, discountStartTime, discountEndTime, discountDays, discountLabel, isActive, availabilityScheduleEnabled, availabilityStartTime, availabilityEndTime, availabilityDays, serverId, isSynced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)',
+                                [localCategoryId, p.name, p.price, p.costPrice || 0, p.enableCostPrice ? 1 : 0, p.stock || 0, p.imageUrl, p.isUnlimitedStock ? 1 : 0, p.barcode, p.minStock || 0, p.discountActive ? 1 : 0, p.discountType || null, p.discountValue || 0, p.discountStartAt || null, p.discountEndAt || null, p.discountStartTime || null, p.discountEndTime || null, p.discountDays || null, p.discountLabel || null, isActive, p.availabilityScheduleEnabled ? 1 : 0, p.availabilityStartTime || null, p.availabilityEndTime || null, p.availabilityDays || null, p.id]
                             );
                         }
                     }
@@ -1256,6 +1256,21 @@ export const syncService = {
                     } catch (shiftErr: any) {
                         console.warn('[SYNC-HISTORY] Gagal upsert shift:', shiftErr?.message);
                     }
+                }
+
+                // Backend hanya mengizinkan satu shift OPEN untuk satu outlet.
+                // Jika perangkat pernah membuka shift saat offline sementara server
+                // sudah mempunyai shift aktif lain, singkirkan state OPEN lokal yang
+                // konflik supaya UI Android mengikuti sumber kebenaran server.
+                const serverOpenShiftIds = data.shifts
+                    .filter((shift: any) => shift.status === 'OPEN')
+                    .map((shift: any) => String(shift.id));
+                if (serverOpenShiftIds.length > 0) {
+                    const placeholders = serverOpenShiftIds.map(() => '?').join(',');
+                    await db.executeSql(
+                        `DELETE FROM shifts WHERE status = 'OPEN' AND id NOT IN (${placeholders})`,
+                        serverOpenShiftIds
+                    );
                 }
             }
 

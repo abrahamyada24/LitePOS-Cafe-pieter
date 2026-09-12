@@ -334,6 +334,7 @@ export default function SettingsScreen({ navigation }: any) {
                 enablePreOrder: rawSettings.enablePreOrder === 'true',
                 enableDineTable: rawSettings.enableDineTable === 'true',
                 enableTableOrder: rawSettings.enableTableOrder === 'true',
+                enableKitchenQueue: rawSettings.enableKitchenQueue === 'true',
                 enableKitchenPrint: rawSettings.enableKitchenPrint === 'true',
                 enableShift: rawSettings.enableShift === undefined ? true : rawSettings.enableShift === 'true',
                 enableShiftReminder: rawSettings.enableShiftReminder === undefined ? true : rawSettings.enableShiftReminder === 'true',
@@ -347,6 +348,8 @@ export default function SettingsScreen({ navigation }: any) {
                 allowNegativeStock: rawSettings.allowNegativeStock === 'true',
                 showLogoOnReceipt: rawSettings.showLogoOnReceipt === undefined ? true : rawSettings.showLogoOnReceipt === 'true',
                 receiptFooter: rawSettings.receiptFooter || '',
+                taxRate: Number(rawSettings.taxRate || 0),
+                serviceCharge: Number(rawSettings.serviceCharge || 0),
                 loyalty_active: rawSettings.loyalty_active === 'true',
                 loyalty_multiplier: Number(rawSettings.loyalty_multiplier || 1),
                 loyalty_multiplier_amount: Number(rawSettings.loyalty_multiplier_amount || 1000),
@@ -795,7 +798,7 @@ export default function SettingsScreen({ navigation }: any) {
 
                                         for (const s of (data.settings || [])) await db.executeSql('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [s.key, s.value]);
                                         for (const c of (data.categories || [])) await db.executeSql('INSERT OR REPLACE INTO categories (id, name) VALUES (?, ?)', [c.id, c.name]);
-                                        for (const p of (data.products || [])) await db.executeSql('INSERT OR REPLACE INTO products (id, categoryId, name, price, costPrice, enableCostPrice, stock, imageUrl, isUnlimitedStock, barcode, minStock, discountActive, discountType, discountValue, discountStartAt, discountEndAt, discountStartTime, discountEndTime, discountDays, discountLabel) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', [p.id, p.categoryId, p.name, p.price, p.costPrice || 0, p.enableCostPrice || 0, p.stock || 0, p.imageUrl || null, p.isUnlimitedStock || 0, p.barcode || null, p.minStock || 0, p.discountActive || 0, p.discountType || null, p.discountValue || 0, p.discountStartAt || null, p.discountEndAt || null, p.discountStartTime || null, p.discountEndTime || null, p.discountDays || null, p.discountLabel || null]);
+                                        for (const p of (data.products || [])) await db.executeSql('INSERT OR REPLACE INTO products (id, categoryId, name, price, costPrice, enableCostPrice, stock, imageUrl, isUnlimitedStock, barcode, minStock, discountActive, discountType, discountValue, discountStartAt, discountEndAt, discountStartTime, discountEndTime, discountDays, discountLabel, isActive, availabilityScheduleEnabled, availabilityStartTime, availabilityEndTime, availabilityDays) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', [p.id, p.categoryId, p.name, p.price, p.costPrice || 0, p.enableCostPrice || 0, p.stock || 0, p.imageUrl || null, p.isUnlimitedStock || 0, p.barcode || null, p.minStock || 0, p.discountActive || 0, p.discountType || null, p.discountValue || 0, p.discountStartAt || null, p.discountEndAt || null, p.discountStartTime || null, p.discountEndTime || null, p.discountDays || null, p.discountLabel || null, p.isActive === undefined ? 1 : (p.isActive ? 1 : 0), p.availabilityScheduleEnabled ? 1 : 0, p.availabilityStartTime || null, p.availabilityEndTime || null, p.availabilityDays || null]);
                                         for (const u of (data.users || [])) await db.executeSql('INSERT OR REPLACE INTO users (id, name, email, username, pin, role) VALUES (?,?,?,?,?,?)', [u.id, u.name, u.email || null, u.username || null, u.pin, u.role || 'CASHIER']);
                                         for (const c of (data.customers || [])) await db.executeSql('INSERT OR REPLACE INTO customers (id, name, phone, notes, loyaltyDiscount) VALUES (?,?,?,?,?)', [c.id, c.name, c.phone || null, c.notes || null, c.loyaltyDiscount || 0]);
                                         for (const s of (data.suppliers || [])) await db.executeSql('INSERT OR REPLACE INTO suppliers (id, name, phone, address, notes) VALUES (?,?,?,?,?)', [s.id, s.name, s.phone || null, s.address || null, s.notes || null]);
@@ -1472,6 +1475,23 @@ export default function SettingsScreen({ navigation }: any) {
                                                 console.log('[SYNC] syncTransactionHistory result:', historyRes);
                                                 if (!historyRes.success) {
                                                     console.warn('[SYNC] Gagal sync histori transaksi:', historyRes.error);
+                                                } else {
+                                                    const db = await getDBConnection();
+                                                    const [shiftResult] = await db.executeSql(
+                                                        `SELECT * FROM shifts WHERE status = 'OPEN' ORDER BY openedAt DESC LIMIT 1`
+                                                    );
+                                                    if (shiftResult.rows.length > 0) {
+                                                        const shift = shiftResult.rows.item(0);
+                                                        useStore.getState().setActiveShift({
+                                                            id: String(shift.id),
+                                                            openingCash: Number(shift.openingCash || 0),
+                                                            openedAt: shift.openedAt,
+                                                            expectedCloseAt: shift.expectedCloseAt || null,
+                                                            userName: shift.userName || undefined,
+                                                        });
+                                                    } else {
+                                                        useStore.getState().setActiveShift(null);
+                                                    }
                                                 }
                                                 // 4. Reload settings dari SQLite ke Zustand agar UI langsung update
                                                 try {
@@ -1480,9 +1500,9 @@ export default function SettingsScreen({ navigation }: any) {
                                                     let reloadedSettings: any = {};
                                                     for (let i = 0; i < settingsRes.rows.length; i++) {
                                                         const row = settingsRes.rows.item(i);
-                                                        if (['showImages', 'enablePreOrder', 'enableShift', 'enableShiftReminder', 'enableDineTable', 'enableTableOrder', 'allowNegativeStock', 'loyalty_active', 'enableKitchenPrint'].includes(row.key)) {
+                                                        if (['showImages', 'enablePreOrder', 'enableShift', 'enableShiftReminder', 'enableDineTable', 'enableTableOrder', 'enableKitchenQueue', 'allowNegativeStock', 'loyalty_active', 'enableKitchenPrint'].includes(row.key)) {
                                                             reloadedSettings[row.key] = row.value === 'true';
-                                                        } else if (['shiftDurationMinutes', 'shiftReminderMinutes', 'loyalty_multiplier', 'loyalty_multiplier_amount', 'loyalty_point_value', 'loyalty_min_points', 'dataResetVersion'].includes(row.key)) {
+                                                        } else if (['shiftDurationMinutes', 'shiftReminderMinutes', 'taxRate', 'serviceCharge', 'loyalty_multiplier', 'loyalty_multiplier_amount', 'loyalty_point_value', 'loyalty_min_points', 'dataResetVersion'].includes(row.key)) {
                                                             reloadedSettings[row.key] = Number(row.value || 0);
                                                         } else {
                                                             reloadedSettings[row.key] = row.value || null;

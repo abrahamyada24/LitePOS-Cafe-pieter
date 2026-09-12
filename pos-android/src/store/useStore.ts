@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { getCartItemLineTotal } from '../utils/cartPricing';
 
 export interface CartItem {
     id: number | string;
@@ -63,6 +64,8 @@ interface StoreState {
         allowNegativeStock: boolean;
         showLogoOnReceipt: boolean;
         receiptFooter: string;
+        taxRate: number | string;
+        serviceCharge: number | string;
         loyalty_active: boolean;
         loyalty_multiplier: number;
         loyalty_multiplier_amount: number;
@@ -129,6 +132,8 @@ export const useStore = create<StoreState>((set, get) => ({
         allowNegativeStock: false,
         showLogoOnReceipt: true,
         receiptFooter: '',
+        taxRate: 0,
+        serviceCharge: 0,
         loyalty_active: false,
         loyalty_multiplier: 1,
         loyalty_multiplier_amount: 1000,
@@ -207,11 +212,11 @@ export const useStore = create<StoreState>((set, get) => ({
     clearCart: () => set({ cart: [], discount: 0, discountType: 'amount', pendingOrderContext: null }),
     cartSubtotal: () => {
         const { cart } = get();
-        return cart.reduce((total, item) => total + (item.price * item.quantity), 0);
+        return cart.reduce((total, item) => total + getCartItemLineTotal(item), 0);
     },
     cartTotal: () => {
         const { cart, discount, discountType } = get();
-        const subtotal = cart.reduce((total, item) => total + (item.price * item.quantity), 0);
+        const subtotal = cart.reduce((total, item) => total + getCartItemLineTotal(item), 0);
         if (discountType === 'percent') {
             return Math.max(0, subtotal - Math.round(subtotal * discount / 100));
         }

@@ -132,7 +132,7 @@ export default function KatalogPage() {
   const filteredProducts = useMemo(() => {
     const keyword = searchQuery.trim().toLowerCase();
     return products.filter((product) => {
-      const matchSearch = !keyword || product.name.toLowerCase().includes(keyword);
+      const matchSearch = !keyword || `${product.name} ${product.description || ''}`.toLowerCase().includes(keyword);
       const matchCategory = selectedCategory === "All" || String(product.categoryId) === selectedCategory;
       return matchSearch && matchCategory;
     });
@@ -554,6 +554,11 @@ export default function KatalogPage() {
                       <h2 className="font-black text-gray-950 leading-snug mt-0.5 line-clamp-2">
                         {product.name}
                       </h2>
+                      {product.description && (
+                        <p className="mt-1 line-clamp-2 text-xs font-medium leading-relaxed text-gray-500">
+                          {product.description}
+                        </p>
+                      )}
                       <p className="text-xs font-bold text-gray-500 mt-1">{getStockLabel(product)}</p>
                       {product.isDiscountActive && (
                         <span className="inline-flex mt-1 px-2 py-0.5 rounded-md bg-red-50 text-red-600 text-[10px] font-black uppercase">
@@ -668,6 +673,11 @@ export default function KatalogPage() {
                 <div className="pt-4">
                   <p className="text-xs font-bold text-emerald-700">{selectedProduct.category?.name || "Menu"}</p>
                   <h2 className="text-2xl font-black text-gray-950 mt-1">{selectedProduct.name}</h2>
+                  {selectedProduct.description && (
+                    <p className="mt-2 whitespace-pre-line text-sm font-medium leading-relaxed text-gray-600">
+                      {selectedProduct.description}
+                    </p>
+                  )}
                   <div className="mt-3 flex items-center justify-between gap-4">
                     <div>
                       {selectedProduct.isDiscountActive && <p className="text-xs text-gray-400 line-through">{formatRupiah(selectedProduct.originalPrice)}</p>}

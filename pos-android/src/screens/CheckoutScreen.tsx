@@ -7,6 +7,12 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import DatePickerDropdown from '../components/DatePickerDropdown';
 import { PreOrderPaymentStatus, getPaymentStatusLabel } from '../utils/preOrderPayment';
 import { syncService } from '../services/syncService';
+import {
+    getCartItemBaseUnitPrice,
+    getCartItemEffectiveOriginalUnitPrice,
+    getCartItemEffectiveUnitPrice,
+    getCartItemLineTotal,
+} from '../utils/cartPricing';
 
 export default function CheckoutScreen({ navigation }: any) {
     useAppColorScheme(tw);
@@ -60,7 +66,8 @@ export default function CheckoutScreen({ navigation }: any) {
     const subtotal = cartSubtotal();
     const totalBeforeTaxAndPoints = cartTotal();
     const discountAmount = subtotal - totalBeforeTaxAndPoints;
-    const taxRate = settings.taxRate ? Number(settings.taxRate) / 100 : 0;
+    const taxRatePercent = Math.max(0, Number(settings.taxRate) || 0);
+    const taxRate = taxRatePercent / 100;
     const taxAmount = Math.round(totalBeforeTaxAndPoints * taxRate);
     const totalBeforePoints = totalBeforeTaxAndPoints + taxAmount;
     const pointsValue = usePoints ? pointsToRedeem * (settings.loyalty_point_value || 0) : 0;
@@ -396,9 +403,11 @@ export default function CheckoutScreen({ navigation }: any) {
             }
 
             for (const item of cart) {
+                const storedUnitPrice = getCartItemEffectiveUnitPrice(item);
+                const storedOriginalUnitPrice = getCartItemEffectiveOriginalUnitPrice(item);
                 await db.executeSql(
                     `INSERT INTO transaction_items (transactionId, productId, quantity, price, originalPrice, discountAmount, costPrice, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-                    [trxId, item.id, item.quantity, item.price, item.originalPrice || item.price, item.discountAmount || 0, item.costPrice || 0, item.notes || null]
+                    [trxId, item.id, item.quantity, storedUnitPrice, storedOriginalUnitPrice, item.discountAmount || 0, item.costPrice || 0, item.notes || null]
                 );
                 if (item.isUnlimitedStock !== 1) {
                     await db.executeSql(`UPDATE products SET stock = stock - ? WHERE id = ?`, [item.quantity, item.id]);
@@ -419,7 +428,7 @@ export default function CheckoutScreen({ navigation }: any) {
                 invoiceNumber, createdAt, items: cart,
                 customerName: custNameFinal,
                 customerPhone: selectedCustomer?.phone || null,
-                subtotal, discountAmount, taxAmount, taxRate, total, paymentMethod: effectivePaymentMethod,
+                subtotal, discountAmount, taxAmount, taxRate: taxRatePercent, total, paymentMethod: effectivePaymentMethod,
                 cashAmount: paymentMethod === 'CASH' ? rawCash : amountDueNow,
                 changeAmount: Math.max(0, changeAmount),
                 preOrderDate: preOrderDate || null,
@@ -710,11 +719,11 @@ export default function CheckoutScreen({ navigation }: any) {
                         <View key={idx} style={tw`p-4 border-b border-gray-50 dark:border-gray-800`}>
                             <View style={tw`flex-row justify-between items-center mb-1`}>
                                 <Text style={tw`font-bold text-gray-800 dark:text-gray-100 flex-1`}>{item.name}</Text>
-                                <Text style={tw`font-bold text-blue-600`}>{formatRp(item.price * item.quantity)}</Text>
+                                <Text style={tw`font-bold text-blue-600`}>{formatRp(getCartItemLineTotal(item))}</Text>
                             </View>
                             {item.notes ? <Text style={tw`text-[10px] text-gray-500 italic mb-2`}>Catatan: {item.notes}</Text> : null}
                             <View style={tw`flex-row justify-between items-center`}>
-                                <Text style={tw`text-xs text-gray-500 mt-1`}>{formatRp(item.price)} / item</Text>
+                                <Text style={tw`text-xs text-gray-500 mt-1`}>{formatRp(getCartItemBaseUnitPrice(item))} / item</Text>
                                 <View style={tw`flex-row items-center border border-gray-200 dark:border-gray-700 rounded-lg`}>
                                     <TouchableOpacity onPress={() => updateCartQuantity(item.cartItemId, item.quantity - 1)} style={tw`p-2 bg-gray-50 dark:bg-gray-900 rounded-l-lg`}>
                                         <Icon name="minus" size={14} color={tw.color('gray-600')} />
@@ -772,7 +781,7 @@ export default function CheckoutScreen({ navigation }: any) {
                         )}
                         {taxAmount > 0 ? (
                             <View style={tw`flex-row justify-between items-center mb-2`}>
-                                <Text style={tw`text-gray-600 dark:text-gray-300 text-sm`}>{taxRate > 0 ? `Pajak (${Number(settings.taxRate)}%)` : 'Pajak'}</Text>
+                                <Text style={tw`text-gray-600 dark:text-gray-300 text-sm`}>Pajak ({taxRatePercent}%)</Text>
                                 <Text style={tw`font-bold text-gray-800 dark:text-gray-100`}>{formatRp(taxAmount)}</Text>
                             </View>
                         ) : null}

@@ -20,6 +20,7 @@ import {
 } from '../utils/receiptLogo';
 import { shouldShowLitePosBranding } from '../utils/receiptBranding';
 import { getPaymentTypeLabel } from '../utils/paymentLabels';
+import { getCartItemEffectiveOriginalUnitPrice, getCartItemEffectiveUnitPrice } from '../utils/cartPricing';
 
 // Logo LitePOS permanen - tidak perlu setting
 const LITEPOS_LOGO = require('../assets/logo.png');
@@ -51,11 +52,8 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
         receiptData.subtotal ?? receiptData.subTotal ?? (transactionTotal + transactionDiscount)
     ));
     const getItemQuantity = (item: any) => Math.max(1, Number(item.quantity ?? item.qty ?? 1));
-    const getItemPrice = (item: any) => Math.max(0, Number(item.price || 0));
-    const getItemOriginalPrice = (item: any) => Math.max(
-        getItemPrice(item),
-        Number(item.originalPrice ?? item.price ?? 0),
-    );
+    const getItemPrice = (item: any) => Math.max(0, getCartItemEffectiveUnitPrice(item));
+    const getItemOriginalPrice = (item: any) => Math.max(getItemPrice(item), getCartItemEffectiveOriginalUnitPrice(item));
     const getItemDiscountTotal = (item: any) => {
         const unitDiscount = Math.max(
             0,

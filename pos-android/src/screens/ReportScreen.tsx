@@ -199,6 +199,33 @@ export default function ReportScreen({ navigation }: any) {
                         AND COALESCE(t.paymentStatus, 'PAID') = 'PAID'
                     ) as txTotal,
                     (
+                        SELECT COALESCE(SUM(CASE WHEN COALESCE(t.paidAmount, 0) > 0 THEN t.paidAmount ELSE t.grandTotal END),0)
+                        FROM transactions t
+                        WHERE COALESCE(t.paidAt, t.createdAt) >= s.openedAt
+                        AND (s.closedAt IS NULL OR COALESCE(t.paidAt, t.createdAt) <= s.closedAt)
+                        AND t.status = 'COMPLETED'
+                        AND COALESCE(t.paymentStatus, 'PAID') = 'PAID'
+                        AND UPPER(COALESCE(t.paymentMethod, '')) = 'CASH'
+                    ) as cashSales,
+                    (
+                        SELECT COALESCE(SUM(CASE WHEN COALESCE(t.paidAmount, 0) > 0 THEN t.paidAmount ELSE t.grandTotal END),0)
+                        FROM transactions t
+                        WHERE COALESCE(t.paidAt, t.createdAt) >= s.openedAt
+                        AND (s.closedAt IS NULL OR COALESCE(t.paidAt, t.createdAt) <= s.closedAt)
+                        AND t.status = 'COMPLETED'
+                        AND COALESCE(t.paymentStatus, 'PAID') = 'PAID'
+                        AND UPPER(COALESCE(t.paymentMethod, '')) IN ('QRIS', 'QRIS_MANUAL')
+                    ) as qrisSales,
+                    (
+                        SELECT COALESCE(SUM(CASE WHEN COALESCE(t.paidAmount, 0) > 0 THEN t.paidAmount ELSE t.grandTotal END),0)
+                        FROM transactions t
+                        WHERE COALESCE(t.paidAt, t.createdAt) >= s.openedAt
+                        AND (s.closedAt IS NULL OR COALESCE(t.paidAt, t.createdAt) <= s.closedAt)
+                        AND t.status = 'COMPLETED'
+                        AND COALESCE(t.paymentStatus, 'PAID') = 'PAID'
+                        AND UPPER(COALESCE(t.paymentMethod, '')) = 'TRANSFER'
+                    ) as transferSales,
+                    (
                         SELECT COALESCE(SUM(e.amount),0) FROM expenses e
                         WHERE e.createdAt >= s.openedAt
                         AND (s.closedAt IS NULL OR e.createdAt <= s.closedAt)
@@ -252,7 +279,7 @@ export default function ReportScreen({ navigation }: any) {
                     dailyMap[day] = (dailyMap[day] || 0) + paidValue;
                     // Payment Breakdown
                     if (item.paymentMethod === 'CASH') { cash += paidValue; cashCount++; }
-                    else if (item.paymentMethod === 'QRIS') { qris += paidValue; qrisCount++; }
+                    else if (item.paymentMethod === 'QRIS' || item.paymentMethod === 'QRIS_MANUAL') { qris += paidValue; qrisCount++; }
                     else if (item.paymentMethod === 'TRANSFER') { transfer += paidValue; transferCount++; }
 
                     if (item.discountAmount) {
@@ -867,8 +894,6 @@ tr.ret td{color:#dc2626;background:#fef2f2}
         const durationMs = closeTime ? closeTime.getTime() - openTime.getTime() : Date.now() - openTime.getTime();
         const dH = Math.floor(durationMs / 3600000);
         const dM = Math.floor((durationMs % 3600000) / 60000);
-        const diff = shift.closingCash != null ? shift.closingCash - (shift.openingCash + (shift.txTotal || 0) - (shift.expensesTotal || 0)) : null;
-
         let text = `*${storeName}*\n`;
         text += `*LAPORAN SHIFT*\n\n`;
         text += `Kasir: ${shift.userName || 'Kasir'}\n`;
@@ -876,11 +901,12 @@ tr.ret td{color:#dc2626;background:#fef2f2}
         if (closeTime) text += `Tutup: ${closeTime.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}\n`;
         text += `Durasi: ${dH}j ${dM}m\n\n`;
         text += `Kas Awal: ${formatRp(shift.openingCash || 0)}\n`;
-        text += `Total Penjualan: ${formatRp(shift.txTotal || 0)}\n`;
+        text += `Tunai: ${formatRp(shift.cashSales || 0)}\n`;
+        text += `QRIS: ${formatRp(shift.qrisSales || 0)}\n`;
+        text += `Transfer: ${formatRp(shift.transferSales || 0)}\n`;
+        text += `*Total Penjualan: ${formatRp(shift.txTotal || 0)}*\n`;
         text += `Pengeluaran: ${formatRp(shift.expensesTotal || 0)}\n`;
         text += `Jml Transaksi: ${shift.txCount || 0}\n`;
-        if (shift.closingCash != null) text += `*Kas Akhir: ${formatRp(shift.closingCash)}*\n`;
-        if (diff !== null) text += `*Selisih Kas: ${diff >= 0 ? '+' : ''}${formatRp(diff)}*\n`;
         await shareTextToWhatsApp('Laporan Shift', text);
     };
 
@@ -898,8 +924,6 @@ tr.ret td{color:#dc2626;background:#fef2f2}
             const durationMs = closeTime ? closeTime.getTime() - openTime.getTime() : Date.now() - openTime.getTime();
             const dH = Math.floor(durationMs / 3600000);
             const dM = Math.floor((durationMs % 3600000) / 60000);
-            const diff = shift.closingCash != null ? shift.closingCash - (shift.openingCash + (shift.txTotal || 0) - (shift.expensesTotal || 0)) : null;
-
             let text = center(storeName) + '\n';
             text += center('LAPORAN SHIFT') + '\n';
             text += LINE;
@@ -909,11 +933,12 @@ tr.ret td{color:#dc2626;background:#fef2f2}
             text += padEnd('Durasi', W - 14) + padStart(`${dH}j ${dM}m`, 14) + '\n';
             text += LINE;
             text += padEnd('Kas Awal', W - 14) + padStart(formatRp(shift.openingCash || 0), 14) + '\n';
+            text += padEnd('Tunai', W - 14) + padStart(formatRp(shift.cashSales || 0), 14) + '\n';
+            text += padEnd('QRIS', W - 14) + padStart(formatRp(shift.qrisSales || 0), 14) + '\n';
+            text += padEnd('Transfer', W - 14) + padStart(formatRp(shift.transferSales || 0), 14) + '\n';
             text += padEnd('Total Penjualan', W - 14) + padStart(formatRp(shift.txTotal || 0), 14) + '\n';
             text += padEnd('Pengeluaran', W - 14) + padStart(formatRp(shift.expensesTotal || 0), 14) + '\n';
             text += padEnd('Jml Transaksi', W - 14) + padStart(String(shift.txCount || 0), 14) + '\n';
-            if (shift.closingCash != null) text += padEnd('Kas Akhir', W - 14) + padStart(formatRp(shift.closingCash), 14) + '\n';
-            if (diff !== null) text += padEnd('Selisih Kas', W - 14) + padStart(`${diff >= 0 ? '+' : ''}${formatRp(diff)}`, 14) + '\n';
             text += LINE;
             text += center(`Dicetak: ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}`) + '\n\n\n';
 
@@ -1117,7 +1142,7 @@ tr.ret td{color:#dc2626;background:#fef2f2}
                     </View>
                     <View style={tw`flex-1`}>
                         <Text style={tw`text-gray-900 dark:text-white font-black text-base`}>Laporan per shift</Text>
-                        <Text style={tw`text-gray-500 dark:text-gray-400 text-xs mt-0.5`}>Rekap kasir dan pergerakan uang</Text>
+                        <Text style={tw`text-gray-500 dark:text-gray-400 text-xs mt-0.5`}>Rekap kasir dan metode pembayaran</Text>
                     </View>
                     <View style={tw`bg-gray-100 dark:bg-gray-800 px-3 py-1.5 rounded-full`}>
                         <Text style={tw`text-gray-700 dark:text-gray-200 font-black text-xs`}>{shiftReports.length} shift</Text>
@@ -1139,7 +1164,6 @@ tr.ret td{color:#dc2626;background:#fef2f2}
                 const durationMs = closeTime ? closeTime.getTime() - openTime.getTime() : Date.now() - openTime.getTime();
                 const durationH = Math.floor(durationMs / 3600000);
                 const durationM = Math.floor((durationMs % 3600000) / 60000);
-                const diff = item.closingCash != null ? item.closingCash - (item.openingCash + (item.txTotal || 0) - (item.expensesTotal || 0)) : null;
                 return (
                     <View style={tw`bg-white dark:bg-gray-800 rounded-lg p-4 mb-3 border border-gray-200 dark:border-gray-700`}>
                         <View style={tw`flex-row justify-between items-center mb-2`}>
@@ -1151,20 +1175,6 @@ tr.ret td{color:#dc2626;background:#fef2f2}
                                 <Text style={tw`font-bold text-gray-800 dark:text-gray-100 text-sm`}>{item.userName || 'Kasir'}</Text>
                             </View>
                             <Text style={tw`text-xs text-gray-400`}>{`${durationH}j ${durationM}m`}</Text>
-                        </View>
-                        <View style={tw`hidden`}>
-                            <View>
-                                <Text style={tw`text-[10px] text-gray-400 uppercase font-bold`}>Buka</Text>
-                                <Text style={tw`text-xs font-bold text-gray-700 dark:text-gray-200`}>{openTime.toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</Text>
-                            </View>
-                            <View>
-                                <Text style={tw`text-[10px] text-gray-400 uppercase font-bold`}>Kas Awal</Text>
-                                <Text style={tw`text-xs font-bold text-gray-700 dark:text-gray-200`}>{formatRp(item.openingCash || 0)}</Text>
-                            </View>
-                            <View>
-                                <Text style={tw`text-[10px] text-gray-400 uppercase font-bold`}>Kas Akhir</Text>
-                                <Text style={tw`text-xs font-bold ${item.closingCash != null ? 'text-gray-700 dark:text-gray-200' : 'text-gray-300'}`}>{item.closingCash != null ? formatRp(item.closingCash) : 'ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â'}</Text>
-                            </View>
                         </View>
                         <View style={tw`flex-row items-center mt-1 mb-3`}>
                             <Icon name="clock-outline" size={14} color={tw.color('gray-400')} style={tw`mr-2`} />
@@ -1179,26 +1189,26 @@ tr.ret td{color:#dc2626;background:#fef2f2}
                                 <Text style={tw`text-xs font-black text-gray-800 dark:text-gray-100`}>{formatRp(item.openingCash || 0)}</Text>
                             </View>
                             <View style={tw`flex-row justify-between mb-1.5`}>
-                                <Text style={tw`text-xs text-gray-500`}>Penjualan ({item.txCount || 0} transaksi)</Text>
-                                <Text style={tw`text-xs font-black text-green-600`}>+{formatRp(item.txTotal || 0)}</Text>
+                                <Text style={tw`text-xs text-gray-500`}>Tunai</Text>
+                                <Text style={tw`text-xs font-black text-green-600`}>{formatRp(item.cashSales || 0)}</Text>
+                            </View>
+                            <View style={tw`flex-row justify-between mb-1.5`}>
+                                <Text style={tw`text-xs text-gray-500`}>QRIS</Text>
+                                <Text style={tw`text-xs font-black text-blue-600`}>{formatRp(item.qrisSales || 0)}</Text>
+                            </View>
+                            <View style={tw`flex-row justify-between mb-1.5`}>
+                                <Text style={tw`text-xs text-gray-500`}>Transfer</Text>
+                                <Text style={tw`text-xs font-black text-purple-600`}>{formatRp(item.transferSales || 0)}</Text>
                             </View>
                             <View style={tw`flex-row justify-between mb-1.5`}>
                                 <Text style={tw`text-xs text-gray-500`}>Pengeluaran</Text>
                                 <Text style={tw`text-xs font-black text-red-500`}>-{formatRp(item.expensesTotal || 0)}</Text>
                             </View>
                             <View style={tw`flex-row justify-between pt-2 mt-1 border-t border-gray-100 dark:border-gray-700`}>
-                                <Text style={tw`text-xs font-bold text-gray-700 dark:text-gray-200`}>Kas akhir</Text>
-                                <Text style={tw`text-sm font-black ${item.closingCash != null ? 'text-blue-600' : 'text-gray-300'}`}>
-                                    {item.closingCash != null ? formatRp(item.closingCash) : 'Belum ditutup'}
-                                </Text>
+                                <Text style={tw`text-xs font-bold text-gray-700 dark:text-gray-200`}>Total ({item.txCount || 0} transaksi)</Text>
+                                <Text style={tw`text-sm font-black text-gray-900 dark:text-white`}>{formatRp(item.txTotal || 0)}</Text>
                             </View>
                         </View>
-                        {diff !== null && (
-                            <View style={tw`mt-2 flex-row items-center`}>
-                                <Text style={tw`text-[10px] text-gray-400 uppercase font-bold mr-2`}>Selisih Kas</Text>
-                                <Text style={[tw`text-sm font-black`, diff >= 0 ? tw`text-green-600` : tw`text-red-500`]}>{diff >= 0 ? '+' : ''}{formatRp(diff)}</Text>
-                            </View>
-                        )}
                         <View style={tw`mt-3 border-t border-gray-100 dark:border-gray-700 pt-3 flex-row items-center justify-end`}>
                             <View style={tw`flex-row`}>
                                 <TouchableOpacity

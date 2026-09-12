@@ -39,6 +39,9 @@ export default function AddonModal({
               <p className="text-xs font-black uppercase tracking-wider">Pilih Add-on</p>
             </div>
             <h2 className="truncate text-xl font-black text-gray-900">{product.name}</h2>
+            {product.description && (
+              <p className="mt-1 line-clamp-2 text-xs font-medium leading-relaxed text-gray-500">{product.description}</p>
+            )}
           </div>
           <button type="button" onClick={onClose} className="rounded-full bg-gray-100 p-2 text-gray-500 hover:bg-gray-200" aria-label="Tutup pilihan add-on">
             <X size={18} />

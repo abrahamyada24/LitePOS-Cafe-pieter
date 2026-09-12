@@ -139,7 +139,10 @@ export function buildReportExport(activeTab, data) {
           ["Dibuka", "openedAt", "date"],
           ["Ditutup", "closedAt", "date"],
           ["Kas Awal", "openingCash", "currency"],
-          ["Kas Akhir", "closingCash", "currencyNullable"],
+          ["Tunai", "cashSales", "currency"],
+          ["QRIS", "qrisSales", "currency"],
+          ["Transfer", "transferSales", "currency"],
+          ["Total Penjualan", "totalSales", "currency"],
           ["Status", "status"]
         ),
         rows: (data.shiftData || []).map((item) => ({
@@ -147,7 +150,10 @@ export function buildReportExport(activeTab, data) {
           openedAt: item.openedAt,
           closedAt: item.closedAt,
           openingCash: Number(item.openingCash) || 0,
-          closingCash: item.closingCash == null ? null : Number(item.closingCash),
+          cashSales: Number(item.cashSales) || 0,
+          qrisSales: Number(item.qrisSales) || 0,
+          transferSales: Number(item.transferSales) || 0,
+          totalSales: Number(item.totalSales) || 0,
           status: item.status || "-",
         })),
       };

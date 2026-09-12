@@ -11,6 +11,8 @@ import RNFS from 'react-native-fs';
 import { resolveApiAssetUrl } from '../services/api';
 import { closeConfiguredPrinter, connectConfiguredPrinter } from '../utils/printerConnection';
 import ProductDiscountFields, { createDiscountValues, getDiscountScheduleForSave, validateDiscountSchedule } from '../components/ProductDiscountFields';
+import ProductAvailabilityFields, { createProductAvailabilityValues, validateProductAvailability } from '../components/ProductAvailabilityFields';
+import { getProductAvailability } from '../utils/productAvailability';
 
 const formatRp = (num: number) => 'Rp ' + (Math.round(num) || 0).toLocaleString('id-ID');
 
@@ -37,6 +39,7 @@ export default function ProductListScreen({ navigation }: any) {
     const [newAddonName, setNewAddonName] = useState('');
     const [newAddonPrice, setNewAddonPrice] = useState('');
     const [productDiscount, setProductDiscount] = useState<any>(createDiscountValues());
+    const [productAvailability, setProductAvailability] = useState(createProductAvailabilityValues());
 
     const loadData = useCallback(async () => {
         try {
@@ -44,7 +47,6 @@ export default function ProductListScreen({ navigation }: any) {
             const [prodRes] = await db.executeSql(`
                 SELECT p.*, c.name as categoryName FROM products p 
                 LEFT JOIN categories c ON p.categoryId = c.id
-                WHERE COALESCE(p.isActive, 1) = 1
                 ORDER BY p.name
             `);
             const prods: any[] = [];
@@ -61,7 +63,11 @@ export default function ProductListScreen({ navigation }: any) {
     useEffect(() => {
         loadData();
         const unsub = navigation.addListener('focus', loadData);
-        return unsub;
+        const interval = setInterval(loadData, 60000);
+        return () => {
+            unsub();
+            clearInterval(interval);
+        };
     }, [navigation, loadData]);
 
     const resetForm = () => {
@@ -71,6 +77,7 @@ export default function ProductListScreen({ navigation }: any) {
         setProductImageUrl(''); setIsUnlimitedStock(false); setProductBarcode('');
         setProductAddons([]); setNewAddonName(''); setNewAddonPrice('');
         setProductDiscount(createDiscountValues());
+        setProductAvailability(createProductAvailabilityValues());
     };
 
     const openAdd = () => { resetForm(); setShowModal(true); };
@@ -87,6 +94,7 @@ export default function ProductListScreen({ navigation }: any) {
         setIsUnlimitedStock(prod.isUnlimitedStock === 1);
         setProductBarcode(prod.barcode || '');
         setProductDiscount(createDiscountValues(prod));
+        setProductAvailability(createProductAvailabilityValues(prod));
         try {
             const db = await getDBConnection();
             const [aRes] = await db.executeSql('SELECT * FROM product_addons WHERE productId = ? ORDER BY id', [prod.id]);
@@ -107,6 +115,8 @@ export default function ProductListScreen({ navigation }: any) {
         }
         const discountScheduleError = validateDiscountSchedule(productDiscount);
         if (discountScheduleError) return Alert.alert('Jadwal diskon belum lengkap', discountScheduleError);
+        const availabilityError = validateProductAvailability(productAvailability);
+        if (availabilityError) return Alert.alert('Jadwal produk belum lengkap', availabilityError);
         const discountSchedule = getDiscountScheduleForSave(productDiscount);
 
         Alert.alert(
@@ -127,16 +137,23 @@ export default function ProductListScreen({ navigation }: any) {
                             const enableCost = enableCostPrice ? 1 : 0;
                             const barcode = productBarcode.trim() || null;
                             const discountValues = [productDiscount.active ? 1 : 0, productDiscount.type, parseFloat(productDiscount.value || '0'), discountSchedule.startAt, discountSchedule.endAt, discountSchedule.startTime, discountSchedule.endTime, discountSchedule.days, productDiscount.label || null];
+                            const availabilityValues = [
+                                productAvailability.active ? 1 : 0,
+                                productAvailability.scheduleEnabled ? 1 : 0,
+                                productAvailability.scheduleEnabled ? productAvailability.startTime : null,
+                                productAvailability.scheduleEnabled ? productAvailability.endTime : null,
+                                productAvailability.scheduleEnabled ? productAvailability.days : null,
+                            ];
 
                             if (editing) {
                                 await db.executeSql(
-                                    'UPDATE products SET name=?, price=?, costPrice=?, enableCostPrice=?, stock=?, categoryId=?, imageUrl=?, isUnlimitedStock=?, barcode=?, discountActive=?, discountType=?, discountValue=?, discountStartAt=?, discountEndAt=?, discountStartTime=?, discountEndTime=?, discountDays=?, discountLabel=?, isSynced=0 WHERE id=?',
-                                    [productName, price, costPrice, enableCost, stock, catId, img, isUnlimited, barcode, ...discountValues, editing.id]
+                                    'UPDATE products SET name=?, price=?, costPrice=?, enableCostPrice=?, stock=?, categoryId=?, imageUrl=?, isUnlimitedStock=?, barcode=?, discountActive=?, discountType=?, discountValue=?, discountStartAt=?, discountEndAt=?, discountStartTime=?, discountEndTime=?, discountDays=?, discountLabel=?, isActive=?, availabilityScheduleEnabled=?, availabilityStartTime=?, availabilityEndTime=?, availabilityDays=?, isSynced=0 WHERE id=?',
+                                    [productName, price, costPrice, enableCost, stock, catId, img, isUnlimited, barcode, ...discountValues, ...availabilityValues, editing.id]
                                 );
                             } else {
                                 const [insertRes] = await db.executeSql(
-                                    'INSERT INTO products (name, price, costPrice, enableCostPrice, stock, categoryId, imageUrl, isUnlimitedStock, barcode, discountActive, discountType, discountValue, discountStartAt, discountEndAt, discountStartTime, discountEndTime, discountDays, discountLabel) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                                    [productName, price, costPrice, enableCost, stock, catId, img, isUnlimited, barcode, ...discountValues]
+                                    'INSERT INTO products (name, price, costPrice, enableCostPrice, stock, categoryId, imageUrl, isUnlimitedStock, barcode, discountActive, discountType, discountValue, discountStartAt, discountEndAt, discountStartTime, discountEndTime, discountDays, discountLabel, isActive, availabilityScheduleEnabled, availabilityStartTime, availabilityEndTime, availabilityDays) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                                    [productName, price, costPrice, enableCost, stock, catId, img, isUnlimited, barcode, ...discountValues, ...availabilityValues]
                                 );
                                 // Save buffered addons
                                 for (const a of productAddons.filter(x => x.local)) {
@@ -308,14 +325,26 @@ export default function ProductListScreen({ navigation }: any) {
 
             <FlatList data={filtered} keyExtractor={item => String(item.id)} contentContainerStyle={tw`p-4 pb-10`}
                 renderItem={({ item }) => (
-                    <TouchableOpacity style={tw`bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm mb-3 border border-gray-100 dark:border-gray-800 flex-row justify-between items-center`}
+                    <TouchableOpacity style={tw`bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm mb-3 border ${getProductAvailability(item).isAvailable ? 'border-gray-100 dark:border-gray-800' : 'border-gray-200 dark:border-gray-700 opacity-75'} flex-row justify-between items-center`}
                         onPress={() => openEdit(item)} activeOpacity={0.7}>
                         <View style={tw`flex-1 mr-3`}>
-                            <Text style={tw`font-bold text-gray-800 dark:text-gray-100 text-base`}>{item.name}</Text>
+                            <View style={tw`flex-row items-center flex-wrap`}>
+                                <Text style={tw`font-bold text-gray-800 dark:text-gray-100 text-base mr-2`}>{item.name}</Text>
+                                <View style={tw`px-2 py-0.5 rounded-full ${getProductAvailability(item).isAvailable ? 'bg-green-100 dark:bg-green-900/30' : 'bg-gray-200 dark:bg-gray-700'}`}>
+                                    <Text style={tw`text-[9px] font-black ${getProductAvailability(item).isAvailable ? 'text-green-700 dark:text-green-300' : 'text-gray-600 dark:text-gray-300'}`}>
+                                        {getProductAvailability(item).label}
+                                    </Text>
+                                </View>
+                            </View>
                             <View style={tw`flex-row items-center mt-1 flex-wrap`}>
                                 <Text style={tw`text-xs bg-gray-100 dark:bg-gray-700 text-gray-500 px-2 py-0.5 rounded-md mr-2`}>{item.categoryName || 'Tanpa Kategori'}</Text>
                                 <Text style={tw`text-xs text-gray-500`}>Stok: <Text style={tw`font-bold`}>{item.isUnlimitedStock === 1 ? '∞' : item.stock}</Text></Text>
                             </View>
+                            {Number(item.availabilityScheduleEnabled) === 1 ? (
+                                <Text style={tw`text-[10px] text-emerald-600 dark:text-emerald-400 mt-1`}>
+                                    {item.availabilityStartTime || '00:00'}–{item.availabilityEndTime || '23:59'} · Jadwal hari aktif
+                                </Text>
+                            ) : null}
                             <Text style={tw`font-black text-blue-600 mt-1`}>{formatRp(item.price)}</Text>
                             {item.enableCostPrice === 1 && item.costPrice > 0 && <Text style={tw`text-xs text-gray-400`}>Modal: {formatRp(item.costPrice)}</Text>}
                             {item.barcode ? <Text style={tw`text-xs text-blue-500 mt-1`}>Barcode: {item.barcode}</Text> : null}
@@ -399,6 +428,8 @@ export default function ProductListScreen({ navigation }: any) {
                                     </View>
                                 )}
                             </View>
+
+                            <ProductAvailabilityFields values={productAvailability} onChange={setProductAvailability} />
 
                             <ProductDiscountFields values={productDiscount} onChange={setProductDiscount} />
 
