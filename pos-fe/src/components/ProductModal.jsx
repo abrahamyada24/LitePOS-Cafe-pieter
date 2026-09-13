@@ -44,7 +44,6 @@ export default function ProductModal({ isOpen, onClose, onSave, initialData, cat
     availabilityDays: [0, 1, 2, 3, 4, 5, 6]
   });
   const [previewUrl, setPreviewUrl] = useState('');
-  const [isDesktopApp, setIsDesktopApp] = useState(false);
 
   // ADDONS STATE
   const [addons, setAddons] = useState([]);
@@ -70,10 +69,6 @@ export default function ProductModal({ isOpen, onClose, onSave, initialData, cat
         if(json.success) setAddons(json.data);
     } catch(e) { console.error(e); }
   };
-
-  useEffect(() => {
-    setIsDesktopApp(Boolean(window.electronAPI));
-  }, []);
 
   useEffect(() => {
     if (isOpen) {
@@ -217,7 +212,7 @@ export default function ProductModal({ isOpen, onClose, onSave, initialData, cat
       showAlert.warning('Hari berlaku belum dipilih', 'Pilih minimal satu hari untuk jadwal diskon.');
       return;
     }
-    if (isDesktopApp && formData.status === 'active' && formData.availabilityScheduleEnabled) {
+    if (formData.status === 'active' && formData.availabilityScheduleEnabled) {
       if (!formData.availabilityStartTime || !formData.availabilityEndTime) {
         showAlert.warning('Jam aktif belum lengkap', 'Isi jam mulai dan jam selesai produk.');
         return;
@@ -613,7 +608,7 @@ export default function ProductModal({ isOpen, onClose, onSave, initialData, cat
                   </div>
                 </div>
 
-                {isDesktopApp && formData.status === 'active' && (
+                {formData.status === 'active' && (
                   <section className="mt-6 space-y-4 rounded-2xl border border-emerald-100 bg-emerald-50/60 p-5">
                     <div className="flex items-center justify-between gap-4">
                       <div className="flex items-center gap-3">

@@ -28,7 +28,7 @@ interface StoreState {
     cart: CartItem[];
     discount: number;
     discountType: 'amount' | 'percent';
-    activeShift: { id: string; openingCash: number; openedAt: string; expectedCloseAt?: string | null; userName?: string } | null;
+    activeShift: { id: string; openingCash: number; openedAt: string; expectedCloseAt?: string | null; userName?: string; transactionCount?: number; totalSales?: number; cashSales?: number; qrisSales?: number; transferSales?: number; cashExpenses?: number } | null;
     tableOrderNotificationCount: number;
     pendingOrderContext: {
         orderType?: 'DINE_IN' | 'TAKE_AWAY';
@@ -85,7 +85,7 @@ interface StoreState {
     };
     setSettings: (settings: any) => void;
     setUser: (user: any) => void;
-    setActiveShift: (shift: { id: string; openingCash: number; openedAt: string; expectedCloseAt?: string | null; userName?: string } | null) => void;
+    setActiveShift: (shift: { id: string; openingCash: number; openedAt: string; expectedCloseAt?: string | null; userName?: string; transactionCount?: number; totalSales?: number; cashSales?: number; qrisSales?: number; transferSales?: number; cashExpenses?: number } | null) => void;
     setTableOrderNotificationCount: (count: number) => void;
     setPendingOrderContext: (context: StoreState['pendingOrderContext']) => void;
     clearPendingOrderContext: () => void;

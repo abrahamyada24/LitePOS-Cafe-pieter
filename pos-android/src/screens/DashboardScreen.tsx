@@ -17,7 +17,7 @@ import { useStore } from '../store/useStore';
 import { getDBConnection, getStoreSummary } from '../database/db';
 import tw, { useAppColorScheme } from 'twrnc';
 import { getPaidAmount, getPaymentStatusLabel, getPaymentStatusMessage, getRemainingAmount } from '../utils/preOrderPayment';
-import { closeCashierShift, openCashierShift } from '../services/shiftService';
+import { closeCashierShift, getCurrentCashierShift, openCashierShift } from '../services/shiftService';
 import api from '../services/api';
 import { clearAuthSession } from '../services/secureAuthStorage';
 import {
@@ -245,7 +245,7 @@ export default function DashboardScreen({ navigation, route }: any) {
         Animated.timing(headerAnim, { toValue: 1, duration: 500, useNativeDriver: true }).start();
     }, []);
 
-    const loadData = async () => {
+    const loadData = async (shiftOverride?: typeof activeShift) => {
         try {
             const db = await getDBConnection();
                         const data = await getStoreSummary(db);
@@ -289,8 +289,18 @@ export default function DashboardScreen({ navigation, route }: any) {
 
             setUpcomingPreOrders(grouped);
 
-            const currentShift = activeShift;
+            const currentShift = shiftOverride === undefined ? useStore.getState().activeShift : shiftOverride;
             if (currentShift?.openedAt) {
+                if (currentShift.totalSales !== undefined) {
+                    setShiftSummary({
+                        cashSales: Number(currentShift.cashSales || 0),
+                        qrisSales: Number(currentShift.qrisSales || 0),
+                        transferSales: Number(currentShift.transferSales || 0),
+                        totalSales: Number(currentShift.totalSales || 0),
+                        totalExpenses: Number(currentShift.cashExpenses || 0),
+                    });
+                    return;
+                }
                 const since = currentShift.openedAt;
                 const [salesRes] = await db.executeSql(
                     `SELECT
@@ -330,10 +340,26 @@ export default function DashboardScreen({ navigation, route }: any) {
     };
 
     useEffect(() => {
-        loadData();
-        const unsubscribe = navigation.addListener('focus', loadData);
-        return unsubscribe;
-    }, [navigation]);
+        let disposed = false;
+        const refresh = async () => {
+            try {
+                const currentShift = await getCurrentCashierShift();
+                if (disposed) return;
+                setActiveShift(currentShift);
+                await loadData(currentShift);
+            } catch {
+                if (!disposed) await loadData();
+            }
+        };
+        void refresh();
+        const interval = setInterval(refresh, 10000);
+        const unsubscribe = navigation.addListener('focus', refresh);
+        return () => {
+            disposed = true;
+            clearInterval(interval);
+            unsubscribe();
+        };
+    }, [navigation, setActiveShift]);
 
     const handleLogout = () => {
         Alert.alert('Konfirmasi Keluar', 'Apakah Anda yakin ingin keluar dari aplikasi?', [
@@ -644,7 +670,7 @@ export default function DashboardScreen({ navigation, route }: any) {
                                     <Text style={styles.shiftActiveBadgeText}>Shift aktif</Text>
                                 </View>
                                 <Text style={styles.shiftActiveLabel}>
-                                    {user?.name} | buka {new Date(activeShift.openedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
+                                    {activeShift.userName || user?.name || 'Kasir'} | buka {new Date(activeShift.openedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
                                 </Text>
                                 <Text style={styles.shiftActiveLabel}>
                                     target tutup {formatShiftDateTime(getShiftExpectedCloseAt(activeShift, settings) || activeShift.openedAt)}
@@ -658,7 +684,7 @@ export default function DashboardScreen({ navigation, route }: any) {
                         <View style={styles.shiftBalanceRow}>
                             <View>
                                 <Text style={styles.shiftBalanceLabel}>Total penjualan shift</Text>
-                                <Text style={styles.shiftBalanceHint}>Tunai + QRIS + transfer</Text>
+                                <Text style={styles.shiftBalanceHint}>{Number(activeShift.transactionCount || 0)} transaksi • Tunai + QRIS + transfer</Text>
                             </View>
                             <Text style={styles.shiftTotalValue} numberOfLines={1} adjustsFontSizeToFit>
                                 {formatRp(shiftSummary.totalSales)}

@@ -15,6 +15,7 @@ import { getPaidAmount, getPaymentStatusLabel } from '../utils/preOrderPayment';
 import { connectConfiguredPrinter } from '../utils/printerConnection';
 import ClosingReportPreviewModal from '../components/ClosingReportPreviewModal';
 import { shouldShowLitePosBranding } from '../utils/receiptBranding';
+import api from '../services/api';
 
 const formatRp = (num: number) => 'Rp ' + (Math.round(num) || 0).toLocaleString('id-ID');
 
@@ -176,6 +177,25 @@ export default function ReportScreen({ navigation }: any) {
 
     const loadShiftReports = useCallback(async () => {
         try {
+            const response = await api.get('/shifts');
+            const serverShifts = Array.isArray(response.data?.data) ? response.data.data : [];
+            setShiftReports(serverShifts.slice(0, 50).map((shift: any) => ({
+                ...shift,
+                openingCash: Number(shift.openingCash || 0),
+                closingCash: shift.closingCash == null ? null : Number(shift.closingCash),
+                txCount: Number(shift.transactionCount || 0),
+                txTotal: Number(shift.totalSales || 0),
+                cashSales: Number(shift.cashSales || 0),
+                qrisSales: Number(shift.qrisSales || 0),
+                transferSales: Number(shift.transferSales || 0),
+                expensesTotal: Number(shift.cashExpenses || 0),
+            })));
+            return;
+        } catch (error: any) {
+            console.warn('[SHIFT REPORT] Server tidak tersedia, memakai data lokal:', error?.message);
+        }
+
+        try {
             const db = await getDBConnection();
             const [res] = await db.executeSql(
                 `SELECT s.*,
@@ -237,6 +257,13 @@ export default function ReportScreen({ navigation }: any) {
             setShiftReports(arr);
         } catch (e) { setShiftReports([]); }
     }, []);
+
+    useEffect(() => {
+        if (mainTab !== 'penjualan' || salesSubTab !== 'shift') return;
+        void loadShiftReports();
+        const interval = setInterval(loadShiftReports, 10000);
+        return () => clearInterval(interval);
+    }, [mainTab, salesSubTab, loadShiftReports]);
 
     const loadTransactions = useCallback(async (filter: string) => {
         try {
@@ -415,11 +442,12 @@ export default function ReportScreen({ navigation }: any) {
     // Navigation focus refresh
     useEffect(() => {
         const unsub = navigation?.addListener?.('focus', () => {
-            if (mainTab === 'penjualan') loadTransactions(activeFilter);
+            if (mainTab === 'penjualan' && salesSubTab === 'shift') loadShiftReports();
+            else if (mainTab === 'penjualan') loadTransactions(activeFilter);
             else loadExpenses(activeFilter);
         });
         return unsub;
-    }, [navigation, mainTab, activeFilter]);
+    }, [navigation, mainTab, salesSubTab, activeFilter, loadShiftReports, loadTransactions, loadExpenses]);
 
     // Reload expenses when sub-tab changes
     useEffect(() => {
@@ -1623,7 +1651,8 @@ tr.ret td{color:#dc2626;background:#fef2f2}
                 </TouchableOpacity>
                 <TouchableOpacity
                     onPress={() => {
-                        if (mainTab === 'penjualan') loadTransactions(activeFilter);
+                        if (mainTab === 'penjualan' && salesSubTab === 'shift') loadShiftReports();
+                        else if (mainTab === 'penjualan') loadTransactions(activeFilter);
                         else loadExpenses(activeFilter);
                     }}
                     style={tw`p-2`}

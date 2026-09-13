@@ -8,6 +8,12 @@ export interface ActiveShiftData {
     openedAt: string;
     expectedCloseAt?: string | null;
     userName?: string;
+    transactionCount?: number;
+    totalSales?: number;
+    cashSales?: number;
+    qrisSales?: number;
+    transferSales?: number;
+    cashExpenses?: number;
 }
 
 const toActiveShift = (shift: any): ActiveShiftData => ({
@@ -16,6 +22,12 @@ const toActiveShift = (shift: any): ActiveShiftData => ({
     openedAt: shift.openedAt || new Date().toISOString(),
     expectedCloseAt: shift.expectedCloseAt || null,
     userName: shift.userName || undefined,
+    transactionCount: Number(shift.transactionCount || 0),
+    totalSales: Number(shift.totalSales || 0),
+    cashSales: Number(shift.cashSales || 0),
+    qrisSales: Number(shift.qrisSales || 0),
+    transferSales: Number(shift.transferSales || 0),
+    cashExpenses: Number(shift.cashExpenses || 0),
 });
 
 const saveServerShift = async (shift: any) => {
@@ -36,6 +48,14 @@ const saveServerShift = async (shift: any) => {
             shift.status || 'OPEN',
         ]
     );
+};
+
+export const getCurrentCashierShift = async (): Promise<ActiveShiftData | null> => {
+    const response = await api.get('/shifts/current');
+    const serverShift = response.data?.data;
+    if (!serverShift) return null;
+    await saveServerShift(serverShift);
+    return toActiveShift(serverShift);
 };
 
 export const openCashierShift = async (

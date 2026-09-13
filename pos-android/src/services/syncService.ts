@@ -1245,13 +1245,24 @@ export const syncService = {
                                 ]
                             );
                         } else {
-                            // Update status jika shift ditutup
-                            if (shift.status === 'CLOSED') {
-                                await db.executeSql(
-                                    'UPDATE shifts SET status = ?, expectedCloseAt = COALESCE(expectedCloseAt, ?), closedAt = ?, closingCash = ?, isSynced = 1 WHERE id = ? AND status = ?',
-                                    [shift.status, shift.expectedCloseAt || null, shift.closedAt, shift.closingCash, shift.id, 'OPEN']
-                                );
-                            }
+                            // Server adalah sumber kebenaran untuk nama kasir dan state shift.
+                            await db.executeSql(
+                                `UPDATE shifts
+                                 SET userId = ?, userName = ?, openedAt = ?, expectedCloseAt = ?,
+                                     closedAt = ?, openingCash = ?, closingCash = ?, status = ?, isSynced = 1
+                                 WHERE id = ?`,
+                                [
+                                    shift.userId,
+                                    shift.userName || 'Kasir',
+                                    shift.openedAt,
+                                    shift.expectedCloseAt || null,
+                                    shift.closedAt || null,
+                                    Number(shift.openingCash || 0),
+                                    shift.closingCash == null ? null : Number(shift.closingCash),
+                                    shift.status || 'OPEN',
+                                    shift.id,
+                                ]
+                            );
                         }
                     } catch (shiftErr: any) {
                         console.warn('[SYNC-HISTORY] Gagal upsert shift:', shiftErr?.message);

@@ -20,6 +20,7 @@ import {
 import { showAlert } from '@/utils/swal';
 import OrderStatusTracker from '@/components/catalog/OrderStatusTracker';
 import { getCartItemLineTotal } from '@/utils/cartPricing';
+import { isProductAvailable as isProductActiveNow } from '@/utils/productAvailability';
 
 const RAW_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 const API_URL = RAW_API_URL.replace(/\/api$/, "").replace(/\/$/, "");
@@ -47,6 +48,7 @@ export default function KatalogPage() {
   const [detailQty, setDetailQty] = useState(1);
   const [detailNotes, setDetailNotes] = useState("");
   const [detailAddonQuantities, setDetailAddonQuantities] = useState({});
+  const [availabilityTick, setAvailabilityTick] = useState(0);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -63,12 +65,22 @@ export default function KatalogPage() {
     fetchCatalog();
   }, []);
 
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setAvailabilityTick(value => value + 1);
+      void fetchCatalog(true);
+    }, 30000);
+    return () => window.clearInterval(interval);
+  }, []);
+
   const tableOrderRequested = Boolean(tableNumber);
   const isTableMode = tableOrderRequested && settings?.enableTableOrder === true;
 
-  const fetchCatalog = async () => {
-    setLoading(true);
-    setLoadError("");
+  const fetchCatalog = async (silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setLoadError("");
+    }
     try {
       const res = await fetch(`${API_URL}/api/catalog`);
       const json = await res.json();
@@ -92,9 +104,9 @@ export default function KatalogPage() {
       ]);
       setSettings(json.data.settings || null);
     } catch (error) {
-      setLoadError(error.message || "Gagal mengambil katalog.");
+      if (!silent) setLoadError(error.message || "Gagal mengambil katalog.");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -132,17 +144,22 @@ export default function KatalogPage() {
   const filteredProducts = useMemo(() => {
     const keyword = searchQuery.trim().toLowerCase();
     return products.filter((product) => {
+      if (!isProductActiveNow(product)) return false;
       const matchSearch = !keyword || `${product.name} ${product.description || ''}`.toLowerCase().includes(keyword);
       const matchCategory = selectedCategory === "All" || String(product.categoryId) === selectedCategory;
       return matchSearch && matchCategory;
     });
-  }, [products, searchQuery, selectedCategory]);
+  }, [products, searchQuery, selectedCategory, availabilityTick]);
 
   const getProductCartQty = (productId) => {
     return cart.filter((item) => item.id === productId).reduce((sum, item) => sum + item.quantity, 0);
   };
 
   const addToCart = (product, qty = 1, notes = "") => {
+    if (!isProductActiveNow(product)) {
+      showAlert.warning('Produk belum tersedia', 'Produk ini sedang berada di luar jadwal aktif.');
+      return;
+    }
     const quantity = Math.max(1, Number(qty) || 1);
     const cleanNotes = String(notes || "").trim();
     const currentQty = getProductCartQty(product.id);

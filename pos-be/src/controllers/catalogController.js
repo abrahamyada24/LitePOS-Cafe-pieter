@@ -2,6 +2,7 @@ const { PrismaClient } = require('@prisma/client');
 const { getProductPrice, serializeProductPrice } = require('../utils/productDiscount');
 const { reserveQueue } = require('../utils/orderQueue');
 const { resolveSelectedAddons, buildAddonItemNotes, calculateAddonAwareLinePricing } = require('../services/productAddonService');
+const { isProductAvailable } = require('../utils/productAvailability');
 const prisma = new PrismaClient();
 
 const generateTableOrderCode = () => {
@@ -35,8 +36,11 @@ exports.getPublicCatalog = async (req, res) => {
             }
         });
 
-        // Ambil kategori yang memiliki produk aktif dengan stok > 0
-        const activeCategoryIds = [...new Set(products.map(p => p.categoryId))];
+        const now = new Date();
+        const availableProducts = products.filter(product => isProductAvailable(product, now));
+
+        // Ambil kategori yang memiliki produk aktif dengan stok > 0 dan sedang dalam jadwal
+        const activeCategoryIds = [...new Set(availableProducts.map(p => p.categoryId))];
         const categories = await prisma.category.findMany({
             where: {
                 id: { in: activeCategoryIds }
@@ -54,13 +58,13 @@ exports.getPublicCatalog = async (req, res) => {
             orderBy: { name: 'asc' }
         });
         const availablePackages = packages.filter(pkg => pkg.items.length > 0 && pkg.items.every(item =>
-            item.product.isActive && (item.product.isUnlimitedStock || item.product.stock >= item.qty)
+            isProductAvailable(item.product, now) && (item.product.isUnlimitedStock || item.product.stock >= item.qty)
         ));
 
         res.status(200).json({
             success: true,
             data: {
-                products: products.map(product => serializeProductPrice(product)),
+                products: availableProducts.map(product => serializeProductPrice(product)),
                 packages: availablePackages.map(pkg => ({
                     ...pkg,
                     price: Number(pkg.price),
@@ -83,6 +87,7 @@ exports.getPublicCatalog = async (req, res) => {
 exports.createTableOrder = async (req, res) => {
     try {
         const { tableNumber, customerName, customerType, memberReference, note, items } = req.body;
+        const orderTime = new Date();
 
         const cleanTableNumber = String(tableNumber || '').trim();
         if (!cleanTableNumber) {
@@ -157,9 +162,12 @@ exports.createTableOrder = async (req, res) => {
                 if (!pkg || !pkg.isActive || pkg.items.length === 0) {
                     return res.status(400).json({ success: false, message: 'Paket tidak tersedia.' });
                 }
-                const unavailable = pkg.items.find(packageItem => !packageItem.product.isActive || (!packageItem.product.isUnlimitedStock && packageItem.product.stock < packageItem.qty * qty));
+                const unavailable = pkg.items.find(packageItem =>
+                    !isProductAvailable(packageItem.product, orderTime)
+                    || (!packageItem.product.isUnlimitedStock && packageItem.product.stock < packageItem.qty * qty)
+                );
                 if (unavailable) {
-                    return res.status(400).json({ success: false, message: `Stok isi paket ${pkg.name} tidak mencukupi.` });
+                    return res.status(400).json({ success: false, message: `Isi paket ${pkg.name} sedang tidak tersedia.` });
                 }
                 const price = Number(pkg.price);
                 grandTotal += price * qty;
@@ -190,7 +198,7 @@ exports.createTableOrder = async (req, res) => {
                 include: { category: true, addons: true }
             });
 
-            if (!product || !product.isActive) {
+            if (!isProductAvailable(product, orderTime)) {
                 return res.status(400).json({ success: false, message: 'Produk tidak tersedia.' });
             }
 
