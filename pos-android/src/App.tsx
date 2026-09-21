@@ -46,6 +46,7 @@ import ProductListScreen from './screens/ProductListScreen';
 import CategoryListScreen from './screens/CategoryListScreen';
 import LockScreen from './screens/LockScreen';
 import ExpenseScreen from './screens/ExpenseScreen';
+import KitchenQueueScreen from './screens/KitchenQueueScreen';
 import AppDialogProvider from './components/AppDialogProvider';
 
 const Stack = createNativeStackNavigator();
@@ -556,6 +557,7 @@ function App(): React.JSX.Element {
                                     <Stack.Screen name="Main" component={MainTabNavigator} />
                                     <Stack.Screen name="POS" component={ShiftGuardedPOS} />
                                     <Stack.Screen name="TableOrders" component={TableOrdersScreen} />
+                                    <Stack.Screen name="KitchenQueue" component={KitchenQueueScreen} />
                                     <Stack.Screen name="Checkout" component={CheckoutScreen} />
                                     <Stack.Screen
                                         name="ReceiptPreview"

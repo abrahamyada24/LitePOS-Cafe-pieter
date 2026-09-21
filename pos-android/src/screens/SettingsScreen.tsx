@@ -127,6 +127,7 @@ export default function SettingsScreen({ navigation }: any) {
     const [shiftDayCutoff, setShiftDayCutoff] = useState<string>(settings?.shiftDayCutoff || '23:50');
     const [enableDineTable, setEnableDineTable] = useState<boolean>(settings?.enableDineTable ?? false);
     const [enableTableOrder, setEnableTableOrder] = useState<boolean>(settings?.enableTableOrder ?? false);
+    const [enableKitchenQueue, setEnableKitchenQueue] = useState<boolean>(settings?.enableKitchenQueue ?? false);
     const [enableKitchenPrint, setEnableKitchenPrint] = useState<boolean>(settings?.enableKitchenPrint ?? false);
     const [allowNegativeStock, setAllowNegativeStock] = useState<boolean>(settings?.allowNegativeStock ?? false);
     const [showLogoOnReceipt, setShowLogoOnReceipt] = useState<boolean>(settings?.showLogoOnReceipt ?? true);
@@ -373,6 +374,7 @@ export default function SettingsScreen({ navigation }: any) {
             setShiftDayCutoff(finalSettings.shiftDayCutoff);
             setEnableDineTable(finalSettings.enableDineTable);
             setEnableTableOrder(finalSettings.enableTableOrder);
+            setEnableKitchenQueue(finalSettings.enableKitchenQueue);
             setEnableKitchenPrint(finalSettings.enableKitchenPrint);
             setLoyaltyActive(finalSettings.loyalty_active);
             setLoyaltyMultiplier(String(finalSettings.loyalty_multiplier));
@@ -427,6 +429,7 @@ export default function SettingsScreen({ navigation }: any) {
                 ['shiftDayCutoff', normalizedShiftDayCutoff],
                 ['enableDineTable', enableDineTable ? 'true' : 'false'],
                 ['enableTableOrder', enableTableOrder ? 'true' : 'false'],
+                ['enableKitchenQueue', enableKitchenQueue ? 'true' : 'false'],
                 ['showImages', showImages ? 'true' : 'false'],
                 ['allowNegativeStock', allowNegativeStock ? 'true' : 'false'],
                 ['showLogoOnReceipt', showLogoOnReceipt ? 'true' : 'false'],
@@ -475,6 +478,7 @@ export default function SettingsScreen({ navigation }: any) {
                 shiftDayCutoff: normalizedShiftDayCutoff,
                 enableDineTable,
                 enableTableOrder,
+                enableKitchenQueue,
                 showImages,
                 allowNegativeStock,
                 showLogoOnReceipt,
@@ -507,7 +511,7 @@ export default function SettingsScreen({ navigation }: any) {
             saveSettings();
         }, 800);
         return () => clearTimeout(timer);
-    }, [storeName, storeAddress, storePhone, storeLogo, enablePreOrder, enableShift, enableShiftReminder, shiftDurationHours, shiftReminderMinutes, shiftDayCutoff, enableDineTable, enableTableOrder, enableKitchenPrint, showImages, isDarkMode, allowNegativeStock, showLogoOnReceipt, receiptFooter, loyaltyActive, loyaltyMultiplier, loyaltyMultiplierAmount, loyaltyPointValue, loyaltyMinPoints, googleSheetUrl, apiBaseUrl, canManageBusinessSettings]);
+    }, [storeName, storeAddress, storePhone, storeLogo, enablePreOrder, enableShift, enableShiftReminder, shiftDurationHours, shiftReminderMinutes, shiftDayCutoff, enableDineTable, enableTableOrder, enableKitchenQueue, enableKitchenPrint, showImages, isDarkMode, allowNegativeStock, showLogoOnReceipt, receiptFooter, loyaltyActive, loyaltyMultiplier, loyaltyMultiplierAmount, loyaltyPointValue, loyaltyMinPoints, googleSheetUrl, apiBaseUrl, canManageBusinessSettings]);
 
     const persistBackendUrl = async (value: string = apiBaseUrl) => {
         const normalized = await persistApiBaseUrl(value || DEFAULT_API_URL);
@@ -1092,6 +1096,23 @@ export default function SettingsScreen({ navigation }: any) {
                                 }}
                                 trackColor={{ false: '#d1d5db', true: '#6ee7b7' }}
                                 thumbColor={enableTableOrder ? '#059669' : '#f3f4f6'}
+                            />
+                        </View>
+
+                        {/* Kitchen Queue */}
+                        <View style={tw`flex-row items-center justify-between pt-4 border-t border-gray-100 dark:border-gray-800`}>
+                            <View style={tw`flex-1 mr-4`}>
+                                <View style={tw`flex-row items-center mb-1`}>
+                                    <Icon name="chef-hat" size={15} color={tw.color('orange-600')} style={tw`mr-2`} />
+                                    <Text style={tw`text-gray-800 dark:text-gray-100 font-bold`}>Antrean Dapur</Text>
+                                </View>
+                                <Text style={tw`text-gray-500 text-xs`}>Pantau urutan dan status pesanan dapur</Text>
+                            </View>
+                            <Switch
+                                value={enableKitchenQueue}
+                                onValueChange={setEnableKitchenQueue}
+                                trackColor={{ false: '#d1d5db', true: '#fdba74' }}
+                                thumbColor={enableKitchenQueue ? '#ea580c' : '#f3f4f6'}
                             />
                         </View>
 

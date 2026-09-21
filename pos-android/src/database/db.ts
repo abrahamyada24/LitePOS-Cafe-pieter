@@ -380,20 +380,21 @@ export const seedInitialData = async (db: any) => {
     await db.executeSql(`INSERT INTO settings (key, value) VALUES ('storePhone', '')`);
     await db.executeSql(`INSERT INTO settings (key, value) VALUES ('showImages', 'true')`);
     await db.executeSql(`INSERT INTO settings (key, value) VALUES ('enableTableOrder', 'false')`);
+    await db.executeSql(`INSERT INTO settings (key, value) VALUES ('enableKitchenQueue', 'false')`);
     await db.executeSql(`INSERT INTO settings (key, value) VALUES ('enableKitchenPrint', 'false')`);
     await db.executeSql(`INSERT INTO settings (key, value) VALUES ('theme', 'light')`);
   }
 
     // Always ensure licensing keys exist, including on a brand-new installation.
     const settingKeys = [
-      'storeAddress', 'storePhone', 'enablePreOrder', 'enableTableOrder', 'allowNegativeStock', 'receiptFooter', 'enableKitchenPrint',
+      'storeAddress', 'storePhone', 'enablePreOrder', 'enableTableOrder', 'enableKitchenQueue', 'allowNegativeStock', 'receiptFooter', 'enableKitchenPrint',
       'enableShiftReminder', 'shiftDurationMinutes', 'shiftReminderMinutes', 'shiftDayCutoff',
       'loyalty_active', 'loyalty_multiplier', 'loyalty_multiplier_amount', 'loyalty_point_value', 'loyalty_min_points',
       'license_number', 'license_status', 'license_expire_date', 'license_type', 'license_offline', 'google_sheet_url', 'apiBaseUrl'
     ];
     for (const key of settingKeys) {
       let defaultVal = '';
-      if (key === 'enablePreOrder' || key === 'enableTableOrder' || key === 'allowNegativeStock' || key === 'loyalty_active' || key === 'enableKitchenPrint') {
+      if (key === 'enablePreOrder' || key === 'enableTableOrder' || key === 'enableKitchenQueue' || key === 'allowNegativeStock' || key === 'loyalty_active' || key === 'enableKitchenPrint') {
         defaultVal = 'false';
       } else if (key === 'enableShiftReminder') {
         defaultVal = 'true';

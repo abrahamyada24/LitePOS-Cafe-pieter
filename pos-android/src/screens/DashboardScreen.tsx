@@ -980,6 +980,22 @@ export default function DashboardScreen({ navigation, route }: any) {
                         </>
                     )}
 
+                    {settings.enableKitchenQueue && (
+                        <>
+                            {!isTablet && <View style={{ height: 12 }} />}
+                            <MenuItem
+                                icon="chef-hat"
+                                title="Antrean Dapur"
+                                subtitle="Pantau dan proses pesanan masuk"
+                                color="#EA580C"
+                                bgColor="#FFF7ED"
+                                delay={285}
+                                onPress={() => navigation.navigate('KitchenQueue')}
+                                style={isTablet ? styles.tabletMenuHalf : {}}
+                            />
+                        </>
+                    )}
+
                     {user?.role === 'CASHIER' && (
                         <>
                             {!isTablet && <View style={{ height: 12 }} />}
