@@ -1,13 +1,13 @@
 import React, { useState, useRef } from 'react';
 import ViewShot from 'react-native-view-shot';
-import Share from 'react-native-share';
-import { View, Text, TouchableOpacity, ScrollView, Alert, Image, PermissionsAndroid, Platform } from 'react-native';
+import Share, { Social } from 'react-native-share';
+import { View, Text, TouchableOpacity, ScrollView, Alert, Image, PermissionsAndroid, Platform, Modal, TextInput, FlatList, Linking } from 'react-native';
 import tw, { useAppColorScheme } from 'twrnc';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useStore } from '../store/useStore';
 import { RECEIPT_LOGO_BASE64 } from '../assets/receiptLogoBase64';
 import RNFS from 'react-native-fs';
-import { getPaidAmount, getPaymentStatusLabel, getPaymentStatusMessage, getRemainingAmount } from '../utils/preOrderPayment';
+import { getPaidAmount, getPaymentStatusLabel, getRemainingAmount } from '../utils/preOrderPayment';
 import { connectConfiguredPrinter } from '../utils/printerConnection';
 import { printKitchenTicket } from '../utils/kitchenPrinter';
 import {
@@ -21,6 +21,7 @@ import {
 import { shouldShowLitePosBranding } from '../utils/receiptBranding';
 import { getPaymentTypeLabel } from '../utils/paymentLabels';
 import { getCartItemEffectiveOriginalUnitPrice, getCartItemEffectiveUnitPrice } from '../utils/cartPricing';
+import { getDBConnection } from '../database/db';
 
 // Logo LitePOS permanen - tidak perlu setting
 const LITEPOS_LOGO = require('../assets/logo.png');
@@ -31,6 +32,10 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
     const [isPrinting, setIsPrinting] = useState(false);
     const [isDownloading, setIsDownloading] = useState(false);
     const [isKitchenPrinting, setIsKitchenPrinting] = useState(false);
+    const [showWhatsAppPhoneModal, setShowWhatsAppPhoneModal] = useState(false);
+    const [whatsAppPhone, setWhatsAppPhone] = useState('');
+    const [pendingShareUri, setPendingShareUri] = useState<string | null>(null);
+    const [whatsAppContacts, setWhatsAppContacts] = useState<any[]>([]);
     const user = useStore(state => state.user);
     const settings = useStore(state => state.settings);
     const viewShotRef = useRef<any>(null);
@@ -39,7 +44,6 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
     const showLitePosBranding = shouldShowLitePosBranding(settings);
     const kitchenPrintEnabled = settings.enableKitchenPrint === true || String(settings.enableKitchenPrint) === 'true';
 
-    const formatRp = (num: number) => 'Rp ' + (Math.round(num) || 0).toLocaleString('id-ID');
     const paymentStatusLabel = getPaymentStatusLabel(receiptData.paymentStatus);
     const paidAmount = getPaidAmount(receiptData);
     const remainingAmount = getRemainingAmount(receiptData);
@@ -222,6 +226,13 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
         if (remainingAmount > 0) {
             text += columns('SISA', `Rp ${remainingAmount.toLocaleString('id-ID')}`, WIDTH) + '\n';
         }
+        if (receiptData.customerPoints != null || receiptData.pointsBalanceAfter != null) {
+            text += columns('POIN DIDAPAT', `+${Number(receiptData.pointsEarned || 0)}`, WIDTH) + '\n';
+            if (Number(receiptData.pointsRedeemed || 0) > 0) {
+                text += columns('POIN DITUKAR', `-${Number(receiptData.pointsRedeemed || 0)}`, WIDTH) + '\n';
+            }
+            text += columns('TOTAL POIN', String(Math.max(0, Number(receiptData.customerPoints ?? receiptData.pointsBalanceAfter ?? 0))), WIDTH) + '\n';
+        }
 
         text += LINE;
         if (settings.receiptFooter) {
@@ -253,42 +264,73 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
         return RECEIPT_LOGO_BASE64;
     };
 
+    const normalizeWhatsAppPhone = (input: string) => {
+        let phone = String(input || '').replace(/[^0-9]/g, '');
+        if (phone.startsWith('0')) phone = `62${phone.substring(1)}`;
+        else if (phone.startsWith('8')) phone = `62${phone}`;
+        return phone;
+    };
+
+    const buildWhatsAppMessage = (overrideCustomerName?: string) => {
+        const customerName = String(overrideCustomerName || receiptData.customerName || 'Pelanggan').replace(/\s*\([^)]*\)\s*$/, '');
+        const transactionDate = new Date(receiptData.createdAt || Date.now()).toLocaleString('id-ID', {
+            dateStyle: 'long', timeStyle: 'short'
+        });
+        const pointsBalance = Math.max(0, Number(receiptData.customerPoints ?? receiptData.pointsBalanceAfter ?? 0));
+        return [
+            `Struk Transaksi ${settings.storeName || 'Cozi Koffi'}`,
+            '',
+            `No: ${receiptData.invoiceNumber}`,
+            '',
+            `Status pembayaran: ${String(receiptData.paymentStatus || 'PAID').toUpperCase() === 'PAID' ? 'LUNAS' : paymentStatusLabel}.`,
+            '',
+            `Tanggal Transaksi : ${transactionDate}`,
+            '',
+            `Jumlah Poin : ${pointsBalance}`,
+            '',
+            `Terima kasih kak, ${customerName}`,
+        ].join('\n');
+    };
+
+    const sendReceiptToWhatsApp = async (uri: string, rawPhone: string, contactName?: string) => {
+        const phone = normalizeWhatsAppPhone(rawPhone);
+        if (phone.length < 9 || phone.length > 15) {
+            Alert.alert('Nomor Tidak Valid', 'Masukkan nomor WhatsApp, contoh 081234567890.');
+            return;
+        }
+        try {
+            await Share.shareSingle({
+                title: 'Struk Transaksi',
+                message: buildWhatsAppMessage(contactName),
+                url: uri,
+                social: Social.Whatsapp,
+                whatsAppNumber: phone,
+            } as any);
+        } catch (shareError: any) {
+            if (shareError?.message === 'User did not share') throw shareError;
+            await Linking.openURL(`https://wa.me/${phone}?text=${encodeURIComponent(buildWhatsAppMessage(contactName))}`);
+        }
+        setShowWhatsAppPhoneModal(false);
+        setPendingShareUri(null);
+        setWhatsAppPhone('');
+    };
+
     const shareReceiptWA = async () => {
         try {
-            // Capture image
             const uri = await viewShotRef.current.capture();
-            
-            let phone = '';
             if (receiptData.customerPhone) {
-                phone = receiptData.customerPhone.replace(/[^0-9]/g, '');
-                if (phone.startsWith('0')) phone = '62' + phone.substring(1);
+                await sendReceiptToWhatsApp(uri, receiptData.customerPhone);
+                return;
             }
-
-            const shareOptions: any = {
-                title: 'Struk Transaksi',
-                message: `Struk Transaksi ${settings.storeName || 'LitePOS'}\nNo: ${receiptData.invoiceNumber}\n${getPaymentStatusMessage(receiptData, formatRp)}`,
-                url: uri,
-            };
-
-            // If we have a phone number, use shareSingle for WhatsApp
-            if (phone) {
-                shareOptions.social = Share.Social.WHATSAPP;
-                shareOptions.whatsAppNumber = phone;
-                try {
-                    await Share.shareSingle(shareOptions);
-                    return;
-                } catch (singleError: any) {
-                    console.log('shareSingle error:', singleError);
-                }
-            }
-            
-            // Fallback: Just open the share sheet
-            await Share.open({
-                title: 'Struk Transaksi',
-                url: uri,
-                message: shareOptions.message
-            });
-
+            const db = await getDBConnection();
+            const [contactsResult] = await db.executeSql(
+                `SELECT id, name, phone FROM customers WHERE phone IS NOT NULL AND TRIM(phone) <> '' ORDER BY name COLLATE NOCASE`
+            );
+            const contacts: any[] = [];
+            for (let i = 0; i < contactsResult.rows.length; i++) contacts.push(contactsResult.rows.item(i));
+            setWhatsAppContacts(contacts);
+            setPendingShareUri(uri);
+            setShowWhatsAppPhoneModal(true);
         } catch (error: any) {
             console.log('Share error:', error);
             if (error.message !== 'User did not share') {
@@ -362,6 +404,54 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
 
     return (
         <View style={tw`flex-1 items-center justify-center bg-black/70 p-4`}>
+            <Modal visible={showWhatsAppPhoneModal} transparent animationType="slide" onRequestClose={() => setShowWhatsAppPhoneModal(false)}>
+                <View style={tw`flex-1 bg-black/60 justify-end`}>
+                    <View style={tw`bg-white dark:bg-gray-800 rounded-t-3xl p-6 max-h-[75%]`}>
+                        <View style={tw`flex-row justify-between items-center mb-2`}>
+                            <Text style={tw`text-xl font-bold text-gray-800 dark:text-gray-100`}>Pilih Kontak WhatsApp</Text>
+                            <TouchableOpacity onPress={() => setShowWhatsAppPhoneModal(false)} style={tw`p-2 bg-gray-100 dark:bg-gray-700 rounded-full`}>
+                                <Icon name="close" size={20} color={tw.color('gray-600')} />
+                            </TouchableOpacity>
+                        </View>
+                        <Text style={tw`text-xs text-gray-500 mb-4`}>Nomor tidak tercatat pada transaksi. Pilih pelanggan atau ketik nomor sekali.</Text>
+                        <View style={tw`flex-row mb-4`}>
+                            <TextInput
+                                style={tw`flex-1 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-l-xl px-4 py-3 text-gray-800 dark:text-gray-100`}
+                                value={whatsAppPhone}
+                                onChangeText={setWhatsAppPhone}
+                                keyboardType="phone-pad"
+                                placeholder="081234567890"
+                            />
+                            <TouchableOpacity
+                                style={tw`bg-green-600 rounded-r-xl px-4 items-center justify-center`}
+                                onPress={() => pendingShareUri && sendReceiptToWhatsApp(pendingShareUri, whatsAppPhone)}
+                            >
+                                <Icon name="whatsapp" size={22} color="white" />
+                            </TouchableOpacity>
+                        </View>
+                        <FlatList
+                            data={whatsAppContacts}
+                            keyExtractor={item => String(item.id)}
+                            ListEmptyComponent={<Text style={tw`text-center text-gray-500 py-6`}>Belum ada pelanggan dengan nomor telepon.</Text>}
+                            renderItem={({ item }) => (
+                                <TouchableOpacity
+                                    style={tw`flex-row items-center py-3 border-b border-gray-100 dark:border-gray-700`}
+                                    onPress={() => pendingShareUri && sendReceiptToWhatsApp(pendingShareUri, item.phone, item.name)}
+                                >
+                                    <View style={tw`w-9 h-9 bg-green-50 rounded-full items-center justify-center mr-3`}>
+                                        <Icon name="whatsapp" size={18} color={tw.color('green-600')} />
+                                    </View>
+                                    <View style={tw`flex-1`}>
+                                        <Text style={tw`font-bold text-gray-800 dark:text-gray-100`}>{item.name}</Text>
+                                        <Text style={tw`text-xs text-gray-500`}>{item.phone}</Text>
+                                    </View>
+                                    <Icon name="chevron-right" size={20} color={tw.color('gray-400')} />
+                                </TouchableOpacity>
+                            )}
+                        />
+                    </View>
+                </View>
+            </Modal>
             {receiptLogoUri && settings.showLogoOnReceipt !== false ? (
                 <View pointerEvents="none" style={{ position: 'absolute', left: -10000, top: -10000, width: RECEIPT_LOGO_CAPTURE_WIDTH, height: RECEIPT_LOGO_CAPTURE_HEIGHT }}>
                     <ViewShot
@@ -545,6 +635,22 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
                             <View style={tw`flex-row justify-between mt-1`}>
                                 <Text style={tw`font-mono text-[11px] font-bold text-black`}>Sisa</Text>
                                 <Text style={tw`font-mono text-[11px] font-bold text-black`}>{remainingAmount.toLocaleString('id-ID')}</Text>
+                            </View>
+                        ) : null}
+                        {(receiptData.customerPoints != null || receiptData.pointsBalanceAfter != null) ? (
+                            <View style={tw`mt-2 border-t border-dashed border-gray-300 pt-2`}>
+                                <View style={tw`flex-row justify-between`}>
+                                    <Text style={tw`font-mono text-[10px] text-black`}>Poin didapat</Text>
+                                    <Text style={tw`font-mono text-[10px] text-black`}>+{Number(receiptData.pointsEarned || 0)}</Text>
+                                </View>
+                                {Number(receiptData.pointsRedeemed || 0) > 0 ? <View style={tw`flex-row justify-between`}>
+                                    <Text style={tw`font-mono text-[10px] text-black`}>Poin ditukar</Text>
+                                    <Text style={tw`font-mono text-[10px] text-black`}>-{Number(receiptData.pointsRedeemed || 0)}</Text>
+                                </View> : null}
+                                <View style={tw`flex-row justify-between`}>
+                                    <Text style={tw`font-mono text-[10px] font-bold text-black`}>Total poin</Text>
+                                    <Text style={tw`font-mono text-[10px] font-bold text-black`}>{Math.max(0, Number(receiptData.customerPoints ?? receiptData.pointsBalanceAfter ?? 0))}</Text>
+                                </View>
                             </View>
                         ) : null}
 

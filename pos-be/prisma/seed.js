@@ -81,18 +81,24 @@ async function main() {
         where: { id: 1 },
         update: {
             pointMultiplier: 1,
-            multiplierAmount: 10000,
+            multiplierAmount: 25000,
             pointValue: 100,
             minRedemptionPoints: 10,
             isActive: true,
+            earningMode: 'TRANSACTION_THRESHOLD',
+            redemptionMode: 'FREE_PRODUCT',
+            configVersion: 2,
         },
         create: {
             id: 1,
             pointMultiplier: 1,
-            multiplierAmount: 10000,
+            multiplierAmount: 25000,
             pointValue: 100,
             minRedemptionPoints: 10,
             isActive: true,
+            earningMode: 'TRANSACTION_THRESHOLD',
+            redemptionMode: 'FREE_PRODUCT',
+            configVersion: 2,
         },
     });
     console.log('Loyalty configuration initialized.');

@@ -72,7 +72,12 @@ export const createTables = async (db: any) => {
       paidAt TEXT,
       orderType TEXT DEFAULT 'TAKE_AWAY',
       tableName TEXT,
-      taxAmount REAL DEFAULT 0
+      taxAmount REAL DEFAULT 0,
+      pointsEarned INTEGER DEFAULT 0,
+      pointsRedeemed INTEGER DEFAULT 0,
+      pointsBalanceAfter INTEGER,
+      loyaltyRedemptionMode TEXT,
+      shiftId TEXT
     );
   `;
   const queryTransactionItems = `
@@ -86,6 +91,8 @@ export const createTables = async (db: any) => {
         discountAmount REAL DEFAULT 0,
         costPrice REAL DEFAULT 0,
         notes TEXT,
+        loyaltyRewardQty INTEGER DEFAULT 0,
+        loyaltyRewardDiscount REAL DEFAULT 0,
       FOREIGN KEY (transactionId) REFERENCES transactions(id),
       FOREIGN KEY (productId) REFERENCES products(id)
     );
@@ -107,7 +114,8 @@ export const createTables = async (db: any) => {
       displayType TEXT DEFAULT 'normal',
       memberId TEXT,
       loyaltyDiscount REAL DEFAULT 0,
-      points INTEGER DEFAULT 0
+      points INTEGER DEFAULT 0,
+      pointsManuallyEdited INTEGER DEFAULT 0
     );
   `;
   const queryExpenses = `
@@ -117,6 +125,7 @@ export const createTables = async (db: any) => {
       amount REAL NOT NULL,
       category TEXT DEFAULT 'Umum',
       type TEXT DEFAULT 'EXPENSE',
+      shiftId TEXT,
       createdAt TEXT NOT NULL
     );
   `;
@@ -260,6 +269,13 @@ export const createTables = async (db: any) => {
     { table: 'transactions', column: 'orderType', def: "TEXT DEFAULT 'TAKE_AWAY'" },
     { table: 'transactions', column: 'tableName', def: 'TEXT' },
     { table: 'transactions', column: 'taxAmount', def: 'REAL DEFAULT 0' },
+    { table: 'transactions', column: 'pointsEarned', def: 'INTEGER DEFAULT 0' },
+    { table: 'transactions', column: 'pointsRedeemed', def: 'INTEGER DEFAULT 0' },
+    { table: 'transactions', column: 'pointsBalanceAfter', def: 'INTEGER' },
+    { table: 'transactions', column: 'loyaltyRedemptionMode', def: 'TEXT' },
+    { table: 'transactions', column: 'shiftId', def: 'TEXT' },
+    { table: 'transaction_items', column: 'loyaltyRewardQty', def: 'INTEGER DEFAULT 0' },
+    { table: 'transaction_items', column: 'loyaltyRewardDiscount', def: 'REAL DEFAULT 0' },
     { table: 'customers', column: 'loyaltyDiscount', def: 'REAL DEFAULT 0' },
     { table: 'transactions', column: 'preOrderConfirmed', def: 'INTEGER DEFAULT 0' },
     { table: 'products', column: 'barcode', def: 'TEXT' },
@@ -280,6 +296,7 @@ export const createTables = async (db: any) => {
     { table: 'transaction_items', column: 'originalPrice', def: 'REAL DEFAULT 0' },
     { table: 'transaction_items', column: 'discountAmount', def: 'REAL DEFAULT 0' },
     { table: 'expenses', column: 'type', def: "TEXT DEFAULT 'EXPENSE'" },
+    { table: 'expenses', column: 'shiftId', def: 'TEXT' },
     // Offline Sync Migrations
     { table: 'transactions', column: 'isSynced', def: 'INTEGER DEFAULT 0' },
     { table: 'expenses', column: 'isSynced', def: 'INTEGER DEFAULT 0' },
@@ -294,6 +311,7 @@ export const createTables = async (db: any) => {
     { table: 'products', column: 'isActive', def: 'INTEGER DEFAULT 1' },
     { table: 'customers', column: 'serverId', def: 'INTEGER' },
     { table: 'customers', column: 'points', def: 'INTEGER DEFAULT 0' },
+    { table: 'customers', column: 'pointsManuallyEdited', def: 'INTEGER DEFAULT 0' },
     { table: 'customers', column: 'email', def: 'TEXT' },
     { table: 'customers', column: 'imageUrl', def: 'TEXT' },
     { table: 'customers', column: 'displayType', def: "TEXT DEFAULT 'normal'" },
@@ -332,7 +350,8 @@ export const createTables = async (db: any) => {
 };
 
 export const getStoreSummary = async (db: any) => {
-  const today = new Date().toISOString().split('T')[0];
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const [revenueRes] = await db.executeSql(
     `SELECT SUM(
        CASE
@@ -341,19 +360,19 @@ export const getStoreSummary = async (db: any) => {
        END
      ) as total
      FROM transactions
-     WHERE COALESCE(paidAt, createdAt) LIKE '${today}%'
+     WHERE date(COALESCE(paidAt, createdAt), 'localtime') = '${today}'
        AND status != 'RETURNED'
        AND COALESCE(paymentStatus, 'PAID') = 'PAID'`
   );
   const [countRes] = await db.executeSql(
     `SELECT COUNT(*) as count
      FROM transactions
-     WHERE COALESCE(paidAt, createdAt) LIKE '${today}%'
+     WHERE date(COALESCE(paidAt, createdAt), 'localtime') = '${today}'
        AND status != 'RETURNED'
        AND COALESCE(paymentStatus, 'PAID') = 'PAID'`
   );
   const [returnRes] = await db.executeSql(
-    `SELECT COUNT(*) as count FROM transactions WHERE createdAt LIKE '${today}%' AND status = 'RETURNED'`
+    `SELECT COUNT(*) as count FROM transactions WHERE date(createdAt, 'localtime') = '${today}' AND status = 'RETURNED'`
   );
 
   return {
@@ -390,6 +409,7 @@ export const seedInitialData = async (db: any) => {
       'storeAddress', 'storePhone', 'enablePreOrder', 'enableTableOrder', 'enableKitchenQueue', 'allowNegativeStock', 'receiptFooter', 'enableKitchenPrint',
       'enableShiftReminder', 'shiftDurationMinutes', 'shiftReminderMinutes', 'shiftDayCutoff',
       'loyalty_active', 'loyalty_multiplier', 'loyalty_multiplier_amount', 'loyalty_point_value', 'loyalty_min_points',
+      'loyalty_earning_mode', 'loyalty_redemption_mode',
       'license_number', 'license_status', 'license_expire_date', 'license_type', 'license_offline', 'google_sheet_url', 'apiBaseUrl'
     ];
     for (const key of settingKeys) {
@@ -405,7 +425,11 @@ export const seedInitialData = async (db: any) => {
       } else if (key === 'shiftDayCutoff') {
         defaultVal = '23:50';
       } else if (key === 'loyalty_multiplier' || key === 'loyalty_multiplier_amount' || key === 'loyalty_point_value' || key === 'loyalty_min_points') {
-        defaultVal = key === 'loyalty_multiplier_amount' ? '1000' : (key === 'loyalty_multiplier' ? '1' : '0');
+        defaultVal = key === 'loyalty_multiplier_amount' ? '25000' : (key === 'loyalty_multiplier' ? '1' : (key === 'loyalty_min_points' ? '10' : '0'));
+      } else if (key === 'loyalty_earning_mode') {
+        defaultVal = 'TRANSACTION_THRESHOLD';
+      } else if (key === 'loyalty_redemption_mode') {
+        defaultVal = 'FREE_PRODUCT';
       } else if (key === 'license_status') {
         defaultVal = 'UNKNOWN';
       } else if (key === 'license_type') {

@@ -160,10 +160,25 @@ exports.getLoyaltyConfig = async (req, res) => {
         config = await prisma.loyaltyConfig.create({
             data: {
                 pointMultiplier: 1,
-                multiplierAmount: 10000,
+                multiplierAmount: 25000,
                 pointValue: 100,
                 minRedemptionPoints: 10,
-                isActive: true
+                isActive: true,
+                earningMode: 'TRANSACTION_THRESHOLD',
+                redemptionMode: 'FREE_PRODUCT',
+                configVersion: 2
+            }
+        });
+    } else if (Number(config.configVersion || 1) < 2) {
+        config = await prisma.loyaltyConfig.update({
+            where: { id: config.id },
+            data: {
+                pointMultiplier: 1,
+                multiplierAmount: 25000,
+                minRedemptionPoints: 10,
+                earningMode: 'TRANSACTION_THRESHOLD',
+                redemptionMode: 'FREE_PRODUCT',
+                configVersion: 2
             }
         });
     }
@@ -178,7 +193,7 @@ exports.getLoyaltyConfig = async (req, res) => {
  */
 exports.updateLoyaltyConfig = async (req, res) => {
   try {
-    const { pointMultiplier, multiplierAmount, pointValue, minRedemptionPoints, isActive } = req.body;
+    const { pointMultiplier, multiplierAmount, pointValue, minRedemptionPoints, isActive, earningMode, redemptionMode } = req.body;
     
     let config = await prisma.loyaltyConfig.findFirst();
     const id = config ? config.id : 0;
@@ -188,7 +203,10 @@ exports.updateLoyaltyConfig = async (req, res) => {
         multiplierAmount: parseFloat(multiplierAmount),
         pointValue: parseFloat(pointValue),
         minRedemptionPoints: parseInt(minRedemptionPoints),
-        isActive: isActive === true || isActive === 'true'
+        isActive: isActive === true || isActive === 'true',
+        earningMode: earningMode === 'SPEND_MULTIPLE' ? 'SPEND_MULTIPLE' : 'TRANSACTION_THRESHOLD',
+        redemptionMode: redemptionMode === 'CASH_DISCOUNT' ? 'CASH_DISCOUNT' : 'FREE_PRODUCT',
+        configVersion: 2
     };
 
     const updated = await prisma.loyaltyConfig.upsert({

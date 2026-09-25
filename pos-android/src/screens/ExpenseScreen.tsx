@@ -14,6 +14,7 @@ const formatRp = (value: number) => `Rp ${Math.round(Number(value) || 0).toLocal
 export default function ExpenseScreen({ navigation }: any) {
     useAppColorScheme(tw);
     const user = useStore(state => state.user);
+    const activeShift = useStore(state => state.activeShift);
     const [items, setItems] = useState<any[]>([]);
     const [activeType, setActiveType] = useState<'EXPENSE' | 'PURCHASE'>('EXPENSE');
     const [showModal, setShowModal] = useState(false);
@@ -65,9 +66,9 @@ export default function ExpenseScreen({ navigation }: any) {
         try {
             const db = await getDBConnection();
             await db.executeSql(
-                `INSERT INTO expenses (description, amount, category, type, createdAt, isSynced)
-                 VALUES (?, ?, ?, ?, ?, 0)`,
-                [description.trim(), parsedAmount, category, activeType, new Date().toISOString()]
+                `INSERT INTO expenses (description, amount, category, type, shiftId, createdAt, isSynced)
+                 VALUES (?, ?, ?, ?, ?, ?, 0)`,
+                [description.trim(), parsedAmount, category, activeType, activeShift?.id || null, new Date().toISOString()]
             );
             setShowModal(false);
             await loadExpenses();

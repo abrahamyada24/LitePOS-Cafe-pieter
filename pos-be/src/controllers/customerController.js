@@ -47,7 +47,7 @@ exports.getAllCustomers = async (req, res) => {
       where: whereClause,
       include: {
         transactions: {
-          where: { status: 'PAID' },
+          where: { status: { in: ['PAID', 'COMPLETED'] } },
           select: { grandTotal: true }
         }
       },

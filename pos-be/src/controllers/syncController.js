@@ -79,7 +79,7 @@ exports.getMasterData = async (req, res) => {
   try {
     const [
       settings,
-      loyaltyConfig,
+      rawLoyaltyConfig,
       categories,
       products,
       addons,
@@ -102,6 +102,23 @@ exports.getMasterData = async (req, res) => {
       prisma.packageItem.findMany(),
       prisma.dineTable.findMany()
     ]);
+
+    // Migrasi satu kali konfigurasi lama ke aturan outlet yang baru. Setelah versi 2,
+    // nilai tetap bebas diubah dari Android dan tidak akan ditimpa lagi.
+    let loyaltyConfig = rawLoyaltyConfig;
+    if (rawLoyaltyConfig && Number(rawLoyaltyConfig.configVersion || 1) < 2) {
+      loyaltyConfig = await prisma.loyaltyConfig.update({
+        where: { id: rawLoyaltyConfig.id },
+        data: {
+          multiplierAmount: 25000,
+          pointMultiplier: 1,
+          minRedemptionPoints: 10,
+          earningMode: 'TRANSACTION_THRESHOLD',
+          redemptionMode: 'FREE_PRODUCT',
+          configVersion: 2
+        }
+      });
+    }
 
     // Format settings to Key-Value array as expected by Android SQLite
     const formattedSettings = settings ? [
@@ -136,7 +153,9 @@ exports.getMasterData = async (req, res) => {
         { key: 'loyalty_multiplier_amount', value: loyaltyConfig.multiplierAmount.toString() },
         { key: 'loyalty_point_value', value: loyaltyConfig.pointValue.toString() },
         { key: 'loyalty_min_points', value: loyaltyConfig.minRedemptionPoints.toString() },
-        { key: 'loyalty_active', value: loyaltyConfig.isActive ? 'true' : 'false' }
+        { key: 'loyalty_active', value: loyaltyConfig.isActive ? 'true' : 'false' },
+        { key: 'loyalty_earning_mode', value: loyaltyConfig.earningMode || 'TRANSACTION_THRESHOLD' },
+        { key: 'loyalty_redemption_mode', value: loyaltyConfig.redemptionMode || 'FREE_PRODUCT' }
       );
     }
 
@@ -307,7 +326,7 @@ exports.pushLocalData = async (req, res) => {
         }
 
         // Update LoyaltyConfig
-        if (settingsMap.loyalty_active !== undefined || settingsMap.loyalty_multiplier !== undefined) {
+        if (settingsMap.loyalty_active !== undefined || settingsMap.loyalty_multiplier !== undefined || settingsMap.loyalty_earning_mode !== undefined || settingsMap.loyalty_redemption_mode !== undefined) {
             const loyaltyData = {};
             const pointMultiplier = finiteNumber(settingsMap.loyalty_multiplier);
             const multiplierAmount = finiteNumber(settingsMap.loyalty_multiplier_amount);
@@ -318,6 +337,9 @@ exports.pushLocalData = async (req, res) => {
             if (pointValue !== null) loyaltyData.pointValue = pointValue;
             if (minRedemptionPoints !== null) loyaltyData.minRedemptionPoints = Math.trunc(minRedemptionPoints);
             if (settingsMap.loyalty_active !== undefined) loyaltyData.isActive = settingsMap.loyalty_active === 'true';
+            if (settingsMap.loyalty_earning_mode !== undefined) loyaltyData.earningMode = settingsMap.loyalty_earning_mode === 'SPEND_MULTIPLE' ? 'SPEND_MULTIPLE' : 'TRANSACTION_THRESHOLD';
+            if (settingsMap.loyalty_redemption_mode !== undefined) loyaltyData.redemptionMode = settingsMap.loyalty_redemption_mode === 'CASH_DISCOUNT' ? 'CASH_DISCOUNT' : 'FREE_PRODUCT';
+            loyaltyData.configVersion = 2;
 
             if (Object.keys(loyaltyData).length > 0) {
                 const firstLoyalty = await prisma.loyaltyConfig.findFirst();
@@ -360,7 +382,7 @@ exports.pushLocalData = async (req, res) => {
                             imageUrl: nonEmptyString(cust.imageUrl),
                             displayType: ['normal', 'tall', 'wide', 'large'].includes(cust.displayType) ? cust.displayType : 'normal',
                             loyaltyDiscount: Number(cust.loyaltyDiscount || 0),
-                            points: parseInt(cust.points || 0)
+                            points: (req.user.role === 'OWNER' || req.user.role === 'ADMIN') && Number(cust.pointsManuallyEdited) === 1 ? parseInt(cust.points || 0) : 0
                         }
                     });
                     savedCustomers++;
@@ -373,7 +395,7 @@ exports.pushLocalData = async (req, res) => {
                             notes: cust.notes !== undefined ? nonEmptyString(cust.notes) : serverCust.notes,
                             imageUrl: cust.imageUrl !== undefined ? nonEmptyString(cust.imageUrl) : serverCust.imageUrl,
                             displayType: ['normal', 'tall', 'wide', 'large'].includes(cust.displayType) ? cust.displayType : serverCust.displayType,
-                            points: parseInt(cust.points || 0),
+                            points: (req.user.role === 'OWNER' || req.user.role === 'ADMIN') && Number(cust.pointsManuallyEdited) === 1 ? parseInt(cust.points || 0) : serverCust.points,
                             loyaltyDiscount: Number(cust.loyaltyDiscount || 0),
                             phone: cust.phone !== undefined ? normalizedPhone : serverCust.phone
                         }
@@ -523,6 +545,10 @@ exports.pushLocalData = async (req, res) => {
         const incomingTransactionStatus = tx.preOrderDate && !isPreOrderConfirmed && incomingPayment.paymentStatus !== 'PAID'
           ? 'PENDING'
           : requestedTransactionStatus;
+        if (exists && tx.status === 'RETURNED' && exists.status !== 'RETURNED' && req.user.role !== 'OWNER') {
+          addSyncWarning('transaction', tx.id, new Error('Hanya Owner yang dapat melakukan retur transaksi.'));
+          continue;
+        }
         if (exists && tx.status === 'RETURNED' && exists.status !== 'RETURNED') {
           // ── UPDATE STATUS RETUR ─────────────────────────────────
           // Transaksi sudah ada di server tapi diretur dari Android
@@ -530,6 +556,15 @@ exports.pushLocalData = async (req, res) => {
             where: { id: exists.id },
             data: { status: 'RETURNED' }
           });
+          if (exists.customerId && (exists.pointsEarned > 0 || exists.pointsRedeemed > 0)) {
+            const customer = await prisma.customer.findUnique({ where: { id: exists.customerId } });
+            if (customer) {
+              await prisma.customer.update({
+                where: { id: customer.id },
+                data: { points: Math.max(0, customer.points - exists.pointsEarned + exists.pointsRedeemed) }
+              });
+            }
+          }
 
           // Kembalikan stok di server hanya jika transaksi pernah mengurangi stok.
           const existingItems = await prisma.transactionItem.findMany({
@@ -669,6 +704,26 @@ exports.pushLocalData = async (req, res) => {
                   }
               }
           }
+
+          const transactionCreatedAt = new Date(tx.createdAt || Date.now());
+          let resolvedShiftId = null;
+          if (tx.shiftId) {
+              const exactShift = await prisma.shift.findUnique({ where: { id: String(tx.shiftId) } });
+              if (exactShift) resolvedShiftId = exactShift.id;
+          }
+          if (!resolvedShiftId) {
+              const matchingShift = await prisma.shift.findFirst({
+                  where: {
+                      openedAt: { lte: transactionCreatedAt },
+                      OR: [
+                          { closedAt: null },
+                          { closedAt: { gte: transactionCreatedAt } }
+                      ]
+                  },
+                  orderBy: { openedAt: 'desc' }
+              });
+              resolvedShiftId = matchingShift?.id || null;
+          }
           // Kompatibilitas dengan versi Android lama yang mengirim serverId
           // melalui customerId tanpa field customerServerId.
           if (!resolvedCustomerId && tx.customerId) {
@@ -714,7 +769,9 @@ exports.pushLocalData = async (req, res) => {
                           originalPrice: compOrig,
                           discountAmount: compDisc,
                           costPrice: Number(component.product.costPrice || 0),
-                          notes: notes
+                          notes: notes,
+                          loyaltyRewardQty: index === 0 ? Math.max(0, Math.min(requestedQty, parseInt(item.loyaltyRewardQty) || 0)) : 0,
+                          loyaltyRewardDiscount: index === 0 ? Math.max(0, Number(item.loyaltyRewardDiscount || 0)) : 0
                       });
                       kitchenItems.push({
                           productId: component.productId,
@@ -753,6 +810,8 @@ exports.pushLocalData = async (req, res) => {
                   discountAmount: Number(item.discountAmount || 0),
                   costPrice: 0,
                   notes: item.notes || null,
+                  loyaltyRewardQty: Math.max(0, Math.min(requestedQty, parseInt(item.loyaltyRewardQty) || 0)),
+                  loyaltyRewardDiscount: Math.max(0, Number(item.loyaltyRewardDiscount || 0)),
               });
               kitchenItems.push({
                   productId: serverProductId,
@@ -768,9 +827,57 @@ exports.pushLocalData = async (req, res) => {
           // Simpan transaksi dan perubahan stok secara atomik. Jika salah satu produk
           // tidak cukup, seluruh transaksi dibatalkan dan Android akan mencoba lagi.
           await prisma.$transaction(async (syncTx) => {
+          let loyaltyConfig = await syncTx.loyaltyConfig.findFirst();
+          if (loyaltyConfig && Number(loyaltyConfig.configVersion || 1) < 2) {
+              loyaltyConfig = await syncTx.loyaltyConfig.update({
+                  where: { id: loyaltyConfig.id },
+                  data: {
+                      pointMultiplier: 1,
+                      multiplierAmount: 25000,
+                      minRedemptionPoints: 10,
+                      earningMode: 'TRANSACTION_THRESHOLD',
+                      redemptionMode: 'FREE_PRODUCT',
+                      configVersion: 2
+                  }
+              });
+          }
+          const isLoyaltyEligible = incomingPayment.paymentStatus === 'PAID' && incomingTransactionStatus !== 'RETURNED' && !!resolvedCustomerId && loyaltyConfig?.isActive;
+          let pointsEarned = 0;
+          let pointsRedeemed = 0;
+          let pointsBalanceAfter = null;
+          let loyaltyRedemptionMode = null;
+
+          if (isLoyaltyEligible) {
+              const customer = await syncTx.customer.findUnique({ where: { id: resolvedCustomerId } });
+              if (!customer) throw new Error('Pelanggan loyalitas tidak ditemukan.');
+
+              const threshold = Math.max(1, Number(loyaltyConfig.multiplierAmount || 25000));
+              pointsEarned = loyaltyConfig.earningMode === 'SPEND_MULTIPLE'
+                  ? Math.floor(grandTotal / threshold) * Math.max(1, Number(loyaltyConfig.pointMultiplier || 1))
+                  : grandTotal >= threshold ? 1 : 0;
+
+              const requestedRedemption = Math.max(0, parseInt(tx.pointsRedeemed) || 0);
+              if (requestedRedemption > 0) {
+                  const minPoints = Math.max(1, Number(loyaltyConfig.minRedemptionPoints || 10));
+                  loyaltyRedemptionMode = loyaltyConfig.redemptionMode || 'FREE_PRODUCT';
+                  if (requestedRedemption < minPoints) throw new Error(`Minimal penukaran ${minPoints} poin.`);
+                  if (loyaltyRedemptionMode === 'FREE_PRODUCT') {
+                      if (requestedRedemption % minPoints !== 0) throw new Error('Jumlah poin hadiah tidak sesuai kelipatan penukaran.');
+                      const rewardCount = resolvedItems.reduce((sum, item) => sum + Math.max(0, Number(item.loyaltyRewardQty || 0)), 0);
+                      if (rewardCount !== requestedRedemption / minPoints) throw new Error('Jumlah produk gratis tidak sesuai poin yang ditukar.');
+                  }
+                  if (requestedRedemption > customer.points) throw new Error('Poin pelanggan tidak mencukupi.');
+                  pointsRedeemed = requestedRedemption;
+              }
+
+              pointsBalanceAfter = Math.max(0, customer.points - pointsRedeemed + pointsEarned);
+              await syncTx.customer.update({ where: { id: customer.id }, data: { points: pointsBalanceAfter } });
+          }
+
           const newTransaction = await syncTx.transaction.create({
             data: {
               androidId: tx.id,
+              shiftId: resolvedShiftId,
               invoiceNumber: tx.invoiceNumber,
               subTotal: subTotal,
               taxAmount: taxAmount,
@@ -787,6 +894,10 @@ exports.pushLocalData = async (req, res) => {
               preOrderConfirmed: isPreOrderConfirmed,
               stockDeductedAt: incomingStockDeductedAt,
               discountAmount: discountAmount,
+              pointsEarned,
+              pointsRedeemed,
+              pointsBalanceAfter,
+              loyaltyRedemptionMode,
               createdAt: new Date(tx.createdAt),
               
               items: {
@@ -877,13 +988,30 @@ exports.pushLocalData = async (req, res) => {
                     }
                 });
                 if (!existsByContent) {
+                    const expenseCreatedAt = new Date(exp.createdAt);
+                    let expenseShiftId = null;
+                    if (exp.shiftId) {
+                        const exactShift = await prisma.shift.findUnique({ where: { id: String(exp.shiftId) } });
+                        if (exactShift) expenseShiftId = exactShift.id;
+                    }
+                    if (!expenseShiftId) {
+                        const matchingShift = await prisma.shift.findFirst({
+                            where: {
+                                openedAt: { lte: expenseCreatedAt },
+                                OR: [{ closedAt: null }, { closedAt: { gte: expenseCreatedAt } }]
+                            },
+                            orderBy: { openedAt: 'desc' }
+                        });
+                        expenseShiftId = matchingShift?.id || null;
+                    }
                     await prisma.expense.create({
                         data: {
+                            shiftId: expenseShiftId,
                             description: exp.description,
                             amount: Number(exp.amount),
                             category: exp.category || "Umum",
                             type: exp.type === 'PURCHASE' ? 'PURCHASE' : 'EXPENSE',
-                            createdAt: new Date(exp.createdAt)
+                            createdAt: expenseCreatedAt
                         }
                     });
                     savedExpenses++;
@@ -1293,6 +1421,10 @@ exports.getTransactionHistory = async (req, res) => {
         orderType: tx.orderType,
         tableName: tx.tableNumber,
         taxAmount: tx.taxAmount == null ? 0 : Number(tx.taxAmount),
+        pointsEarned: tx.pointsEarned || 0,
+        pointsRedeemed: tx.pointsRedeemed || 0,
+        pointsBalanceAfter: tx.pointsBalanceAfter,
+        loyaltyRedemptionMode: tx.loyaltyRedemptionMode,
         items: tx.items.map(item => ({
           productId: item.product?.androidId || item.productId,
           serverProductId: item.productId,
@@ -1301,7 +1433,9 @@ exports.getTransactionHistory = async (req, res) => {
           price: Number(item.price),
           originalPrice: Number(item.originalPrice || 0),
           discountAmount: Number(item.discountAmount || 0),
-          notes: item.notes
+          notes: item.notes,
+          loyaltyRewardQty: item.loyaltyRewardQty || 0,
+          loyaltyRewardDiscount: Number(item.loyaltyRewardDiscount || 0)
         }))
       };
     });

@@ -198,7 +198,11 @@ function MainTabNavigator() {
                 </>
             )}
             {normalizedRole === 'CASHIER' && (
-                <Tab.Screen name="Pengeluaran" component={ExpenseScreen} />
+                <>
+                    <Tab.Screen name="Laporan" component={ReportScreen} />
+                    <Tab.Screen name="Pengeluaran" component={ExpenseScreen} />
+                    <Tab.Screen name="Kontak" component={ContactScreen} />
+                </>
             )}
             <Tab.Screen name="Pengaturan" component={SettingsScreen} />
         </Tab.Navigator>
@@ -473,8 +477,9 @@ function App(): React.JSX.Element {
                             showImages: true, printerAddress: null, printerType: null, theme: 'light',
                             allowNegativeStock: false, receiptFooter: '',
                             enableKitchenQueue: false, taxRate: 0, serviceCharge: 0,
-                            loyalty_active: false, loyalty_multiplier: 1, loyalty_multiplier_amount: 1000,
-                            loyalty_point_value: 0, loyalty_min_points: 0,
+                            loyalty_active: false, loyalty_multiplier: 1, loyalty_multiplier_amount: 25000,
+                            loyalty_point_value: 0, loyalty_min_points: 10,
+                            loyalty_earning_mode: 'TRANSACTION_THRESHOLD', loyalty_redemption_mode: 'FREE_PRODUCT',
                             apiBaseUrl: '',
                             dataResetVersion: 0, dataResetAt: '', dataResetType: '',
                         };

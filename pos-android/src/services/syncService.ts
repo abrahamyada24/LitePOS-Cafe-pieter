@@ -476,7 +476,7 @@ export const syncService = {
                             if (Number(localCustomer.isSynced) === 0) {
                                 await tx.executeSql('UPDATE customers SET serverId = COALESCE(serverId, ?) WHERE id = ?', [c.id, localCustomer.id]);
                             } else {
-                                await tx.executeSql('UPDATE customers SET name = ?, phone = ?, email = ?, notes = ?, imageUrl = ?, displayType = ?, memberId = ?, loyaltyDiscount = ?, points = ?, serverId = ?, isSynced = 1 WHERE id = ?', [c.name, c.phone, c.email || null, c.notes || null, c.imageUrl || null, c.displayType || 'normal', c.memberId || null, c.loyaltyDiscount || 0, c.points || 0, c.id, localCustomer.id]);
+                                await tx.executeSql('UPDATE customers SET name = ?, phone = ?, email = ?, notes = ?, imageUrl = ?, displayType = ?, memberId = ?, loyaltyDiscount = ?, points = ?, pointsManuallyEdited = 0, serverId = ?, isSynced = 1 WHERE id = ?', [c.name, c.phone, c.email || null, c.notes || null, c.imageUrl || null, c.displayType || 'normal', c.memberId || null, c.loyaltyDiscount || 0, c.points || 0, c.id, localCustomer.id]);
                             }
                         } else {
                             await tx.executeSql('INSERT INTO customers (name, phone, email, notes, imageUrl, displayType, memberId, loyaltyDiscount, points, serverId, isSynced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)', [c.name, c.phone, c.email || null, c.notes || null, c.imageUrl || null, c.displayType || 'normal', c.memberId || null, c.loyaltyDiscount || 0, c.points || 0, c.id]);
@@ -960,7 +960,7 @@ export const syncService = {
 
                 if (idMap.customers) {
                     for (const item of idMap.customers) {
-                        await db.executeSql('UPDATE customers SET serverId = ?, isSynced = 1 WHERE id = ?', [item.serverId, item.androidId]);
+                        await db.executeSql('UPDATE customers SET serverId = ?, pointsManuallyEdited = 0, isSynced = 1 WHERE id = ?', [item.serverId, item.androidId]);
                     }
                 }
 
@@ -1104,8 +1104,8 @@ export const syncService = {
 
                             // Insert transaction
                             await db.executeSql(
-                                `INSERT INTO transactions (id, invoiceNumber, grandTotal, discountAmount, taxAmount, paymentMethod, cashAmount, changeAmount, customerId, customerName, createdAt, status, preOrderDate, paymentStatus, paidAmount, remainingAmount, paidAt, orderType, tableName, preOrderConfirmed, isSynced)
-                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+                                `INSERT INTO transactions (id, invoiceNumber, grandTotal, discountAmount, taxAmount, paymentMethod, cashAmount, changeAmount, customerId, customerName, createdAt, status, preOrderDate, paymentStatus, paidAmount, remainingAmount, paidAt, orderType, tableName, preOrderConfirmed, pointsEarned, pointsRedeemed, pointsBalanceAfter, loyaltyRedemptionMode, shiftId, isSynced)
+                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
                                 [
                                     tx.id,
                                     tx.invoiceNumber,
@@ -1127,6 +1127,11 @@ export const syncService = {
                                     tx.orderType || 'TAKE_AWAY',
                                     tx.tableName,
                                     tx.preOrderConfirmed === true || Number(tx.preOrderConfirmed) === 1 ? 1 : 0,
+                                    tx.pointsEarned || 0,
+                                    tx.pointsRedeemed || 0,
+                                    tx.pointsBalanceAfter,
+                                    tx.loyaltyRedemptionMode,
+                                    tx.shiftId,
                                 ]
                             );
 
@@ -1146,8 +1151,8 @@ export const syncService = {
                                     }
 
                                     await db.executeSql(
-                                        `INSERT INTO transaction_items (transactionId, productId, quantity, price, originalPrice, discountAmount, notes)
-                                         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                                        `INSERT INTO transaction_items (transactionId, productId, quantity, price, originalPrice, discountAmount, notes, loyaltyRewardQty, loyaltyRewardDiscount)
+                                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                                         [
                                             tx.id,
                                             localProductId,
@@ -1156,6 +1161,8 @@ export const syncService = {
                                             item.originalPrice || item.price,
                                             item.discountAmount || 0,
                                             item.notes || null,
+                                            item.loyaltyRewardQty || 0,
+                                            item.loyaltyRewardDiscount || 0,
                                         ]
                                     );
                                 }
@@ -1182,12 +1189,12 @@ export const syncService = {
                                     `UPDATE transactions
                                      SET status = ?, preOrderConfirmed = ?, paymentMethod = ?, cashAmount = ?,
                                          changeAmount = ?, paymentStatus = ?, paidAmount = ?, remainingAmount = ?,
-                                         paidAt = ?, isSynced = 1
+                                         paidAt = ?, shiftId = ?, isSynced = 1
                                      WHERE id = ?`,
                                     [
                                         tx.status || 'COMPLETED', mergedConfirmed, tx.paymentMethod || 'CASH',
                                         tx.cashAmount, tx.changeAmount, paymentStatus, paidAmount,
-                                        remainingAmount, tx.paidAt, existing.id,
+                                        remainingAmount, tx.paidAt, tx.shiftId, existing.id,
                                     ]
                                 );
                             }
@@ -1209,9 +1216,9 @@ export const syncService = {
                         );
                         if (checkRes.rows.length === 0) {
                             await db.executeSql(
-                                `INSERT INTO expenses (description, amount, category, type, createdAt, isSynced)
-                                 VALUES (?, ?, ?, ?, ?, 1)`,
-                                [exp.description, exp.amount, exp.category || 'Umum', exp.type === 'PURCHASE' ? 'PURCHASE' : 'EXPENSE', exp.createdAt]
+                                `INSERT INTO expenses (description, amount, category, type, shiftId, createdAt, isSynced)
+                                 VALUES (?, ?, ?, ?, ?, ?, 1)`,
+                                [exp.description, exp.amount, exp.category || 'Umum', exp.type === 'PURCHASE' ? 'PURCHASE' : 'EXPENSE', exp.shiftId || null, exp.createdAt]
                             );
                         }
                     } catch (expErr: any) {

@@ -71,6 +71,8 @@ interface StoreState {
         loyalty_multiplier_amount: number;
         loyalty_point_value: number;
         loyalty_min_points: number;
+        loyalty_earning_mode: 'SPEND_MULTIPLE' | 'TRANSACTION_THRESHOLD';
+        loyalty_redemption_mode: 'CASH_DISCOUNT' | 'FREE_PRODUCT';
         store_id?: string;
         license_expire_date?: string;
         license_type?: 'TRIAL' | 'PREMIUM';
@@ -136,9 +138,11 @@ export const useStore = create<StoreState>((set, get) => ({
         serviceCharge: 0,
         loyalty_active: false,
         loyalty_multiplier: 1,
-        loyalty_multiplier_amount: 1000,
+        loyalty_multiplier_amount: 25000,
         loyalty_point_value: 0,
-        loyalty_min_points: 0,
+        loyalty_min_points: 10,
+        loyalty_earning_mode: 'TRANSACTION_THRESHOLD',
+        loyalty_redemption_mode: 'FREE_PRODUCT',
         apiBaseUrl: '',
         dataResetVersion: 0,
         dataResetAt: '',

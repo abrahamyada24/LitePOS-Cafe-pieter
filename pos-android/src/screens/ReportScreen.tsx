@@ -18,6 +18,7 @@ import { shouldShowLitePosBranding } from '../utils/receiptBranding';
 import api from '../services/api';
 
 const formatRp = (num: number) => 'Rp ' + (Math.round(num) || 0).toLocaleString('id-ID');
+const localDateKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
 // Area Chart ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â using react-native-svg
 function AreaChart({ data }: { data: { label: string; value: number }[] }) {
@@ -142,6 +143,10 @@ export default function ReportScreen({ navigation }: any) {
     useAppColorScheme(tw);
     const settings = useStore(state => state.settings);
     const user = useStore(state => state.user);
+    const activeShift = useStore(state => state.activeShift);
+    const normalizedRole = String(user?.role || 'CASHIER').toUpperCase();
+    const isCashier = normalizedRole === 'CASHIER';
+    const userCanReturn = normalizedRole === 'OWNER';
     const showLitePosBranding = shouldShowLitePosBranding(settings);
     const [mainTab, setMainTab] = useState<'penjualan' | 'pengeluaran'>('penjualan');
     const [salesSubTab, setSalesSubTab] = useState<'transaksi' | 'kategori' | 'terlaris' | 'pelanggan' | 'retur' | 'shift' | 'laba_rugi' | 'jam_sibuk'>('transaksi');
@@ -152,8 +157,8 @@ export default function ReportScreen({ navigation }: any) {
     const [chartData, setChartData] = useState<{ label: string; value: number }[]>([]);
     const [selectedTrx, setSelectedTrx] = useState<any | null>(null);
     const [trxItems, setTrxItems] = useState<any[]>([]);
-    const [startDate, setStartDate] = useState(() => new Date().toISOString().split('T')[0]);
-    const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
+    const [startDate, setStartDate] = useState(() => localDateKey());
+    const [endDate, setEndDate] = useState(() => localDateKey());
 
     // Category & bestseller stats
     const [categoryStats, setCategoryStats] = useState<{ name: string; total: number; count: number }[]>([]);
@@ -179,7 +184,10 @@ export default function ReportScreen({ navigation }: any) {
         try {
             const response = await api.get('/shifts');
             const serverShifts = Array.isArray(response.data?.data) ? response.data.data : [];
-            setShiftReports(serverShifts.slice(0, 50).map((shift: any) => ({
+            const visibleServerShifts = isCashier
+                ? serverShifts.filter((shift: any) => Number(shift.userId) === Number(user?.id))
+                : serverShifts;
+            setShiftReports(visibleServerShifts.slice(0, 50).map((shift: any) => ({
                 ...shift,
                 openingCash: Number(shift.openingCash || 0),
                 closingCash: shift.closingCash == null ? null : Number(shift.closingCash),
@@ -254,9 +262,9 @@ export default function ReportScreen({ navigation }: any) {
             );
             const arr: any[] = [];
             for (let i = 0; i < res.rows.length; i++) arr.push(res.rows.item(i));
-            setShiftReports(arr);
+            setShiftReports(isCashier ? arr.filter(shift => Number(shift.userId) === Number(user?.id)) : arr);
         } catch (e) { setShiftReports([]); }
-    }, []);
+    }, [isCashier, user?.id]);
 
     useEffect(() => {
         if (mainTab !== 'penjualan' || salesSubTab !== 'shift') return;
@@ -269,24 +277,31 @@ export default function ReportScreen({ navigation }: any) {
         try {
             const db = await getDBConnection();
             let dateCondition = '';
-            const today = new Date().toISOString().split('T')[0];
+            const today = localDateKey();
             const reportDateExpr = `COALESCE(paidAt, createdAt)`;
 
             if (filter === 'Hari Ini') {
-                dateCondition = `WHERE ${reportDateExpr} LIKE '${today}%'`;
+                dateCondition = `WHERE date(${reportDateExpr}, 'localtime') = '${today}'`;
             } else if (filter === 'Minggu Ini') {
                 const lastWeek = new Date();
                 lastWeek.setDate(lastWeek.getDate() - 7);
-                dateCondition = `WHERE ${reportDateExpr} >= '${lastWeek.toISOString().split('T')[0]}'`;
+                dateCondition = `WHERE date(${reportDateExpr}, 'localtime') >= '${localDateKey(lastWeek)}'`;
             } else if (filter === 'Bulan Ini') {
                 const monthStr = today.substring(0, 7); // YYYY-MM
-                dateCondition = `WHERE ${reportDateExpr} LIKE '${monthStr}%'`;
+                dateCondition = `WHERE strftime('%Y-%m', ${reportDateExpr}, 'localtime') = '${monthStr}'`;
             } else if (filter === 'Custom') {
-                dateCondition = `WHERE ${reportDateExpr} >= '${startDate}T00:00:00' AND ${reportDateExpr} <= '${endDate}T23:59:59'`;
+                dateCondition = `WHERE date(${reportDateExpr}, 'localtime') >= '${startDate}' AND date(${reportDateExpr}, 'localtime') <= '${endDate}'`;
             }
 
             const [results] = await db.executeSql(
-                `SELECT t.*, (SELECT SUM(quantity * costPrice) FROM transaction_items WHERE transactionId = t.id) as totalCogs FROM transactions t ${dateCondition} ORDER BY COALESCE(paidAt, createdAt) DESC`
+                `SELECT t.*,
+                    c.phone as customerPhone,
+                    c.points as customerPoints,
+                    (SELECT SUM(quantity * costPrice) FROM transaction_items WHERE transactionId = t.id) as totalCogs
+                 FROM transactions t
+                 LEFT JOIN customers c ON c.id = t.customerId
+                 ${dateCondition}
+                 ORDER BY COALESCE(t.paidAt, t.createdAt) DESC`
             );
 
             let bruto = 0, returns = 0, count = 0, cash = 0, qris = 0, transfer = 0, cashCount = 0, qrisCount = 0, transferCount = 0, discounts = 0, cogs = 0;
@@ -302,7 +317,7 @@ export default function ReportScreen({ navigation }: any) {
                     bruto += paidValue;
                     count++;
                     // Group for chart by date
-                    const day = (item.paidAt || item.createdAt).substring(0, 10);
+                    const day = localDateKey(new Date(item.paidAt || item.createdAt));
                     dailyMap[day] = (dailyMap[day] || 0) + paidValue;
                     // Payment Breakdown
                     if (item.paymentMethod === 'CASH') { cash += paidValue; cashCount++; }
@@ -357,12 +372,16 @@ export default function ReportScreen({ navigation }: any) {
 
             // ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ Bestseller ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬
             const [bsRes] = await db.executeSql(`
-                SELECT p.name, SUM(ti.quantity) as qty, SUM(ti.quantity * ti.price) as revenue
+                SELECT COALESCE(NULLIF(TRIM(p.name), ''), 'Produk dihapus') as name,
+                    SUM(COALESCE(ti.quantity, 0)) as qty,
+                    SUM(COALESCE(ti.quantity, 0) * COALESCE(ti.price, 0)) as revenue
                 FROM transaction_items ti
                 LEFT JOIN products p ON p.id = ti.productId
                 LEFT JOIN transactions t ON t.id = ti.transactionId
-                ${dateCondition.replace('WHERE', 'WHERE t.status != \'RETURNED\' AND')}
-                GROUP BY p.name ORDER BY qty DESC LIMIT 15
+                ${dateCondition ? dateCondition.replace('WHERE', "WHERE UPPER(COALESCE(t.status, 'COMPLETED')) IN ('PAID', 'COMPLETED') AND COALESCE(t.paymentStatus, 'PAID') = 'PAID' AND") : "WHERE UPPER(COALESCE(t.status, 'COMPLETED')) IN ('PAID', 'COMPLETED') AND COALESCE(t.paymentStatus, 'PAID') = 'PAID'"}
+                GROUP BY ti.productId, p.name
+                HAVING SUM(COALESCE(ti.quantity, 0)) > 0
+                ORDER BY qty DESC, revenue DESC, name COLLATE NOCASE
             `);
             const bs: { name: string; qty: number; revenue: number }[] = [];
             for (let i = 0; i < bsRes.rows.length; i++) {
@@ -397,18 +416,18 @@ export default function ReportScreen({ navigation }: any) {
     const loadExpenses = useCallback(async (filter: string) => {
         try {
             const db = await getDBConnection();
-            const today = new Date().toISOString().split('T')[0];
+            const today = localDateKey();
             let dateCondition = '';
 
-            if (filter === 'Hari Ini') dateCondition = `WHERE createdAt LIKE '${today}%'`;
+            if (filter === 'Hari Ini') dateCondition = `WHERE date(createdAt, 'localtime') = '${today}'`;
             else if (filter === 'Minggu Ini') {
                 const lastWeek = new Date();
                 lastWeek.setDate(lastWeek.getDate() - 7);
-                dateCondition = `WHERE createdAt >= '${lastWeek.toISOString().split('T')[0]}'`;
+                dateCondition = `WHERE date(createdAt, 'localtime') >= '${localDateKey(lastWeek)}'`;
             } else if (filter === 'Bulan Ini') {
-                dateCondition = `WHERE createdAt LIKE '${today.substring(0, 7)}%'`;
+                dateCondition = `WHERE strftime('%Y-%m', createdAt, 'localtime') = '${today.substring(0, 7)}'`;
             } else if (filter === 'Custom') {
-                dateCondition = `WHERE createdAt >= '${startDate}T00:00:00' AND createdAt <= '${endDate}T23:59:59'`;
+                dateCondition = `WHERE date(createdAt, 'localtime') >= '${startDate}' AND date(createdAt, 'localtime') <= '${endDate}'`;
             }
 
             const [results] = await db.executeSql(
@@ -478,6 +497,10 @@ export default function ReportScreen({ navigation }: any) {
 
     const handleReturnTransaction = async () => {
         if (!selectedTrx) return;
+        if (!userCanReturn) {
+            Alert.alert('Akses Ditolak', 'Hanya Owner yang dapat melakukan retur transaksi.');
+            return;
+        }
         Alert.alert('Konfirmasi Retur', 'Yakin ingin meretur transaksi ini? Stok produk akan dikembalikan.', [
             { text: 'Batal', style: 'cancel' },
             {
@@ -486,6 +509,14 @@ export default function ReportScreen({ navigation }: any) {
                     try {
                         const db = await getDBConnection();
                         await db.executeSql(`UPDATE transactions SET status = 'RETURNED', isSynced = 0 WHERE id = ?`, [selectedTrx.id]);
+                        if (selectedTrx.customerId && (Number(selectedTrx.pointsEarned || 0) > 0 || Number(selectedTrx.pointsRedeemed || 0) > 0)) {
+                            const [customerResult] = await db.executeSql('SELECT points FROM customers WHERE id = ? LIMIT 1', [selectedTrx.customerId]);
+                            if (customerResult.rows.length > 0) {
+                                const currentPoints = Number(customerResult.rows.item(0).points || 0);
+                                const restoredPoints = Math.max(0, currentPoints - Number(selectedTrx.pointsEarned || 0) + Number(selectedTrx.pointsRedeemed || 0));
+                                await db.executeSql('UPDATE customers SET points = ?, isSynced = 0 WHERE id = ?', [restoredPoints, selectedTrx.customerId]);
+                            }
+                        }
                         for (const item of trxItems) {
                             if (item.productId) {
                                 await db.executeSql(`UPDATE products SET stock = stock + ? WHERE id = ?`, [item.quantity, item.productId]);
@@ -511,8 +542,8 @@ export default function ReportScreen({ navigation }: any) {
         try {
             const db = await getDBConnection();
             await db.executeSql(
-                `INSERT INTO expenses (description, amount, category, type, createdAt) VALUES (?, ?, ?, ?, ?)`,
-                [expenseDesc.trim(), amt, expenseCategory, expenseType, new Date().toISOString()]
+                `INSERT INTO expenses (description, amount, category, type, shiftId, createdAt) VALUES (?, ?, ?, ?, ?, ?)`,
+                [expenseDesc.trim(), amt, expenseCategory, expenseType, activeShift?.id || null, new Date().toISOString()]
             );
             setShowAddExpense(false);
             setExpenseDesc('');
@@ -545,15 +576,15 @@ export default function ReportScreen({ navigation }: any) {
 
     const fetchExportData = async () => {
         const db = await getDBConnection();
-        const today = new Date().toISOString().split('T')[0];
+        const today = localDateKey();
         let dateCondition = '';
         const reportDateExpr = `COALESCE(t.paidAt, t.createdAt)`;
-        if (activeFilter === 'Hari Ini') dateCondition = `WHERE ${reportDateExpr} LIKE '${today}%'`;
+        if (activeFilter === 'Hari Ini') dateCondition = `WHERE date(${reportDateExpr}, 'localtime') = '${today}'`;
         else if (activeFilter === 'Minggu Ini') {
             const w = new Date(); w.setDate(w.getDate() - 7);
-            dateCondition = `WHERE ${reportDateExpr} >= '${w.toISOString().split('T')[0]}'`;
-        } else if (activeFilter === 'Bulan Ini') dateCondition = `WHERE ${reportDateExpr} LIKE '${today.substring(0, 7)}%'`;
-        else if (activeFilter === 'Custom') dateCondition = `WHERE ${reportDateExpr} >= '${startDate}T00:00:00' AND ${reportDateExpr} <= '${endDate}T23:59:59'`;
+            dateCondition = `WHERE date(${reportDateExpr}, 'localtime') >= '${localDateKey(w)}'`;
+        } else if (activeFilter === 'Bulan Ini') dateCondition = `WHERE strftime('%Y-%m', ${reportDateExpr}, 'localtime') = '${today.substring(0, 7)}'`;
+        else if (activeFilter === 'Custom') dateCondition = `WHERE date(${reportDateExpr}, 'localtime') >= '${startDate}' AND date(${reportDateExpr}, 'localtime') <= '${endDate}'`;
 
         const [results] = await db.executeSql(`
             SELECT t.invoiceNumber, t.createdAt, t.grandTotal, t.discountAmount, t.paymentMethod, t.status,
@@ -1635,7 +1666,7 @@ tr.ret td{color:#dc2626;background:#fef2f2}
             <View style={tw`bg-white dark:bg-gray-800 px-4 py-3 flex-row items-center border-b border-gray-200 dark:border-gray-700`}>
                 <Text style={tw`text-xl font-black text-gray-800 dark:text-gray-100 flex-1`}>Laporan</Text>
                 {/* Print daily report button (only on sales tab) */}
-                {mainTab === 'penjualan' && salesSubTab === 'transaksi' && (
+                {!isCashier && mainTab === 'penjualan' && salesSubTab === 'transaksi' && (
                     <TouchableOpacity
                         style={tw`p-2 mr-1 bg-indigo-50 rounded-xl border border-indigo-200`}
                         onPress={printDailyReport}
@@ -1643,12 +1674,12 @@ tr.ret td{color:#dc2626;background:#fef2f2}
                         <Icon name="printer" size={18} color={tw.color('indigo-600')} />
                     </TouchableOpacity>
                 )}
-                <TouchableOpacity
+                {!isCashier && <TouchableOpacity
                     style={tw`p-2 mr-1 bg-green-50 rounded-xl border border-green-200`}
                     onPress={() => mainTab === 'penjualan' && setShowExportModal(true)}
                 >
                     <Icon name="download" size={18} color={tw.color('green-600')} />
-                </TouchableOpacity>
+                </TouchableOpacity>}
                 <TouchableOpacity
                     onPress={() => {
                         if (mainTab === 'penjualan' && salesSubTab === 'shift') loadShiftReports();
@@ -1743,7 +1774,7 @@ tr.ret td{color:#dc2626;background:#fef2f2}
 
     {/* Main Sub-Tabs */}
             <View style={tw`bg-white dark:bg-gray-800 border-b border-gray-100 dark:border-gray-800 flex-row`}>
-                {(['penjualan', 'pengeluaran'] as const).map(tab => (
+                {(isCashier ? (['penjualan'] as const) : (['penjualan', 'pengeluaran'] as const)).map(tab => (
                     <TouchableOpacity
                         key={tab}
                         style={tw`flex-1 py-3 items-center border-b-2 ${mainTab === tab ? 'border-blue-600' : 'border-transparent'}`}
@@ -1788,7 +1819,10 @@ tr.ret td{color:#dc2626;background:#fef2f2}
                     
                     {showSubTabDropdown && (
                         <View style={tw`absolute top-full left-0 right-0 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 shadow-sm z-50`}>
-                            {(['transaksi', 'laba_rugi', 'jam_sibuk', 'kategori', 'terlaris', 'pelanggan', 'retur', 'shift'] as const).map(sub => (
+                            {(isCashier
+                                ? (['transaksi', 'kategori', 'terlaris', 'jam_sibuk', 'shift'] as const)
+                                : (['transaksi', 'laba_rugi', 'jam_sibuk', 'kategori', 'terlaris', 'pelanggan', 'retur', 'shift'] as const)
+                            ).filter(sub => userCanReturn || sub !== 'retur').map(sub => (
                                 <TouchableOpacity
                                     key={sub}
                                     style={tw`px-4 py-3.5 border-b border-gray-50 dark:border-gray-700 flex-row items-center ${salesSubTab === sub ? 'bg-blue-50/50 dark:bg-gray-700/50' : ''}`}
@@ -1828,14 +1862,14 @@ tr.ret td{color:#dc2626;background:#fef2f2}
             {FilterBar()}
 
             {/* Content */}
-            {mainTab === 'pengeluaran' && ExpensesContent()}
+            {!isCashier && mainTab === 'pengeluaran' && ExpensesContent()}
             {mainTab === 'penjualan' && salesSubTab === 'transaksi' && SalesContent()}
             {mainTab === 'penjualan' && salesSubTab === 'kategori' && CategoryContent()}
             {mainTab === 'penjualan' && salesSubTab === 'terlaris' && BestsellerContent()}
-            {mainTab === 'penjualan' && salesSubTab === 'pelanggan' && CustomerCRMContent()}
-            {mainTab === 'penjualan' && salesSubTab === 'retur' && ReturContent()}
+            {!isCashier && mainTab === 'penjualan' && salesSubTab === 'pelanggan' && CustomerCRMContent()}
+            {userCanReturn && mainTab === 'penjualan' && salesSubTab === 'retur' && ReturContent()}
             {mainTab === 'penjualan' && salesSubTab === 'shift' && ShiftReportContent()}
-            {mainTab === 'penjualan' && salesSubTab === 'laba_rugi' && ProfitContent()}
+            {!isCashier && mainTab === 'penjualan' && salesSubTab === 'laba_rugi' && ProfitContent()}
             {mainTab === 'penjualan' && salesSubTab === 'jam_sibuk' && PeakHoursContent()}
 
             {/* Transaction Detail Modal */}
@@ -1927,7 +1961,7 @@ tr.ret td{color:#dc2626;background:#fef2f2}
                                         <Text style={tw`text-gray-700 dark:text-gray-200 font-bold text-sm`}>Cetak Struk</Text>
                                     </TouchableOpacity>
 
-                                    {selectedTrx.status !== 'RETURNED' && (
+                                    {userCanReturn && selectedTrx.status !== 'RETURNED' && (
                                         <TouchableOpacity
                                             style={tw`flex-1 bg-red-50 dark:bg-red-900/40 border border-red-200 py-3 rounded-xl flex-row items-center justify-center`}
                                             onPress={handleReturnTransaction}

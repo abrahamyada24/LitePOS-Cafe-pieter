@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Alert, TextInput, Modal, FlatList } from 'react-native';
 import tw, { useAppColorScheme } from 'twrnc';
 import { useStore } from '../store/useStore';
@@ -16,11 +16,13 @@ import {
 
 export default function CheckoutScreen({ navigation }: any) {
     useAppColorScheme(tw);
-    const { cart, cartTotal, cartSubtotal, updateCartQuantity, clearCart, discount, discountType, setDiscount } = useStore();
+    const { cart, cartTotal, cartSubtotal, updateCartQuantity, clearCart, discount, discountType, setDiscount, activeShift } = useStore();
     const settings = useStore(state => state.settings);
     const pendingOrderContext = useStore(state => state.pendingOrderContext);
     const [paymentMethod, setPaymentMethod] = useState('CASH');
     const [cashAmount, setCashAmount] = useState('');
+    const checkoutLockRef = useRef(false);
+    const [isProcessingCheckout, setIsProcessingCheckout] = useState(false);
 
     // Customer selection
     const [customers, setCustomers] = useState<any[]>([]);
@@ -62,6 +64,8 @@ export default function CheckoutScreen({ navigation }: any) {
     // Loyalty State
     const [usePoints, setUsePoints] = useState(false);
     const [pointsToRedeem, setPointsToRedeem] = useState(0);
+    const [showRewardModal, setShowRewardModal] = useState(false);
+    const [rewardQuantities, setRewardQuantities] = useState<Record<string, number>>({});
 
     const subtotal = cartSubtotal();
     const totalBeforeTaxAndPoints = cartTotal();
@@ -70,8 +74,21 @@ export default function CheckoutScreen({ navigation }: any) {
     const taxRate = taxRatePercent / 100;
     const taxAmount = Math.round(totalBeforeTaxAndPoints * taxRate);
     const totalBeforePoints = totalBeforeTaxAndPoints + taxAmount;
-    const pointsValue = usePoints ? pointsToRedeem * (settings.loyalty_point_value || 0) : 0;
+    const loyaltyRedemptionMode = settings.loyalty_redemption_mode || 'FREE_PRODUCT';
+    const pointsPerReward = Math.max(1, Number(settings.loyalty_min_points) || 10);
+    const selectedRewardCount = Object.values(rewardQuantities).reduce((sum, qty) => sum + Math.max(0, Number(qty) || 0), 0);
+    const rewardDiscount = loyaltyRedemptionMode === 'FREE_PRODUCT'
+        ? cart.reduce((sum, item) => sum + Math.min(item.quantity, rewardQuantities[item.cartItemId] || 0) * getCartItemEffectiveUnitPrice(item), 0)
+        : 0;
+    const pointsValue = usePoints
+        ? Math.min(totalBeforePoints, loyaltyRedemptionMode === 'FREE_PRODUCT' ? rewardDiscount : pointsToRedeem * (settings.loyalty_point_value || 0))
+        : 0;
     const total = Math.max(0, totalBeforePoints - pointsValue);
+    const pointsEarnedPreview = settings.loyalty_active && selectedCustomer
+        ? settings.loyalty_earning_mode === 'SPEND_MULTIPLE'
+            ? Math.floor(total / (settings.loyalty_multiplier_amount || 25000)) * (settings.loyalty_multiplier || 1)
+            : total >= (settings.loyalty_multiplier_amount || 25000) ? 1 : 0
+        : 0;
     const rawCash = parseInt(cashAmount.replace(/\D/g, '') || '0', 10);
     const rawDpAmount = parseInt(dpAmount.replace(/\D/g, '') || '0', 10);
     const isPreOrder = !!preOrderDate;
@@ -226,6 +243,9 @@ export default function CheckoutScreen({ navigation }: any) {
 
     const selectCustomer = (customer: any) => {
         setSelectedCustomer(customer);
+        setUsePoints(false);
+        setPointsToRedeem(0);
+        setRewardQuantities({});
         setShowCustomerModal(false);
         setCustomerSearch('');
         // Auto-apply loyalty discount if set
@@ -239,6 +259,7 @@ export default function CheckoutScreen({ navigation }: any) {
         setDiscount(0, 'amount');
         setUsePoints(false);
         setPointsToRedeem(0);
+        setRewardQuantities({});
     };
 
     const openCreateCustomer = () => {
@@ -316,20 +337,53 @@ export default function CheckoutScreen({ navigation }: any) {
             Alert.alert('Info', 'Program loyalitas sedang tidak aktif.');
             return;
         }
+        if (paymentStatus !== 'PAID') {
+            Alert.alert('Belum Lunas', 'Poin hanya dapat ditukar pada transaksi yang langsung lunas.');
+            return;
+        }
         if (!usePoints) {
             if (selectedCustomer.points < (settings.loyalty_min_points || 0)) {
                 Alert.alert('Poin Tidak Cukup', `Minimal penukaran adalah ${settings.loyalty_min_points} poin.\nPoin Anda: ${selectedCustomer.points}`);
                 return;
             }
-            const maxReachable = Math.floor(totalBeforePoints / (settings.loyalty_point_value || 1));
-            const canRedeem = Math.min(selectedCustomer.points, maxReachable);
-            
-            setPointsToRedeem(canRedeem);
+            if (loyaltyRedemptionMode === 'FREE_PRODUCT') {
+                setShowRewardModal(true);
+                return;
+            }
+            const maxReachable = Math.floor(totalBeforePoints / Math.max(1, settings.loyalty_point_value || 1));
+            setPointsToRedeem(Math.min(Number(selectedCustomer.points) || 0, maxReachable));
             setUsePoints(true);
         } else {
             setUsePoints(false);
             setPointsToRedeem(0);
+            setRewardQuantities({});
         }
+    };
+
+    const maxRewardCount = Math.floor((Number(selectedCustomer?.points) || 0) / pointsPerReward);
+    const changeRewardQuantity = (cartItemId: string, delta: number, maxItemQty: number) => {
+        setRewardQuantities(current => {
+            const currentQty = current[cartItemId] || 0;
+            const currentTotal = Object.values(current).reduce((sum, qty) => sum + Math.max(0, Number(qty) || 0), 0);
+            if (delta > 0 && currentTotal >= maxRewardCount) return current;
+            const nextQty = Math.max(0, Math.min(maxItemQty, currentQty + delta));
+            return { ...current, [cartItemId]: nextQty };
+        });
+    };
+
+    const confirmRewardSelection = () => {
+        const count = Object.values(rewardQuantities).reduce((sum, qty) => sum + Math.max(0, Number(qty) || 0), 0);
+        if (count <= 0) {
+            Alert.alert('Pilih Produk', 'Pilih minimal 1 produk dari keranjang untuk ditukar.');
+            return;
+        }
+        if (count > maxRewardCount) {
+            Alert.alert('Poin Tidak Cukup', `Maksimal ${maxRewardCount} produk untuk saldo poin saat ini.`);
+            return;
+        }
+        setPointsToRedeem(count * pointsPerReward);
+        setUsePoints(true);
+        setShowRewardModal(false);
     };
 
     const handlePresetCash = (amount: number | 'PAS' | 'RESET') => {
@@ -363,6 +417,11 @@ export default function CheckoutScreen({ navigation }: any) {
     };
 
     const handleCheckout = async () => {
+        if (checkoutLockRef.current) return;
+        if (usePoints && paymentStatus !== 'PAID') {
+            Alert.alert('Belum Lunas', 'Batalkan penukaran poin atau lunasi transaksi terlebih dahulu.');
+            return;
+        }
         if (isPreOrder && preOrderPaymentStatus === 'PARTIAL' && (rawDpAmount <= 0 || rawDpAmount >= total)) {
             Alert.alert('Validasi DP', 'Nominal DP harus lebih dari 0 dan lebih kecil dari total pesanan.');
             return;
@@ -371,6 +430,10 @@ export default function CheckoutScreen({ navigation }: any) {
             Alert.alert('Uang Kurang', `Uang tunai tidak cukup.\nKurang: ${formatRp(amountDueNow - rawCash)}`);
             return;
         }
+        // Ref terkunci pada event yang sama, sebelum await pertama, sehingga dua tap
+        // cepat tidak dapat membuat dua invoice dan dua nomor antrean dapur.
+        checkoutLockRef.current = true;
+        setIsProcessingCheckout(true);
         // Meja dine-in bersifat opsional — tidak wajib dipilih
         try {
             const db = await getDBConnection();
@@ -379,10 +442,13 @@ export default function CheckoutScreen({ navigation }: any) {
             const createdAt = new Date().toISOString();
             const custNameBase = selectedCustomer ? selectedCustomer.name : (guestName.trim() || 'Umum');
             const custNameFinal = orderType === 'TAKE_AWAY' && takeAwayOption ? `${custNameBase} (${takeAwayOption})` : custNameBase;
+            const pointsEarned = settings.loyalty_active && selectedCustomer && paymentStatus === 'PAID' ? pointsEarnedPreview : 0;
+            const redeemedPoints = usePoints ? pointsToRedeem : 0;
+            const newPoints = selectedCustomer ? Math.max(0, (Number(selectedCustomer.points) || 0) - redeemedPoints + pointsEarned) : 0;
 
             await db.executeSql(
-                `INSERT INTO transactions (id, invoiceNumber, grandTotal, discountAmount, taxAmount, paymentMethod, cashAmount, changeAmount, customerId, customerName, createdAt, preOrderDate, paymentStatus, paidAmount, remainingAmount, paidAt, orderType, tableName) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [trxId, invoiceNumber, total, discountAmount, taxAmount, effectivePaymentMethod,
+                `INSERT INTO transactions (id, invoiceNumber, grandTotal, discountAmount, taxAmount, paymentMethod, cashAmount, changeAmount, customerId, customerName, createdAt, preOrderDate, paymentStatus, paidAmount, remainingAmount, paidAt, orderType, tableName, pointsEarned, pointsRedeemed, pointsBalanceAfter, loyaltyRedemptionMode, shiftId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [trxId, invoiceNumber, total, discountAmount + pointsValue, taxAmount, effectivePaymentMethod,
                     paymentMethod === 'CASH' ? rawCash : amountDueNow,
                     paymentMethod === 'CASH' ? Math.max(0, changeAmount) : 0,
                     selectedCustomer?.id || null, custNameFinal,
@@ -392,7 +458,8 @@ export default function CheckoutScreen({ navigation }: any) {
                     paidAmount,
                     remainingAmount,
                     paidAmount > 0 ? createdAt : null,
-                    orderType, selectedTable?.number || null]
+                    orderType, selectedTable?.number || null,
+                    pointsEarned, redeemedPoints, selectedCustomer ? newPoints : null, usePoints ? loyaltyRedemptionMode : null, activeShift?.id || null]
             );
 
             // Optional: Mark table as OCCUPIED automatically
@@ -406,8 +473,10 @@ export default function CheckoutScreen({ navigation }: any) {
                 const storedUnitPrice = getCartItemEffectiveUnitPrice(item);
                 const storedOriginalUnitPrice = getCartItemEffectiveOriginalUnitPrice(item);
                 await db.executeSql(
-                    `INSERT INTO transaction_items (transactionId, productId, quantity, price, originalPrice, discountAmount, costPrice, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-                    [trxId, item.id, item.quantity, storedUnitPrice, storedOriginalUnitPrice, item.discountAmount || 0, item.costPrice || 0, item.notes || null]
+                    `INSERT INTO transaction_items (transactionId, productId, quantity, price, originalPrice, discountAmount, costPrice, notes, loyaltyRewardQty, loyaltyRewardDiscount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [trxId, item.id, item.quantity, storedUnitPrice, storedOriginalUnitPrice, item.discountAmount || 0, item.costPrice || 0, item.notes || null,
+                        usePoints && loyaltyRedemptionMode === 'FREE_PRODUCT' ? (rewardQuantities[item.cartItemId] || 0) : 0,
+                        usePoints && loyaltyRedemptionMode === 'FREE_PRODUCT' ? (rewardQuantities[item.cartItemId] || 0) * storedUnitPrice : 0]
                 );
                 if (item.isUnlimitedStock !== 1) {
                     await db.executeSql(`UPDATE products SET stock = stock - ? WHERE id = ?`, [item.quantity, item.id]);
@@ -416,8 +485,6 @@ export default function CheckoutScreen({ navigation }: any) {
 
             // Optional update customer points
             if (selectedCustomer) {
-                const pointsEarned = settings.loyalty_active ? Math.floor(total / (settings.loyalty_multiplier_amount || 1000)) * (settings.loyalty_multiplier || 1) : 0;
-                const newPoints = selectedCustomer.points - (usePoints ? pointsToRedeem : 0) + pointsEarned;
                 await db.executeSql(`UPDATE customers SET points = ?, isSynced = 0 WHERE id = ?`, [newPoints, selectedCustomer.id]);
                 if (pointsEarned > 0 || usePoints) {
                     console.log(`Customer ${selectedCustomer.name} points updated: ${selectedCustomer.points} -> ${newPoints} (Earned: ${pointsEarned}, Redeemed: ${pointsToRedeem})`);
@@ -425,10 +492,10 @@ export default function CheckoutScreen({ navigation }: any) {
             }
 
             const receiptData = {
-                invoiceNumber, createdAt, items: cart,
+                invoiceNumber, createdAt,
                 customerName: custNameFinal,
                 customerPhone: selectedCustomer?.phone || null,
-                subtotal, discountAmount, taxAmount, taxRate: taxRatePercent, total, paymentMethod: effectivePaymentMethod,
+                subtotal, discountAmount: discountAmount + pointsValue, loyaltyDiscountAmount: pointsValue, taxAmount, taxRate: taxRatePercent, total, paymentMethod: effectivePaymentMethod,
                 cashAmount: paymentMethod === 'CASH' ? rawCash : amountDueNow,
                 changeAmount: Math.max(0, changeAmount),
                 preOrderDate: preOrderDate || null,
@@ -438,7 +505,15 @@ export default function CheckoutScreen({ navigation }: any) {
                 paidAt: paidAmount > 0 ? createdAt : null,
                 orderType,
                 tableName: selectedTable?.number || null,
-                takeAwayOption: orderType === 'TAKE_AWAY' ? takeAwayOption : null
+                takeAwayOption: orderType === 'TAKE_AWAY' ? takeAwayOption : null,
+                pointsEarned,
+                pointsRedeemed: redeemedPoints,
+                customerPoints: selectedCustomer ? newPoints : null,
+                loyaltyRedemptionMode: usePoints ? loyaltyRedemptionMode : null,
+                items: cart.map(item => ({
+                    ...item,
+                    loyaltyRewardQty: usePoints && loyaltyRedemptionMode === 'FREE_PRODUCT' ? (rewardQuantities[item.cartItemId] || 0) : 0,
+                }))
             };
 
             clearCart();
@@ -446,6 +521,9 @@ export default function CheckoutScreen({ navigation }: any) {
         } catch (e) {
             console.error(e);
             Alert.alert('Error', 'Gagal memproses transaksi. Coba lagi.');
+        } finally {
+            checkoutLockRef.current = false;
+            setIsProcessingCheckout(false);
         }
     };
 
@@ -763,11 +841,11 @@ export default function CheckoutScreen({ navigation }: any) {
                             <View style={tw`flex-row justify-between items-center mb-2`}>
                                 <View style={tw`flex-row items-center`}>
                                     <Icon name="tag-outline" size={14} color={tw.color('blue-600')} />
-                                    <Text style={tw`ml-1 text-sm font-bold text-blue-600`}>Tukar {pointsToRedeem} Poin</Text>
+                                    <Text style={tw`ml-1 text-sm font-bold text-blue-600`}>{loyaltyRedemptionMode === 'FREE_PRODUCT' ? `${selectedRewardCount} Produk Gratis` : `Tukar ${pointsToRedeem} Poin`}</Text>
                                 </View>
                                 <View style={tw`flex-row items-center`}>
                                     <Text style={tw`font-bold text-blue-600 mr-2`}>- {formatRp(pointsValue)}</Text>
-                                    <TouchableOpacity onPress={() => { setUsePoints(false); setPointsToRedeem(0); }}>
+                                    <TouchableOpacity onPress={() => { setUsePoints(false); setPointsToRedeem(0); setRewardQuantities({}); }}>
                                         <Icon name="close" size={14} color={tw.color('red-400')} />
                                     </TouchableOpacity>
                                 </View>
@@ -776,7 +854,7 @@ export default function CheckoutScreen({ navigation }: any) {
                         {settings.loyalty_active && selectedCustomer && (
                             <View style={tw`flex-row justify-between items-center mb-2`}>
                                 <Text style={tw`text-xs text-blue-500 italic`}>Poin yang didapat:</Text>
-                                <Text style={tw`text-xs font-bold text-blue-500`}>+{Math.floor(total / (settings.loyalty_multiplier_amount || 1000)) * (settings.loyalty_multiplier || 1)} Poin</Text>
+                                <Text style={tw`text-xs font-bold text-blue-500`}>+{paymentStatus === 'PAID' ? pointsEarnedPreview : 0} Poin</Text>
                             </View>
                         )}
                         {taxAmount > 0 ? (
@@ -874,9 +952,9 @@ export default function CheckoutScreen({ navigation }: any) {
             </ScrollView>
 
             <View style={tw`bg-white dark:bg-gray-800 p-4 border-t border-gray-200 dark:border-gray-700`}>
-                <TouchableOpacity style={tw`bg-blue-600 py-4 rounded-xl items-center shadow-md ${cashPaymentInvalid ? 'opacity-50' : 'opacity-100'}`} onPress={handleCheckout} disabled={cashPaymentInvalid}>
+                <TouchableOpacity style={tw`bg-blue-600 py-4 rounded-xl items-center shadow-md ${cashPaymentInvalid || isProcessingCheckout ? 'opacity-50' : 'opacity-100'}`} onPress={handleCheckout} disabled={cashPaymentInvalid || isProcessingCheckout}>
                     <Text style={tw`text-white font-black text-lg tracking-wide uppercase`}>
-                        {preOrderDate ? `Simpan Pre-Order ${getPaymentStatusLabel(paymentStatus)}` : `Proses Bayar`} {formatRp(amountDueNow)}
+                        {isProcessingCheckout ? 'Memproses...' : `${preOrderDate ? `Simpan Pre-Order ${getPaymentStatusLabel(paymentStatus)}` : 'Proses Bayar'} ${formatRp(amountDueNow)}`}
                     </Text>
                 </TouchableOpacity>
             </View>
@@ -996,6 +1074,52 @@ export default function CheckoutScreen({ navigation }: any) {
                         </Text>
                         <TouchableOpacity style={tw`bg-blue-600 py-4 rounded-xl items-center`} onPress={applyDiscount}>
                             <Text style={tw`text-white font-black text-base`}>Terapkan Diskon</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* Save Pending Modal */}
+            <Modal visible={showRewardModal} transparent animationType="slide" onRequestClose={() => setShowRewardModal(false)}>
+                <View style={tw`flex-1 bg-black/50 justify-end`}>
+                    <View style={tw`bg-white dark:bg-gray-800 rounded-t-3xl p-6 max-h-[75%]`}>
+                        <View style={tw`flex-row justify-between items-center mb-2`}>
+                            <Text style={tw`text-xl font-bold text-gray-800 dark:text-gray-100`}>Pilih Produk Gratis</Text>
+                            <TouchableOpacity onPress={() => setShowRewardModal(false)} style={tw`p-2 bg-gray-100 dark:bg-gray-700 rounded-full`}>
+                                <Icon name="close" size={20} color={tw.color('gray-600')} />
+                            </TouchableOpacity>
+                        </View>
+                        <Text style={tw`text-xs text-gray-500 mb-4`}>
+                            {pointsPerReward} poin = 1 produk. Tersedia {maxRewardCount} penukaran; sisanya boleh disimpan.
+                        </Text>
+                        <FlatList
+                            data={cart}
+                            keyExtractor={item => item.cartItemId}
+                            renderItem={({ item }) => {
+                                const qty = rewardQuantities[item.cartItemId] || 0;
+                                return (
+                                    <View style={tw`flex-row items-center py-3 border-b border-gray-100 dark:border-gray-700`}>
+                                        <View style={tw`flex-1 mr-3`}>
+                                            <Text style={tw`font-bold text-gray-800 dark:text-gray-100`}>{item.name}</Text>
+                                            <Text style={tw`text-xs text-gray-500`}>{formatRp(getCartItemEffectiveUnitPrice(item))} · {item.quantity} di keranjang</Text>
+                                        </View>
+                                        <TouchableOpacity onPress={() => changeRewardQuantity(item.cartItemId, -1, item.quantity)} style={tw`w-9 h-9 bg-gray-100 dark:bg-gray-700 rounded-full items-center justify-center`}>
+                                            <Icon name="minus" size={18} color={tw.color('gray-700')} />
+                                        </TouchableOpacity>
+                                        <Text style={tw`w-10 text-center font-black text-gray-800 dark:text-gray-100`}>{qty}</Text>
+                                        <TouchableOpacity onPress={() => changeRewardQuantity(item.cartItemId, 1, item.quantity)} style={tw`w-9 h-9 bg-blue-600 rounded-full items-center justify-center`}>
+                                            <Icon name="plus" size={18} color="white" />
+                                        </TouchableOpacity>
+                                    </View>
+                                );
+                            }}
+                        />
+                        <View style={tw`flex-row justify-between mt-4 mb-3`}>
+                            <Text style={tw`font-bold text-gray-600 dark:text-gray-300`}>Dipakai</Text>
+                            <Text style={tw`font-black text-blue-600`}>{selectedRewardCount * pointsPerReward} poin · {selectedRewardCount} produk</Text>
+                        </View>
+                        <TouchableOpacity style={tw`bg-blue-600 py-4 rounded-xl items-center`} onPress={confirmRewardSelection}>
+                            <Text style={tw`text-white font-black`}>Gunakan Poin</Text>
                         </TouchableOpacity>
                     </View>
                 </View>

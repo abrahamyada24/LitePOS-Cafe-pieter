@@ -137,6 +137,8 @@ export default function SettingsScreen({ navigation }: any) {
     const [loyaltyMultiplierAmount, setLoyaltyMultiplierAmount] = useState<string>(String(settings?.loyalty_multiplier_amount || '1000'));
     const [loyaltyPointValue, setLoyaltyPointValue] = useState<string>(String(settings?.loyalty_point_value || '0'));
     const [loyaltyMinPoints, setLoyaltyMinPoints] = useState<string>(String(settings?.loyalty_min_points || '0'));
+    const [loyaltyEarningMode, setLoyaltyEarningMode] = useState<'SPEND_MULTIPLE' | 'TRANSACTION_THRESHOLD'>(settings?.loyalty_earning_mode || 'TRANSACTION_THRESHOLD');
+    const [loyaltyRedemptionMode, setLoyaltyRedemptionMode] = useState<'CASH_DISCOUNT' | 'FREE_PRODUCT'>(settings?.loyalty_redemption_mode || 'FREE_PRODUCT');
     const [googleSheetUrl, setGoogleSheetUrl] = useState<string>(settings?.google_sheet_url || '');
     const [apiBaseUrl, setApiBaseUrlInput] = useState<string>(settings?.apiBaseUrl || DEFAULT_API_URL);
     const [licenseCode, setLicenseCode] = useState('');
@@ -356,6 +358,8 @@ export default function SettingsScreen({ navigation }: any) {
                 loyalty_multiplier_amount: Number(rawSettings.loyalty_multiplier_amount || 1000),
                 loyalty_point_value: Number(rawSettings.loyalty_point_value || 0),
                 loyalty_min_points: Number(rawSettings.loyalty_min_points || 0),
+                loyalty_earning_mode: rawSettings.loyalty_earning_mode === 'SPEND_MULTIPLE' ? 'SPEND_MULTIPLE' : 'TRANSACTION_THRESHOLD',
+                loyalty_redemption_mode: rawSettings.loyalty_redemption_mode === 'CASH_DISCOUNT' ? 'CASH_DISCOUNT' : 'FREE_PRODUCT',
                 google_sheet_url: rawSettings.google_sheet_url || '',
                 apiBaseUrl: normalizedApiBaseUrl,
                 dataResetVersion: Number(rawSettings.dataResetVersion || 0),
@@ -381,6 +385,8 @@ export default function SettingsScreen({ navigation }: any) {
             setLoyaltyMultiplierAmount(String(finalSettings.loyalty_multiplier_amount));
             setLoyaltyPointValue(String(finalSettings.loyalty_point_value));
             setLoyaltyMinPoints(String(finalSettings.loyalty_min_points));
+            setLoyaltyEarningMode(finalSettings.loyalty_earning_mode as 'SPEND_MULTIPLE' | 'TRANSACTION_THRESHOLD');
+            setLoyaltyRedemptionMode(finalSettings.loyalty_redemption_mode as 'CASH_DISCOUNT' | 'FREE_PRODUCT');
             setGoogleSheetUrl(finalSettings.google_sheet_url);
             setApiBaseUrlInput(finalSettings.apiBaseUrl);
             setShowImages(finalSettings.showImages);
@@ -439,6 +445,8 @@ export default function SettingsScreen({ navigation }: any) {
                 ['loyalty_multiplier_amount', loyaltyMultiplierAmount],
                 ['loyalty_point_value', loyaltyPointValue],
                 ['loyalty_min_points', loyaltyMinPoints],
+                ['loyalty_earning_mode', loyaltyEarningMode],
+                ['loyalty_redemption_mode', loyaltyRedemptionMode],
                 ['google_sheet_url', googleSheetUrl],
             ];
 
@@ -488,6 +496,8 @@ export default function SettingsScreen({ navigation }: any) {
                 loyalty_multiplier_amount: Number(loyaltyMultiplierAmount),
                 loyalty_point_value: Number(loyaltyPointValue),
                 loyalty_min_points: Number(loyaltyMinPoints),
+                loyalty_earning_mode: loyaltyEarningMode,
+                loyalty_redemption_mode: loyaltyRedemptionMode,
                 google_sheet_url: googleSheetUrl,
             } : {};
             setSettings({
@@ -511,7 +521,7 @@ export default function SettingsScreen({ navigation }: any) {
             saveSettings();
         }, 800);
         return () => clearTimeout(timer);
-    }, [storeName, storeAddress, storePhone, storeLogo, enablePreOrder, enableShift, enableShiftReminder, shiftDurationHours, shiftReminderMinutes, shiftDayCutoff, enableDineTable, enableTableOrder, enableKitchenQueue, enableKitchenPrint, showImages, isDarkMode, allowNegativeStock, showLogoOnReceipt, receiptFooter, loyaltyActive, loyaltyMultiplier, loyaltyMultiplierAmount, loyaltyPointValue, loyaltyMinPoints, googleSheetUrl, apiBaseUrl, canManageBusinessSettings]);
+    }, [storeName, storeAddress, storePhone, storeLogo, enablePreOrder, enableShift, enableShiftReminder, shiftDurationHours, shiftReminderMinutes, shiftDayCutoff, enableDineTable, enableTableOrder, enableKitchenQueue, enableKitchenPrint, showImages, isDarkMode, allowNegativeStock, showLogoOnReceipt, receiptFooter, loyaltyActive, loyaltyMultiplier, loyaltyMultiplierAmount, loyaltyPointValue, loyaltyMinPoints, loyaltyEarningMode, loyaltyRedemptionMode, googleSheetUrl, apiBaseUrl, canManageBusinessSettings]);
 
     const persistBackendUrl = async (value: string = apiBaseUrl) => {
         const normalized = await persistApiBaseUrl(value || DEFAULT_API_URL);
@@ -1149,8 +1159,24 @@ export default function SettingsScreen({ navigation }: any) {
 
                         {loyaltyActive && (
                             <View style={tw`pt-4 border-t border-gray-100 dark:border-gray-800`}>
+                                <Text style={tw`text-xs font-bold text-gray-500 mb-2`}>Cara Mendapat Poin</Text>
+                                <View style={tw`flex-row bg-gray-100 dark:bg-gray-900 rounded-xl p-1 mb-4`}>
+                                    <TouchableOpacity
+                                        style={tw.style(`flex-1 rounded-lg py-2 px-2`, loyaltyEarningMode === 'TRANSACTION_THRESHOLD' && 'bg-white dark:bg-gray-700')}
+                                        onPress={() => setLoyaltyEarningMode('TRANSACTION_THRESHOLD')}
+                                    >
+                                        <Text style={tw.style(`text-[11px] text-center font-bold`, loyaltyEarningMode === 'TRANSACTION_THRESHOLD' ? 'text-blue-600' : 'text-gray-500')}>Per Transaksi</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={tw.style(`flex-1 rounded-lg py-2 px-2`, loyaltyEarningMode === 'SPEND_MULTIPLE' && 'bg-white dark:bg-gray-700')}
+                                        onPress={() => setLoyaltyEarningMode('SPEND_MULTIPLE')}
+                                    >
+                                        <Text style={tw.style(`text-[11px] text-center font-bold`, loyaltyEarningMode === 'SPEND_MULTIPLE' ? 'text-blue-600' : 'text-gray-500')}>Kelipatan (Lama)</Text>
+                                    </TouchableOpacity>
+                                </View>
+
                                 <View style={tw`mb-4`}>
-                                    <Text style={tw`text-xs font-bold text-gray-500 mb-1`}>Setiap Belanja Senilai (Rp)</Text>
+                                    <Text style={tw`text-xs font-bold text-gray-500 mb-1`}>{loyaltyEarningMode === 'TRANSACTION_THRESHOLD' ? 'Minimal Transaksi untuk 1 Poin (Rp)' : 'Setiap Belanja Senilai (Rp)'}</Text>
                                     <TextInput 
                                         style={tw`bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3 text-gray-800 dark:text-gray-100`}
                                         value={loyaltyMultiplierAmount}
@@ -1158,10 +1184,10 @@ export default function SettingsScreen({ navigation }: any) {
                                         keyboardType="numeric"
                                         placeholder="Contoh: 1000"
                                     />
-                                    <Text style={tw`text-[10px] text-gray-400 mt-1`}>Nominal belanja kelipatan untuk dapat poin</Text>
+                                    <Text style={tw`text-[10px] text-gray-400 mt-1`}>{loyaltyEarningMode === 'TRANSACTION_THRESHOLD' ? 'Transaksi yang mencapai nominal ini mendapat tepat 1 poin' : 'Nominal belanja kelipatan untuk dapat poin'}</Text>
                                 </View>
 
-                                <View style={tw`mb-4`}>
+                                {loyaltyEarningMode === 'SPEND_MULTIPLE' && <View style={tw`mb-4`}>
                                     <Text style={tw`text-xs font-bold text-gray-500 mb-1`}>Dapatkan Poin Sebanyak</Text>
                                     <TextInput 
                                         style={tw`bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3 text-gray-800 dark:text-gray-100`}
@@ -1171,9 +1197,25 @@ export default function SettingsScreen({ navigation }: any) {
                                         placeholder="Contoh: 1"
                                     />
                                     <Text style={tw`text-[10px] text-gray-400 mt-1`}>Misal: tiap belanja 1000 dapat 1 poin</Text>
+                                </View>}
+
+                                <Text style={tw`text-xs font-bold text-gray-500 mb-2`}>Cara Menukar Poin</Text>
+                                <View style={tw`flex-row bg-gray-100 dark:bg-gray-900 rounded-xl p-1 mb-4`}>
+                                    <TouchableOpacity
+                                        style={tw.style(`flex-1 rounded-lg py-2 px-2`, loyaltyRedemptionMode === 'FREE_PRODUCT' && 'bg-white dark:bg-gray-700')}
+                                        onPress={() => setLoyaltyRedemptionMode('FREE_PRODUCT')}
+                                    >
+                                        <Text style={tw.style(`text-[11px] text-center font-bold`, loyaltyRedemptionMode === 'FREE_PRODUCT' ? 'text-blue-600' : 'text-gray-500')}>Gratis Produk</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={tw.style(`flex-1 rounded-lg py-2 px-2`, loyaltyRedemptionMode === 'CASH_DISCOUNT' && 'bg-white dark:bg-gray-700')}
+                                        onPress={() => setLoyaltyRedemptionMode('CASH_DISCOUNT')}
+                                    >
+                                        <Text style={tw.style(`text-[11px] text-center font-bold`, loyaltyRedemptionMode === 'CASH_DISCOUNT' ? 'text-blue-600' : 'text-gray-500')}>Potongan Rp (Lama)</Text>
+                                    </TouchableOpacity>
                                 </View>
 
-                                <View style={tw`mb-4`}>
+                                {loyaltyRedemptionMode === 'CASH_DISCOUNT' && <View style={tw`mb-4`}>
                                     <Text style={tw`text-xs font-bold text-gray-500 mb-1`}>Nilai 1 Poin Jika Ditukar (Rp)</Text>
                                     <TextInput 
                                         style={tw`bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3 text-gray-800 dark:text-gray-100`}
@@ -1183,7 +1225,7 @@ export default function SettingsScreen({ navigation }: any) {
                                         placeholder="Contoh: 100"
                                     />
                                     <Text style={tw`text-[10px] text-gray-400 mt-1`}>Harga tukar per poin untuk jadi diskon</Text>
-                                </View>
+                                </View>}
 
                                 <View>
                                     <Text style={tw`text-xs font-bold text-gray-500 mb-1`}>Minimal Poin untuk Tukar</Text>
@@ -1194,7 +1236,7 @@ export default function SettingsScreen({ navigation }: any) {
                                         keyboardType="numeric"
                                         placeholder="Contoh: 50"
                                     />
-                                    <Text style={tw`text-[10px] text-gray-400 mt-1`}>Batas minimal poin sebelum bisa digunakan</Text>
+                                    <Text style={tw`text-[10px] text-gray-400 mt-1`}>{loyaltyRedemptionMode === 'FREE_PRODUCT' ? `Setiap ${loyaltyMinPoints || '10'} poin dapat ditukar 1 produk; poin boleh disimpan` : 'Batas minimal poin sebelum bisa digunakan'}</Text>
                                 </View>
                             </View>
                         )}

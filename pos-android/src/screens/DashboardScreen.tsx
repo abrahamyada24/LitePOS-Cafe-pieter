@@ -250,10 +250,10 @@ export default function DashboardScreen({ navigation, route }: any) {
             const db = await getDBConnection();
                         const data = await getStoreSummary(db);
             
-            const [prodRes] = await db.executeSql('SELECT COUNT(*) as count FROM products');
+            const [prodRes] = await db.executeSql('SELECT COUNT(*) as count FROM products WHERE COALESCE(isActive, 1) = 1');
             const productsCount = prodRes.rows.item(0).count || 0;
             
-            const [lowStockRes] = await db.executeSql('SELECT COUNT(*) as count FROM products WHERE stock <= minStock AND isUnlimitedStock = 0');
+            const [lowStockRes] = await db.executeSql('SELECT COUNT(*) as count FROM products WHERE stock <= minStock AND isUnlimitedStock = 0 AND COALESCE(isActive, 1) = 1');
             const lowStockCount = lowStockRes.rows.item(0).count || 0;
             
             setSummary({ ...data, productsCount, lowStockCount });
@@ -261,7 +261,8 @@ export default function DashboardScreen({ navigation, route }: any) {
             const [pendingRes] = await db.executeSql('SELECT COUNT(*) as count FROM saved_transactions');
             setPendingCount(pendingRes.rows.item(0).count || 0);
 
-            const today = new Date().toISOString().split('T')[0];
+            const now = new Date();
+            const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
             const [preRes] = await db.executeSql(
                 `SELECT t.id, t.invoiceNumber, t.customerName, t.customerId,
                         t.preOrderDate, t.grandTotal, t.status, t.preOrderConfirmed,

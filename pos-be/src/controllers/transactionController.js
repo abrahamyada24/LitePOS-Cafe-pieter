@@ -206,11 +206,27 @@ exports.createTransaction = async (req, res) => {
 
             // Loyalty points redemption discount
             let loyaltyDiscount = 0;
+            let redeemedPoints = 0;
+            let loyaltyCustomer = null;
+            let loyaltyConfig = customerId ? await tx.loyaltyConfig.findFirst({ where: { isActive: true } }) : null;
+            if (loyaltyConfig && Number(loyaltyConfig.configVersion || 1) < 2) {
+                loyaltyConfig = await tx.loyaltyConfig.update({
+                    where: { id: loyaltyConfig.id },
+                    data: {
+                        pointMultiplier: 1,
+                        multiplierAmount: 25000,
+                        minRedemptionPoints: 10,
+                        earningMode: 'TRANSACTION_THRESHOLD',
+                        redemptionMode: 'FREE_PRODUCT',
+                        configVersion: 2
+                    }
+                });
+            }
             if (parseInt(loyaltyPointsRedeemed) > 0 && customerId) {
-                const loyaltyConfig = await tx.loyaltyConfig.findFirst({ where: { isActive: true } });
                 if (loyaltyConfig) {
-                    const customer = await tx.customer.findUnique({ where: { id: parseInt(customerId) } });
-                    if (customer && customer.points >= parseInt(loyaltyPointsRedeemed) && parseInt(loyaltyPointsRedeemed) >= loyaltyConfig.minRedemptionPoints) {
+                    loyaltyCustomer = await tx.customer.findUnique({ where: { id: parseInt(customerId) } });
+                    if (loyaltyConfig.redemptionMode === 'CASH_DISCOUNT' && loyaltyCustomer && loyaltyCustomer.points >= parseInt(loyaltyPointsRedeemed) && parseInt(loyaltyPointsRedeemed) >= loyaltyConfig.minRedemptionPoints) {
+                        redeemedPoints = parseInt(loyaltyPointsRedeemed);
                         loyaltyDiscount = parseInt(loyaltyPointsRedeemed) * Number(loyaltyConfig.pointValue);
                         discount += loyaltyDiscount;
                     }
@@ -247,6 +263,15 @@ exports.createTransaction = async (req, res) => {
 
             const initialStatus = isInstantPayment ? 'PAID' : 'PENDING';
             const paymentStatus = isInstantPayment ? 'SETTLEMENT' : 'PENDING';
+            const earnedPoints = customerId && isInstantPayment && loyaltyConfig
+                ? loyaltyConfig.earningMode === 'SPEND_MULTIPLE'
+                    ? Math.floor(Number(grandTotal) / Math.max(1, Number(loyaltyConfig.multiplierAmount))) * Number(loyaltyConfig.pointMultiplier)
+                    : Number(grandTotal) >= Math.max(1, Number(loyaltyConfig.multiplierAmount)) ? 1 : 0
+                : 0;
+            if (customerId && !loyaltyCustomer) {
+                loyaltyCustomer = await tx.customer.findUnique({ where: { id: parseInt(customerId) } });
+            }
+            const pointsBalanceAfter = loyaltyCustomer ? Math.max(0, loyaltyCustomer.points - redeemedPoints + earnedPoints) : null;
 
             // Pembayaran manual langsung dikonfirmasi kasir dan mengurangi stok.
             const checkoutStockDeductedAt = isInstantPayment && !isPreOrder ? new Date() : null;
@@ -293,6 +318,10 @@ exports.createTransaction = async (req, res) => {
                     preOrderDate: preOrderDate ? new Date(preOrderDate) : null,
                     preOrderConfirmed: false,
                     stockDeductedAt: checkoutStockDeductedAt,
+                    pointsEarned: earnedPoints,
+                    pointsRedeemed: redeemedPoints,
+                    pointsBalanceAfter,
+                    loyaltyRedemptionMode: redeemedPoints > 0 ? (loyaltyConfig?.redemptionMode || 'CASH_DISCOUNT') : null,
                     items: { create: transactionItemsData },
                     payments: {
                         create: {
@@ -356,14 +385,10 @@ exports.createTransaction = async (req, res) => {
 
             // Loyalty points earning
             if (customerId && isInstantPayment) {
-                const loyaltyConfig = await tx.loyaltyConfig.findFirst({ where: { isActive: true } });
-                if (loyaltyConfig) {
-                    const earnedPoints = Math.floor(Number(grandTotal) / Number(loyaltyConfig.multiplierAmount)) * Number(loyaltyConfig.pointMultiplier);
-                    const pointsChange = earnedPoints - (parseInt(loyaltyPointsRedeemed) || 0);
-
+                if (loyaltyConfig && loyaltyCustomer) {
                     await tx.customer.update({
                         where: { id: parseInt(customerId) },
-                        data: { points: { increment: pointsChange } }
+                        data: { points: pointsBalanceAfter }
                     });
                 }
             }
@@ -813,6 +838,17 @@ exports.returnTransaction = async (req, res) => {
                 where: { id: parseInt(id) },
                 data: { status: 'RETURNED' }
             });
+
+            // Batalkan perubahan poin tepat sekali saat status berpindah ke RETURNED.
+            if (transaction.customerId && (transaction.pointsEarned > 0 || transaction.pointsRedeemed > 0)) {
+                const customer = await tx.customer.findUnique({ where: { id: transaction.customerId } });
+                if (customer) {
+                    await tx.customer.update({
+                        where: { id: customer.id },
+                        data: { points: Math.max(0, customer.points - transaction.pointsEarned + transaction.pointsRedeemed) }
+                    });
+                }
+            }
 
             // Stok hanya dikembalikan jika transaksi ini pernah menguranginya.
             for (const item of transaction.stockDeductedAt ? transaction.items : []) {

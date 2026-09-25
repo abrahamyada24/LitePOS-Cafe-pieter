@@ -210,6 +210,10 @@ exports.getAllShifts = async (req, res) => {
         const { startDate, endDate } = req.query;
         const whereClause = {};
 
+        if (String(req.user?.role || '').toUpperCase() === 'CASHIER') {
+            whereClause.userId = req.user.id;
+        }
+
         if (startDate && endDate) {
             whereClause.openedAt = {
                 gte: new Date(startDate),
