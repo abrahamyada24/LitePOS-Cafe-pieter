@@ -17,7 +17,7 @@
 1. Review dan commit kode lokal.
 2. Backup database VPS.
 3. Update kode backend VPS, pasang migrasi tahap 1, generate Prisma Client, lalu restart API.
-4. Deploy frontend ke proyek Vercel yang terhubung ke repo ini.
+4. Deploy frontend ke hosting yang digunakan. Situs `litepos-cafe-pieter.pages.dev` memakai Cloudflare Pages, sehingga deployment frontend diperiksa di Cloudflare, terpisah dari VPS.
 5. Build dan pasang Android sendiri setelah backend siap. APK lama tidak otomatis diperbarui oleh push Git.
 
 Paket GitHub tahap 1 mencakup perbaikan nota, invoice, share WhatsApp, history dan sidebar. Perubahan Firebase/notifikasi yang telah ada sebelum tahap 1 dipisahkan dan tetap lokal. Migrasi produksi dan update VPS dilakukan oleh pengguna; build Android juga diserahkan kepada pengguna.
@@ -149,12 +149,43 @@ pm2 logs litepos-api --lines 80 --nostream
 
 Ganti port health bila `PORT` instalasi berbeda. Runtime database tetap tidak memerlukan hak DDL setelah migrasi selesai. Jangan menjalankan seed/reset, `migrate reset`, atau `db push --accept-data-loss` untuk update ini.
 
-## Frontend Vercel dan Android
+## Frontend Cloudflare Pages dan Android
 
-- Push ke `main` memicu deployment frontend jika proyek Vercel memang terhubung ke remote/branch tersebut. Periksa deployment Ready. Push tidak otomatis menjalankan update VPS tanpa pipeline khusus.
+- Situs produksi yang ditunjukkan pengguna adalah `https://litepos-cafe-pieter.pages.dev`. Buka Cloudflare Dashboard → Workers & Pages → proyek `litepos-cafe-pieter` → Deployments. Pastikan deployment Production memakai commit tahap 1 `3a44a3e` atau commit sesudahnya yang memuat tahap 1, dan build/deploy berhasil. Pada pemeriksaan 27 Oktober 2026, JavaScript publik halaman shift masih belum memuat pagination tahap 1.
+- Jika proyek memakai integrasi Git, pastikan repository `abrahamyada24/LitePOS-Cafe-pieter`, production branch `main`, root directory `pos-fe`, build command `npm run build`, dan build output directory `out`. Jalankan deployment produksi terbaru setelah pengaturan benar. Jika deployment gagal, periksa build log. Jika memakai Direct Upload, build `pos-fe` lalu unggah isi hasil `pos-fe/out` ke proyek Pages yang sama; push Git saja tidak mengunggah hasil build untuk proyek Direct Upload.
+- Setelah deployment produksi berhasil, refresh dengan Ctrl+Shift+R dan periksa `/shifts/` menampilkan kontrol halaman serta `/categories/` menandai submenu Kategori. Screenshot halaman Pengaturan yang masih menyorot Produk & Stok juga menunjukkan perilaku sidebar lama. Panduan awal menyebut Vercel berdasarkan dokumen lama; untuk alamat `pages.dev` gunakan Cloudflare. Update VPS tidak mengganti file frontend Cloudflare.
+- Screenshot dashboard Cloudflare mengonfirmasi peringatan "This project is disconnected from your Git account" dan deployment produksi masih `c2d2acc`. Periksa GitHub → Settings → Applications → Installed GitHub Apps → Cloudflare Workers and Pages → Configure, lalu pastikan akses repo ini tersedia. Di Cloudflare, buka Settings → Builds → Git Repository → Manage untuk mengelola koneksi. Jika tetap terputus, ikuti prosedur reinstall GitHub App pada dokumentasi resmi Cloudflare; reinstall memengaruhi integrasi proyek lain yang memakai instalasi yang sama. Pertahankan proyek Pages dan domain yang sudah digunakan. Setelah terhubung, buat deployment dari HEAD `main` terbaru, bukan mengulang commit produksi lama.
 - Pertahankan `NEXT_PUBLIC_API_URL` menuju backend outlet yang benar. Tidak perlu mengganti domain, branding atau konfigurasi lisensi untuk tahap 1.
 - Setelah backend siap, pengguna membangun Android memakai prosedur/signing key yang biasa dipakai. Instal sebagai update aplikasi dengan package dan signing key yang sama. Jangan uninstall atau hapus data aplikasi sebelum seluruh transaksi offline tersinkron dan database lokal dicadangkan.
 - Perubahan native share memerlukan build APK baru; reload JavaScript saja tidak menambahkan modul native ke APK lama.
+
+### Instalasi dependency Android dan ERESOLVE
+
+`react-native-ping@1.2.8`, yang diperlukan printer, mendeklarasikan peer React Native hingga 0.70 sedangkan proyek memakai 0.84.1. Pengaturan `pos-android/.npmrc` memakai `legacy-peer-deps=true` agar `npm ci` mengikuti dependency tree yang digunakan proyek. Ini mengatasi resolusi instalasi; kompatibilitas printer tetap diuji pada perangkat. Jangan menurunkan React Native hanya untuk mengikuti peer range tersebut.
+
+`patch-package@8.0.1` dinyatakan sebagai devDependency karena postinstall harus menerapkan patch SQLite dan printer secara konsisten. Tidak perlu menghapus lockfile atau memperbarui npm global untuk error ini.
+
+Pemeriksaan instalasi bersih dari package/lockfile versi GitHub dengan perbaikan ini berhasil: `npm ci` memasang 1109 paket dan postinstall menerapkan kedua patch SQLite/printer tanpa error. Uji dilakukan di folder terpisah, tanpa Gradle atau build APK. Referensi: https://docs.npmjs.com/cli/v11/commands/npm-ci/ dan https://developers.cloudflare.com/pages/configuration/git-integration/github-integration/.
+
+Git Bash Windows:
+
+```bash
+cd /d/AndroidPos-web/pos-android
+npm ci --legacy-peer-deps
+cd android
+./gradlew.bat assembleRelease
+```
+
+PowerShell Windows:
+
+```powershell
+cd D:\AndroidPos-web\pos-android
+npm ci --legacy-peer-deps
+cd android
+.\gradlew.bat assembleRelease
+```
+
+Jalankan Gradle setelah instalasi dependency berhasil. APK berada di `pos-android/android/app/build/outputs/apk/release/app-release.apk`. Pertahankan signing key sesuai aplikasi yang terpasang. Build APK tetap dijalankan pengguna. Folder kerja lokal masih memiliki pengembangan Firebase terpisah; build dari folder itu juga menyertakan perubahan lokal tersebut.
 
 ## Pemeriksaan setelah pemasangan
 
