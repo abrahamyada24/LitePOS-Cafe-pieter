@@ -1,6 +1,9 @@
 "use client";
+import { fetchReportPage, fetchAllReportPages } from '@/utils/reportPages';
+import ReportPagination from '@/components/ReportPagination';
+import TransactionDetailModal from '@/components/TransactionDetailModal';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { 
     TrendingUp, Calendar, ChevronDown, DollarSign, Package,
     ArrowDownRight, ArrowUpRight, BarChart2, Users, Receipt,
@@ -25,94 +28,6 @@ const formatLocalDate = (date) => {
     return `${year}-${month}-${day}`;
 };
 
-const TransactionDetailModal = ({ isOpen, onClose, transaction }) => {
-    if (!isOpen || !transaction) return null;
-    return (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={onClose}>
-            <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
-                <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
-                    <div>
-                        <h3 className="font-bold text-gray-800 text-lg">Detail Transaksi</h3>
-                        <p className="text-sm text-gray-500">{transaction.invoiceNumber}</p>
-                    </div>
-                    <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-xl transition-colors">Tutup</button>
-                </div>
-                <div className="p-6 overflow-y-auto space-y-6">
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                            <p className="text-gray-500">Waktu</p>
-                            <p className="font-bold text-gray-800">{new Date(transaction.createdAt).toLocaleString('id-ID')}</p>
-                        </div>
-                        <div>
-                            <p className="text-gray-500">Kasir</p>
-                            <p className="font-bold text-gray-800">{transaction.user?.name || '-'}</p>
-                        </div>
-                        <div>
-                            <p className="text-gray-500">Pelanggan</p>
-                            <p className="font-bold text-gray-800">{transaction.customer?.name || transaction.customerName || 'Umum'}</p>
-                        </div>
-                        <div>
-                            <p className="text-gray-500">Status</p>
-                            <span className={`px-2 py-1 rounded text-xs font-bold ${transaction.status === 'PAID' ? 'bg-green-100 text-green-700' : transaction.status === 'RETURNED' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700'}`}>
-                                {transaction.status}
-                            </span>
-                        </div>
-                    </div>
-                    
-                    <div className="border-t border-gray-100 pt-4">
-                        <h4 className="font-bold text-gray-800 mb-3">Item Pesanan</h4>
-                        <div className="space-y-3">
-                            {transaction.items?.map((item, idx) => (
-                                <div key={idx} className="flex justify-between items-center text-sm">
-                                    <div className="flex-1">
-                                        <p className="font-bold text-gray-800">{item.product?.name || 'Produk'}</p>
-                                        <p className="text-gray-500">{item.qty} x {formatRp(item.price)}</p>
-                                        {item.notes && <p className="text-xs text-gray-400 italic">Note: {item.notes}</p>}
-                                    </div>
-                                    <p className="font-bold text-gray-800">{formatRp(Number(item.price) * item.qty)}</p>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-
-                    <div className="border-t border-gray-100 pt-4 space-y-2 text-sm">
-                        <div className="flex justify-between text-gray-500">
-                            <span>Subtotal</span>
-                            <span>{formatRp(transaction.subTotal)}</span>
-                        </div>
-                        {Number(transaction.discountAmount) > 0 && (
-                            <div className="flex justify-between text-red-500">
-                                <span>Diskon</span>
-                                <span>-{formatRp(transaction.discountAmount)}</span>
-                            </div>
-                        )}
-                        {Number(transaction.taxAmount) > 0 && (
-                            <div className="flex justify-between text-gray-500">
-                                <span>Pajak</span>
-                                <span>{formatRp(transaction.taxAmount)}</span>
-                            </div>
-                        )}
-                        <div className="flex justify-between font-bold text-lg text-gray-900 pt-2 border-t border-gray-100">
-                            <span>Total</span>
-                            <span>{formatRp(transaction.grandTotal)}</span>
-                        </div>
-                    </div>
-
-                    <div className="border-t border-gray-100 pt-4">
-                        <p className="text-sm font-bold text-gray-800 mb-2">Pembayaran</p>
-                        {transaction.payments?.map((p, idx) => (
-                            <div key={idx} className="flex justify-between text-sm">
-                                <span className="text-gray-500">{getPaymentTypeLabel(p.paymentType)}</span>
-                                <span className="font-bold">{formatRp(p.amount)}</span>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
-};
-
 export default function ReportsPage() {
     const settings = useStore(state => state.settings);
     const [activeTab, setActiveTab] = useState('TRANSAKSI');
@@ -122,6 +37,7 @@ export default function ReportsPage() {
     
     // Data States
     const [loading, setLoading] = useState(true);
+    const reportRequest = useRef(0);
     const [loadError, setLoadError] = useState('');
     const [exporting, setExporting] = useState(null);
     const [summaryData, setSummaryData] = useState(null);
@@ -132,6 +48,8 @@ export default function ReportsPage() {
     const [profitLossData, setProfitLossData] = useState(null);
     const [returnsData, setReturnsData] = useState([]);
     const [shiftData, setShiftData] = useState([]);
+    const [reportPage, setReportPage] = useState(1);
+    const [reportMeta, setReportMeta] = useState(null);
     const [expensesData, setExpensesData] = useState([]);
 
     const [selectedTrx, setSelectedTrx] = useState(null);
@@ -195,6 +113,7 @@ export default function ReportsPage() {
     };
 
     const loadData = async () => {
+        const request = ++reportRequest.current;
         if (isCustomDate && (!dateRange.start || !dateRange.end)) {
             setLoadError('');
             setLoading(false);
@@ -221,6 +140,7 @@ export default function ReportsPage() {
                 if (!response.ok || !payload.success) {
                     throw new Error(payload.message || payload.error || `Request gagal (${response.status}).`);
                 }
+                if (request !== reportRequest.current) throw new Error('STALE_REPORT');
                 return payload.data;
             };
             
@@ -231,8 +151,10 @@ export default function ReportsPage() {
                 
                 // Fetch full transactions for table
                 if (activeTab === 'TRANSAKSI') {
-                    const transactionData = await fetchData(`${API_URL}/api/transactions${qs}&limit=100`);
-                    setTransactions(transactionData);
+                    const result = await fetchReportPage(`${API_URL}/api/transactions${qs}`, headers(), reportPage);
+                    if (request !== reportRequest.current) return;
+                    setTransactions(result.data);
+                    setReportMeta(result.meta);
                 }
             }
             
@@ -247,8 +169,10 @@ export default function ReportsPage() {
                 setReturnsData(await fetchData(`${API_URL}/api/reports/returns${qs}`));
             }
             else if (activeTab === 'SHIFT') {
-                const shifts = await fetchData(`${API_URL}/api/reports/shift${qs}`);
-                setShiftData((Array.isArray(shifts) ? shifts : []).filter((shift) => isDateInSelectedPeriod(shift.openedAt)));
+                const result = await fetchReportPage(`${API_URL}/api/reports/shift${qs}`, headers(), reportPage);
+                if (request !== reportRequest.current) return;
+                setShiftData(result.data);
+                setReportMeta(result.meta);
             }
             else if (activeTab === 'LABARUGI') {
                 setProfitLossData(await fetchData(`${API_URL}/api/reports/profit-loss${qs}`));
@@ -259,27 +183,31 @@ export default function ReportsPage() {
             
         } catch (error) {
             console.error("Gagal memuat laporan:", error);
+            if (request !== reportRequest.current) return;
             setLoadError(error.message || 'Gagal memuat laporan.');
         } finally {
-            setLoading(false);
+            if (request === reportRequest.current) setLoading(false);
         }
     };
 
+    useEffect(() => { setReportPage(1); }, [activeTab, period, isCustomDate, dateRange.start, dateRange.end]);
     useEffect(() => {
         loadData();
-    }, [activeTab, period, isCustomDate, dateRange.start, dateRange.end]);
+    }, [activeTab, period, isCustomDate, dateRange.start, dateRange.end, reportPage]);
 
     // Export Handler
     const handleExport = async (format) => {
         setExporting(format);
         try {
+            const fullRows = ['SHIFT', 'TRANSAKSI'].includes(activeTab)
+                ? await fetchAllReportPages(`${API_URL}/api/${activeTab === 'SHIFT' ? 'reports/shift' : 'transactions'}${getQueryString()}`, headers()) : null;
             const report = buildReportExport(activeTab, {
                 summaryData,
-                transactions,
+                transactions: activeTab === 'TRANSAKSI' ? fullRows : transactions,
                 categoryData,
                 customerData,
                 returnsData,
-                shiftData,
+                shiftData: activeTab === 'SHIFT' ? fullRows : shiftData,
                 profitLossData,
                 expensesData,
             });
@@ -300,6 +228,15 @@ export default function ReportsPage() {
         } finally {
             setExporting(null);
         }
+    };
+
+    const openTransactionDetail = async (id) => {
+        try {
+            const response = await fetch(`${API_URL}/api/transactions/${id}`, { headers: headers() });
+            const result = await response.json();
+            if (!response.ok || !result.success) throw new Error(result.message || 'Detail transaksi gagal dimuat.');
+            setSelectedTrx(result.data);
+        } catch (error) { window.alert(error.message); }
     };
 
     // Render Tab Content
@@ -342,7 +279,7 @@ export default function ReportsPage() {
                                     </thead>
                                     <tbody>
                                         {transactions.map(trx => (
-                                            <tr key={trx.id} onClick={() => setSelectedTrx(trx)} className="border-b border-gray-50 hover:bg-gray-50 cursor-pointer">
+                                            <tr key={trx.id} onClick={() => openTransactionDetail(trx.id)} className="border-b border-gray-50 hover:bg-gray-50 cursor-pointer">
                                                 <td className="px-6 py-4 font-medium text-blue-600">{trx.invoiceNumber}</td>
                                                 <td className="px-6 py-4 text-gray-600">{new Date(trx.createdAt).toLocaleString('id-ID')}</td>
                                                 <td className="px-6 py-4 text-gray-800">{trx.user?.name || '-'}</td>
@@ -714,6 +651,8 @@ export default function ReportsPage() {
                     </div>
                 ) : renderContent()}
             </div>
+
+            {['SHIFT', 'TRANSAKSI'].includes(activeTab) && !loadError && <ReportPagination meta={reportMeta} onChange={setReportPage} disabled={loading} />}
 
             {/* Modals */}
             <TransactionDetailModal 

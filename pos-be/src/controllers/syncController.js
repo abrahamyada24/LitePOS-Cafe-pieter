@@ -1,3 +1,4 @@
+const { parseReportQuery, pageMeta } = require('../services/reportPaginationService');
 const { PrismaClient } = require('@prisma/client');
 const { enterDataSync } = require('../services/dataResetCoordinator');
 const { reserveQueue } = require('../utils/orderQueue');
@@ -1374,10 +1375,14 @@ exports.getTransactionHistory = async (req, res) => {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    // Ambil transaksi 30 hari terakhir beserta items dan payments
+    const selection = parseReportQuery(req.query, {}, 100);
+    const dateFilter = selection.where.openedAt || { gte: thirtyDaysAgo };
+    const paginated = req.query.page !== undefined;
+    const total = paginated ? await prisma.transaction.count({ where: { createdAt: dateFilter } }) : 0;
+    // Older periods are fetched on demand, preserving the lightweight default sync.
     const transactions = await prisma.transaction.findMany({
       where: {
-        createdAt: { gte: thirtyDaysAgo }
+        createdAt: dateFilter
       },
       include: {
         items: {
@@ -1387,7 +1392,8 @@ exports.getTransactionHistory = async (req, res) => {
         },
         payments: true
       },
-      orderBy: { createdAt: 'desc' }
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      ...(paginated ? { skip: selection.skip, take: selection.limit } : {})
     });
 
     // Format untuk Android SQLite
@@ -1443,7 +1449,7 @@ exports.getTransactionHistory = async (req, res) => {
     // Ambil expenses 30 hari terakhir
     const expenses = await prisma.expense.findMany({
       where: {
-        createdAt: { gte: thirtyDaysAgo }
+        createdAt: dateFilter
       },
       orderBy: { createdAt: 'desc' }
     });
@@ -1462,7 +1468,7 @@ exports.getTransactionHistory = async (req, res) => {
     const shifts = await prisma.shift.findMany({
       where: {
         OR: [
-          { openedAt: { gte: thirtyDaysAgo } },
+          { openedAt: dateFilter },
           // Shift yang masih terbuka adalah state operasional, bukan sekadar histori.
           // Tetap kirim meski dibuka lebih dari 30 hari lalu agar Android tidak
           // menganggap outlet tidak mempunyai shift aktif.
@@ -1488,6 +1494,7 @@ exports.getTransactionHistory = async (req, res) => {
 
     res.json({
       success: true,
+      meta: paginated ? pageMeta(selection.page, selection.limit, total) : undefined,
       data: {
         transactions: formattedTransactions,
         expenses: formattedExpenses,

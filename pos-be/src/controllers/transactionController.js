@@ -1,3 +1,5 @@
+const { parseReportQuery } = require('../services/reportPaginationService');
+const { registerTerminal, reserveInvoice, checkoutIdentity } = require('../services/invoiceService');
 const { PrismaClient } = require('@prisma/client');
 const midtransClient = require('midtrans-client');
 const { getProductPrice } = require('../utils/productDiscount');
@@ -13,39 +15,24 @@ const snap = new midtransClient.Snap({
 });
 
 /**
- * HELPER: Generate Invoice Number Otomatis dengan Suffix Unik
- * Menghindari error 'Order ID already taken' di Midtrans.
- */
-const generateInvoiceNumber = async (tx) => {
-    const date = new Date();
-    const yyyy = date.getFullYear();
-    const mm = String(date.getMonth() + 1).padStart(2, '0');
-    const dd = String(date.getDate()).padStart(2, '0');
-    const todayStr = `${yyyy}${mm}${dd}`;
-
-    const lastTransaction = await tx.transaction.findFirst({
-        where: { invoiceNumber: { contains: `INV/${todayStr}` } },
-        orderBy: { id: 'desc' }
-    });
-
-    let sequence = 1;
-    if (lastTransaction) {
-        const parts = lastTransaction.invoiceNumber.split('/');
-        if (parts.length >= 3) {
-            const cleanSeq = parts[2].split('-')[0];
-            sequence = parseInt(cleanSeq) + 1;
-        }
-    }
-
-    const randomSuffix = Math.random().toString(36).substring(2, 5).toUpperCase();
-    return `INV/${todayStr}/${String(sequence).padStart(4, '0')}-${randomSuffix}`;
-};
-
-/**
  * 1. CREATE TRANSACTION (CHECKOUT)
  */
-exports.createTransaction = async (req, res) => {
+exports.registerInvoiceTerminal = async (req, res) => {
     try {
+        const terminal = await registerTerminal(prisma, req.body.deviceKey, req.body.kind === 'ANDROID' ? 'ANDROID' : 'WEB');
+        res.json({ success: true, data: { code: terminal.code } });
+    } catch (error) { res.status(400).json({ success: false, message: error.message }); }
+};
+
+exports.createTransaction = async (req, res) => {
+    let identity;
+    try {
+        identity = checkoutIdentity(req);
+        const replay = identity.key ? await prisma.transaction.findUnique({ where: { checkoutKey: identity.key }, include: { items: true, payments: true } }) : null;
+        if (replay) {
+            if (replay.checkoutFingerprint !== identity.fingerprint) throw new Error('Checkout ini sudah digunakan untuk keranjang lain.');
+            return res.json({ success: true, data: { ...replay, midtransToken: replay.gatewayToken || null, midtransUrl: replay.gatewayUrl || null }, idempotentReplay: true });
+        }
         const {
             userId, customerId, customerName, items, payment,
             orderType, tableNumber, note,
@@ -63,6 +50,17 @@ exports.createTransaction = async (req, res) => {
         }
 
         const result = await prisma.$transaction(async (tx) => {
+            if (identity.key) {
+                const replay = await tx.transaction.findUnique({ where: { checkoutKey: identity.key }, include: { items: true, payments: true } });
+                if (replay) {
+                    if (replay.checkoutFingerprint !== identity.fingerprint) throw new Error('Checkout sudah digunakan untuk keranjang lain.');
+                    return { ...replay, midtransToken: replay.gatewayToken || null, midtransUrl: replay.gatewayUrl || null };
+                }
+            }
+            if (sourceOrderCode) {
+                const source = await tx.kitchenOrder.findUnique({ where: { orderCode: String(sourceOrderCode) } });
+                if (source?.transactionId) throw new Error('Order meja ini sudah memiliki transaksi pembayaran. Buka riwayat transaksi.');
+            }
             const setting = await tx.storeSetting.findFirst();
             const isPreOrder = Boolean(preOrderDate);
             const { paymentType, isGatewayPayment, isInstantPayment } = resolvePaymentMethod(
@@ -239,7 +237,7 @@ exports.createTransaction = async (req, res) => {
             const grandTotal = taxableAmount + taxAmount;
 
             // Generate Invoice unik
-            const invoiceNumber = await generateInvoiceNumber(tx);
+            const invoiceNumber = await reserveInvoice(tx, req.body.deviceKey || `legacy-web-user-${String(req.user.id).padStart(6, '0')}`);
 
             // Pastikan jumlah item Midtrans sama dengan grand total setelah diskon.
             if (discount > 0) {
@@ -300,6 +298,8 @@ exports.createTransaction = async (req, res) => {
             // Buat transaksi
             const newTransaction = await tx.transaction.create({
                 data: {
+                    checkoutKey: identity.key,
+                    checkoutFingerprint: identity.fingerprint,
                     shiftId: activeShift?.id || null,
                     userId: req.user.id,
                     customerId: customerId ? parseInt(customerId) : null,
@@ -429,6 +429,7 @@ exports.createTransaction = async (req, res) => {
                     const transaction = await snap.createTransaction(parameter);
                     midtransToken = transaction.token;
                     midtransUrl = transaction.redirect_url;
+                    await tx.transaction.update({ where: { id: newTransaction.id }, data: { gatewayToken: midtransToken, gatewayUrl: midtransUrl } });
 
                     console.log('[OK] Midtrans transaction created:', invoiceNumber);
                 } catch (midtransErr) {
@@ -450,6 +451,10 @@ exports.createTransaction = async (req, res) => {
         });
 
     } catch (error) {
+        if (error.code === 'P2002' && identity?.key) {
+            const replay = await prisma.transaction.findUnique({ where: { checkoutKey: identity.key }, include: { items: true, payments: true } });
+            if (replay && replay.checkoutFingerprint === identity.fingerprint) return res.json({ success: true, data: replay, idempotentReplay: true });
+        }
         console.error('[ERROR] Transaction Error:', error.message);
         res.status(error.code === 'SHIFT_REQUIRED' ? 409 : 400).json({
             success: false,
@@ -464,19 +469,15 @@ exports.createTransaction = async (req, res) => {
  */
 exports.getAllTransactions = async (req, res) => {
     try {
-        const { page = 1, limit = 10, status, search, preOrder, startDate, endDate } = req.query;
+        const { status, search, preOrder } = req.query;
+        const { page, limit, where: dateWhere } = parseReportQuery(req.query, {}, 10);
         const skip = (parseInt(page) - 1) * parseInt(limit);
         const whereClause = {};
 
         if (status) whereClause.status = status;
         if (search) whereClause.invoiceNumber = { contains: search };
         if (preOrder === 'true') whereClause.preOrderDate = { not: null };
-        if (startDate && endDate) {
-            whereClause.createdAt = {
-                gte: new Date(startDate + 'T00:00:00'),
-                lte: new Date(endDate + 'T23:59:59')
-            };
-        }
+        if (dateWhere.openedAt) whereClause.createdAt = dateWhere.openedAt;
 
         const [transactions, total] = await prisma.$transaction([
             prisma.transaction.findMany({
@@ -486,7 +487,7 @@ exports.getAllTransactions = async (req, res) => {
                     customer: { select: { name: true } },
                     payments: true
                 },
-                orderBy: { createdAt: 'desc' },
+                orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
                 skip,
                 take: parseInt(limit)
             }),
@@ -500,7 +501,7 @@ exports.getAllTransactions = async (req, res) => {
                 total,
                 page: parseInt(page),
                 limit: parseInt(limit),
-                totalPages: Math.ceil(total / parseInt(limit))
+                totalPages: Math.max(1, Math.ceil(total / parseInt(limit)))
             }
         });
     } catch (error) {

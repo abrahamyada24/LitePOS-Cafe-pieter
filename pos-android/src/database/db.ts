@@ -299,6 +299,8 @@ export const createTables = async (db: any) => {
     { table: 'expenses', column: 'shiftId', def: 'TEXT' },
     // Offline Sync Migrations
     { table: 'transactions', column: 'isSynced', def: 'INTEGER DEFAULT 0' },
+    { table: 'transactions', column: 'receiptJson', def: 'TEXT' },
+    { table: 'transactions', column: 'syncError', def: 'TEXT' },
     { table: 'expenses', column: 'isSynced', def: 'INTEGER DEFAULT 0' },
     { table: 'shifts', column: 'isSynced', def: 'INTEGER DEFAULT 0' },
     { table: 'shifts', column: 'expectedCloseAt', def: 'TEXT' },

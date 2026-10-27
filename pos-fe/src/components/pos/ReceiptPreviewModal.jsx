@@ -1,5 +1,6 @@
 "use client";
 
+import WhatsAppReceiptDialog from '@/components/WhatsAppReceiptDialog';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Download, Loader2, Printer, Share2, X } from 'lucide-react';
 import { DEFAULT_DEVICE_PREFERENCES, getDevicePreferences, getPaperWidthMm } from '@/utils/devicePreferences';
@@ -20,6 +21,7 @@ export default function ReceiptPreviewModal({ isOpen, onClose, transaction, stor
     const [receiptImageError, setReceiptImageError] = useState('');
     const [isPreparingImage, setIsPreparingImage] = useState(false);
     const [isSharing, setIsSharing] = useState(false);
+    const [shareDialog, setShareDialog] = useState(false);
     const license = useStore((state) => state.license);
 
     const prepareReceiptImage = useCallback(async () => {
@@ -341,8 +343,8 @@ export default function ReceiptPreviewModal({ isOpen, onClose, transaction, stor
                         {isPreparingImage ? 'Menyiapkan' : 'Unduh PNG'}
                     </button>
                     <button
-                        onClick={handleShareImage}
-                        disabled={!receiptImageBlob || isPreparingImage || isSharing}
+                        onClick={() => setShareDialog(true)}
+                        disabled={isSharing}
                         className="flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-wait disabled:opacity-50"
                     >
                         {isSharing ? <Loader2 size={17} className="animate-spin" /> : <Share2 size={17} />}
@@ -354,6 +356,7 @@ export default function ReceiptPreviewModal({ isOpen, onClose, transaction, stor
                     </div>
                 </div>
             </div>
+            <WhatsAppReceiptDialog open={shareDialog} onClose={() => setShareDialog(false)} transaction={transaction} store={store} paperWidthMm={paperWidthMm} showLitePosBranding={showLitePosBranding} onShareImage={handleShareImage} imageDisabled={!receiptImageBlob || isSharing} />
         </div>
     );
 }

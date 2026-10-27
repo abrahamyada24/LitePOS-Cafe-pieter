@@ -13,11 +13,14 @@ import { useStore } from '../store/useStore';
 import { showAlert } from '../utils/swal';
 import { getPosPendingTransactions } from '../utils/savedTransactions';
 
+const normalizeRoute = (path) => (path || '/').replace(/\/+$/, '') || '/';
+const INVENTORY_ROUTES = ['/products', '/packages', '/categories', '/stock', '/stock-receiving', '/stock-opname'];
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
-const SidebarItem = ({ icon: Icon, label, href, hasSubmenu, isOpen, onClick, badge }) => {
-  const pathname = usePathname();
-  const isActive = href ? pathname === href : false;
+const SidebarItem = ({ icon: Icon, label, href, hasSubmenu, isOpen, onClick, badge, active = false }) => {
+  const pathname = normalizeRoute(usePathname());
+  const isActive = href ? pathname === normalizeRoute(href) : active;
 
   const content = (
     <div className="flex items-center gap-3">
@@ -31,14 +34,14 @@ const SidebarItem = ({ icon: Icon, label, href, hasSubmenu, isOpen, onClick, bad
     </div>
   );
 
-  const className = `w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all duration-200 group mb-1 ${isActive || (hasSubmenu && isOpen)
+  const className = `w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all duration-200 group mb-1 ${isActive
     ? 'bg-blue-50 text-blue-600 font-bold'
     : 'text-gray-500 hover:bg-gray-50 hover:text-gray-800 font-medium'
     }`;
 
   if (href) {
     return (
-      <Link href={href} className={className}>
+      <Link href={href} className={className} aria-current={isActive ? "page" : undefined}>
         {content}
       </Link>
     );
@@ -56,7 +59,7 @@ const SidebarItem = ({ icon: Icon, label, href, hasSubmenu, isOpen, onClick, bad
 
 export default function Sidebar({ isMobileOpen, setIsMobileOpen }) {
   const router = useRouter();
-  const pathname = usePathname();
+  const pathname = normalizeRoute(usePathname());
 
   // Menggunakan selector reaktif dari Zustand Store
   const user = useStore((state) => state.user);
@@ -64,7 +67,9 @@ export default function Sidebar({ isMobileOpen, setIsMobileOpen }) {
   const settings = useStore((state) => state.settings);
 
   const [mounted, setMounted] = useState(false);
-  const [expandedMenu, setExpandedMenu] = useState({ inventory: true });
+  const inventoryActive = INVENTORY_ROUTES.some(route => pathname === route || pathname.startsWith(`${route}/`));
+  const [expandedMenu, setExpandedMenu] = useState({ inventory: inventoryActive });
+  useEffect(() => { if (inventoryActive) setExpandedMenu(current => ({ ...current, inventory: true })); }, [pathname, inventoryActive]);
   const [pendingSalesCount, setPendingSalesCount] = useState(0);
   const [kitchenNewCount, setKitchenNewCount] = useState(0);
 
@@ -172,18 +177,19 @@ export default function Sidebar({ isMobileOpen, setIsMobileOpen }) {
                 <SidebarItem
                   icon={Box}
                   label="Produk & Stok"
+                  active={inventoryActive}
                   hasSubmenu
                   isOpen={expandedMenu.inventory}
                   onClick={() => toggleSubmenu('inventory')}
                 />
                 {expandedMenu.inventory && (
                   <div className="ml-4 pl-4 border-l border-gray-100 space-y-1 mt-1 mb-2">
-                    <Link href="/products" className={`block w-full text-left px-4 py-2 text-sm rounded-lg transition-colors ${pathname === '/products' ? 'text-blue-600 bg-blue-50 font-bold' : 'text-gray-500 hover:text-gray-800'}`}>Daftar Produk</Link>
-                    <Link href="/packages" className={`block w-full text-left px-4 py-2 text-sm rounded-lg transition-colors ${pathname === '/packages' ? 'text-blue-600 bg-blue-50 font-bold' : 'text-gray-500 hover:text-gray-800'}`}>Paket Produk</Link>
-                    <Link href="/categories" className={`block w-full text-left px-4 py-2 text-sm rounded-lg transition-colors ${pathname === '/categories' ? 'text-blue-600 bg-blue-50 font-bold' : 'text-gray-500 hover:text-gray-800'}`}>Kategori</Link>
-                    <Link href="/stock" className={`block w-full text-left px-4 py-2 text-sm rounded-lg transition-colors ${pathname === '/stock' ? 'text-blue-600 bg-blue-50 font-bold' : 'text-gray-500 hover:text-gray-800'}`}>Riwayat Stok</Link>
-                    <Link href="/stock-receiving" className={`block w-full text-left px-4 py-2 text-sm rounded-lg transition-colors ${pathname === '/stock-receiving' ? 'text-blue-600 bg-blue-50 font-bold' : 'text-gray-500 hover:text-gray-800'}`}>Penerimaan Barang</Link>
-                    <Link href="/stock-opname" className={`block w-full text-left px-4 py-2 text-sm rounded-lg transition-colors ${pathname === '/stock-opname' ? 'text-blue-600 bg-blue-50 font-bold' : 'text-gray-500 hover:text-gray-800'}`}>Stock Opname</Link>
+                    <Link href="/products" aria-current={pathname === '/products' ? 'page' : undefined} className={`block w-full text-left px-4 py-2 text-sm rounded-lg transition-colors ${pathname === '/products' ? 'text-blue-600 bg-blue-50 font-bold' : 'text-gray-500 hover:text-gray-800'}`}>Daftar Produk</Link>
+                    <Link href="/packages" aria-current={pathname === '/packages' ? 'page' : undefined} className={`block w-full text-left px-4 py-2 text-sm rounded-lg transition-colors ${pathname === '/packages' ? 'text-blue-600 bg-blue-50 font-bold' : 'text-gray-500 hover:text-gray-800'}`}>Paket Produk</Link>
+                    <Link href="/categories" aria-current={pathname === '/categories' ? 'page' : undefined} className={`block w-full text-left px-4 py-2 text-sm rounded-lg transition-colors ${pathname === '/categories' ? 'text-blue-600 bg-blue-50 font-bold' : 'text-gray-500 hover:text-gray-800'}`}>Kategori</Link>
+                    <Link href="/stock" aria-current={pathname === '/stock' ? 'page' : undefined} className={`block w-full text-left px-4 py-2 text-sm rounded-lg transition-colors ${pathname === '/stock' ? 'text-blue-600 bg-blue-50 font-bold' : 'text-gray-500 hover:text-gray-800'}`}>Riwayat Stok</Link>
+                    <Link href="/stock-receiving" aria-current={pathname === '/stock-receiving' ? 'page' : undefined} className={`block w-full text-left px-4 py-2 text-sm rounded-lg transition-colors ${pathname === '/stock-receiving' ? 'text-blue-600 bg-blue-50 font-bold' : 'text-gray-500 hover:text-gray-800'}`}>Penerimaan Barang</Link>
+                    <Link href="/stock-opname" aria-current={pathname === '/stock-opname' ? 'page' : undefined} className={`block w-full text-left px-4 py-2 text-sm rounded-lg transition-colors ${pathname === '/stock-opname' ? 'text-blue-600 bg-blue-50 font-bold' : 'text-gray-500 hover:text-gray-800'}`}>Stock Opname</Link>
                   </div>
                 )}
               </div>

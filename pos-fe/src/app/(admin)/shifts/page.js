@@ -1,4 +1,5 @@
 "use client";
+import ReportPagination from '@/components/ReportPagination';
 import React, { useEffect, useRef, useState } from 'react';
 import { Clock, Play, Square, Loader2, Power } from 'lucide-react';
 import { showAlert } from '@/utils/swal';
@@ -13,6 +14,9 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
 export default function ShiftsPage() {
     const [shifts, setShifts] = useState([]);
+    const [page, setPage] = useState(1);
+    const [pageMeta, setPageMeta] = useState(null);
+    const loadRequest = useRef(0);
     const [currentShift, setCurrentShift] = useState(null);
     const [featureEnabled, setFeatureEnabled] = useState(true);
     const [loading, setLoading] = useState(true);
@@ -30,15 +34,17 @@ export default function ShiftsPage() {
     const formatRp = (n) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(n || 0);
 
     const loadData = async (silent = false) => {
+        const request = ++loadRequest.current;
         if (!silent) setLoading(true);
         try {
             const [shiftRes, currentRes] = await Promise.all([
-                fetch(`${API_URL}/api/shifts`, { headers: headers() }),
+                fetch(`${API_URL}/api/shifts?page=${page}&limit=20`, { headers: headers() }),
                 fetch(`${API_URL}/api/shifts/current`, { headers: headers() })
             ]);
             const shiftData = await shiftRes.json();
             const currentData = await currentRes.json();
-            if (shiftData.success) setShifts(shiftData.data);
+            if (request !== loadRequest.current) return;
+            if (shiftData.success) { setShifts(shiftData.data); setPageMeta(shiftData.meta); }
             if (currentData.success) {
                 setCurrentShift(currentData.data);
                 setFeatureEnabled(currentData.enabled !== false);
@@ -54,7 +60,7 @@ export default function ShiftsPage() {
                 }
             }
         } catch (e) { console.error(e); }
-        if (!silent) setLoading(false);
+        if (!silent && request === loadRequest.current) setLoading(false);
     };
 
     useEffect(() => {
@@ -71,7 +77,7 @@ export default function ShiftsPage() {
             window.removeEventListener('focus', handleRefresh);
             document.removeEventListener('visibilitychange', handleVisibility);
         };
-    }, []);
+    }, [page]);
 
     useEffect(() => {
         if (!currentShift) {
@@ -320,6 +326,7 @@ export default function ShiftsPage() {
                     </div>
                 )}
             </div>
+            <ReportPagination meta={pageMeta} onChange={setPage} disabled={loading} />
         </div>
     );
 }

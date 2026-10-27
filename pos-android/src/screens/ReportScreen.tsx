@@ -1,3 +1,5 @@
+import { receiptForTransaction } from '../utils/receiptSnapshot';
+import { syncService } from '../services/syncService';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     View, Text, FlatList, TouchableOpacity, ScrollView,
@@ -169,6 +171,12 @@ export default function ReportScreen({ navigation }: any) {
     const [showDailyPrintPreview, setShowDailyPrintPreview] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
     const [shiftReports, setShiftReports] = useState<any[]>([]);
+    const [shiftPage, setShiftPage] = useState(1);
+    const [shiftMeta, setShiftMeta] = useState({ total: 0, totalPages: 1 });
+    const [shiftLoading, setShiftLoading] = useState(false);
+    const shiftRequest = useRef(0);
+    const shiftPageSize = 20;
+    useEffect(() => { setShiftPage(1); }, [activeFilter, startDate, endDate, user?.id]);
 
     // Expenses state
     const [expenses, setExpenses] = useState<any[]>([]);
@@ -181,13 +189,25 @@ export default function ReportScreen({ navigation }: any) {
     const [expenseSubTab, setExpenseSubTab] = useState<'PURCHASE' | 'EXPENSE'>('EXPENSE');
 
     const loadShiftReports = useCallback(async () => {
+        const request = ++shiftRequest.current;
+        setShiftLoading(true);
+        const today = localDateKey();
+        let from = startDate;
+        let to = endDate;
+        if (activeFilter === 'Hari Ini') from = to = today;
+        else if (activeFilter === 'Minggu Ini') { const day = new Date(); day.setDate(day.getDate() - 6); from = localDateKey(day); to = today; }
+        else if (activeFilter === 'Bulan Ini') { from = today.slice(0, 7) + '-01'; to = today; }
+        const params = { page: shiftPage, limit: shiftPageSize, startDate: from, endDate: to };
         try {
-            const response = await api.get('/shifts');
+            const response = await api.get('/shifts', { params });
+            if (request !== shiftRequest.current) return;
+            if (!response.data?.success) throw new Error(response.data?.message || 'Riwayat shift gagal dimuat.');
+            setShiftMeta(response.data.meta || { total: response.data.data.length, totalPages: 1 });
             const serverShifts = Array.isArray(response.data?.data) ? response.data.data : [];
             const visibleServerShifts = isCashier
                 ? serverShifts.filter((shift: any) => Number(shift.userId) === Number(user?.id))
                 : serverShifts;
-            setShiftReports(visibleServerShifts.slice(0, 50).map((shift: any) => ({
+            setShiftReports(visibleServerShifts.map((shift: any) => ({
                 ...shift,
                 openingCash: Number(shift.openingCash || 0),
                 closingCash: shift.closingCash == null ? null : Number(shift.closingCash),
@@ -198,6 +218,7 @@ export default function ReportScreen({ navigation }: any) {
                 transferSales: Number(shift.transferSales || 0),
                 expensesTotal: Number(shift.cashExpenses || 0),
             })));
+            setShiftLoading(false);
             return;
         } catch (error: any) {
             console.warn('[SHIFT REPORT] Server tidak tersedia, memakai data lokal:', error?.message);
@@ -205,13 +226,17 @@ export default function ReportScreen({ navigation }: any) {
 
         try {
             const db = await getDBConnection();
+            const where = "WHERE datetime(s.openedAt, '+7 hours') >= datetime(?) AND datetime(s.openedAt, '+7 hours') < datetime(?, '+1 day')" + (isCashier ? ' AND s.userId = ?' : '');
+            const args: any[] = [from, to];
+            if (isCashier) args.push(user?.id);
+            const [count] = await db.executeSql('SELECT COUNT(*) AS total FROM shifts s ' + where, args);
             const [res] = await db.executeSql(
                 `SELECT s.*,
                     (
                         SELECT COUNT(*) FROM transactions t
                         WHERE COALESCE(t.paidAt, t.createdAt) >= s.openedAt
                         AND (s.closedAt IS NULL OR COALESCE(t.paidAt, t.createdAt) <= s.closedAt)
-                        AND t.status = 'COMPLETED'
+                        AND UPPER(COALESCE(t.status, 'COMPLETED')) IN ('PAID', 'COMPLETED')
                         AND COALESCE(t.paymentStatus, 'PAID') = 'PAID'
                     ) as txCount,
                     (
@@ -223,7 +248,7 @@ export default function ReportScreen({ navigation }: any) {
                         ),0) FROM transactions t
                         WHERE COALESCE(t.paidAt, t.createdAt) >= s.openedAt
                         AND (s.closedAt IS NULL OR COALESCE(t.paidAt, t.createdAt) <= s.closedAt)
-                        AND t.status = 'COMPLETED'
+                        AND UPPER(COALESCE(t.status, 'COMPLETED')) IN ('PAID', 'COMPLETED')
                         AND COALESCE(t.paymentStatus, 'PAID') = 'PAID'
                     ) as txTotal,
                     (
@@ -231,7 +256,7 @@ export default function ReportScreen({ navigation }: any) {
                         FROM transactions t
                         WHERE COALESCE(t.paidAt, t.createdAt) >= s.openedAt
                         AND (s.closedAt IS NULL OR COALESCE(t.paidAt, t.createdAt) <= s.closedAt)
-                        AND t.status = 'COMPLETED'
+                        AND UPPER(COALESCE(t.status, 'COMPLETED')) IN ('PAID', 'COMPLETED')
                         AND COALESCE(t.paymentStatus, 'PAID') = 'PAID'
                         AND UPPER(COALESCE(t.paymentMethod, '')) = 'CASH'
                     ) as cashSales,
@@ -240,7 +265,7 @@ export default function ReportScreen({ navigation }: any) {
                         FROM transactions t
                         WHERE COALESCE(t.paidAt, t.createdAt) >= s.openedAt
                         AND (s.closedAt IS NULL OR COALESCE(t.paidAt, t.createdAt) <= s.closedAt)
-                        AND t.status = 'COMPLETED'
+                        AND UPPER(COALESCE(t.status, 'COMPLETED')) IN ('PAID', 'COMPLETED')
                         AND COALESCE(t.paymentStatus, 'PAID') = 'PAID'
                         AND UPPER(COALESCE(t.paymentMethod, '')) IN ('QRIS', 'QRIS_MANUAL')
                     ) as qrisSales,
@@ -249,7 +274,7 @@ export default function ReportScreen({ navigation }: any) {
                         FROM transactions t
                         WHERE COALESCE(t.paidAt, t.createdAt) >= s.openedAt
                         AND (s.closedAt IS NULL OR COALESCE(t.paidAt, t.createdAt) <= s.closedAt)
-                        AND t.status = 'COMPLETED'
+                        AND UPPER(COALESCE(t.status, 'COMPLETED')) IN ('PAID', 'COMPLETED')
                         AND COALESCE(t.paymentStatus, 'PAID') = 'PAID'
                         AND UPPER(COALESCE(t.paymentMethod, '')) = 'TRANSFER'
                     ) as transferSales,
@@ -258,13 +283,17 @@ export default function ReportScreen({ navigation }: any) {
                         WHERE e.createdAt >= s.openedAt
                         AND (s.closedAt IS NULL OR e.createdAt <= s.closedAt)
                     ) as expensesTotal
-                 FROM shifts s ORDER BY s.openedAt DESC LIMIT 50`
+                 FROM shifts s ${where} ORDER BY s.openedAt DESC, s.id DESC LIMIT ? OFFSET ?`, [...args, shiftPageSize, (shiftPage - 1) * shiftPageSize]
             );
             const arr: any[] = [];
             for (let i = 0; i < res.rows.length; i++) arr.push(res.rows.item(i));
-            setShiftReports(isCashier ? arr.filter(shift => Number(shift.userId) === Number(user?.id)) : arr);
-        } catch (e) { setShiftReports([]); }
-    }, [isCashier, user?.id]);
+            if (request !== shiftRequest.current) return;
+            const total = Number(count.rows.item(0).total);
+            setShiftMeta({ total, totalPages: Math.max(1, Math.ceil(total / shiftPageSize)) });
+            setShiftReports(arr);
+        } catch (e) { if (request === shiftRequest.current) setShiftReports([]); }
+        finally { if (request === shiftRequest.current) setShiftLoading(false); }
+    }, [isCashier, user?.id, shiftPage, activeFilter, startDate, endDate]);
 
     useEffect(() => {
         if (mainTab !== 'penjualan' || salesSubTab !== 'shift') return;
@@ -412,6 +441,19 @@ export default function ReportScreen({ navigation }: any) {
             console.error(error);
         }
     }, [startDate, endDate]);
+
+    useEffect(() => {
+        let active = true;
+        const today = localDateKey();
+        let from = startDate; let to = endDate;
+        if (activeFilter === 'Hari Ini') from = to = today;
+        else if (activeFilter === 'Minggu Ini') { const date = new Date(); date.setDate(date.getDate() - 6); from = localDateKey(date); to = today; }
+        else if (activeFilter === 'Bulan Ini') { from = today.slice(0, 7) + '-01'; to = today; }
+        void syncService.syncTransactionHistory({ startDate: from, endDate: to }).then(result => {
+            if (active && result.success) void loadTransactions(activeFilter);
+        }).catch(console.warn);
+        return () => { active = false; };
+    }, [activeFilter, startDate, endDate, loadTransactions]);
 
     const loadExpenses = useCallback(async (filter: string) => {
         try {
@@ -1176,6 +1218,7 @@ tr.ret td{color:#dc2626;background:#fef2f2}
                 >
                     <View style={tw`flex-1`}>
                         <Text style={tw`font-bold text-gray-800 dark:text-gray-100 mr-2 text-sm`}>{item.invoiceNumber}</Text>
+                        {Number(item.isSynced) === 0 && <Text style={tw`text-xs text-orange-700 mt-1`}>{item.syncError ? 'Sinkronisasi tertunda: ' + item.syncError : 'Tersimpan lokal · belum tersinkron'}</Text>}
                         <Text style={tw`text-xs text-gray-500 dark:text-gray-400 mt-0.5`}>{new Date(item.createdAt).toLocaleString('id-ID')}</Text>
                         {item.customerName && item.customerName !== 'Umum' && (
                             <Text style={tw`text-xs text-red-600 mt-0.5 font-bold`}>{item.customerName}</Text>
@@ -1204,10 +1247,15 @@ tr.ret td{color:#dc2626;background:#fef2f2}
                         <Text style={tw`text-gray-500 dark:text-gray-400 text-xs mt-0.5`}>Rekap kasir dan metode pembayaran</Text>
                     </View>
                     <View style={tw`bg-gray-100 dark:bg-gray-800 px-3 py-1.5 rounded-full`}>
-                        <Text style={tw`text-gray-700 dark:text-gray-200 font-black text-xs`}>{shiftReports.length} shift</Text>
+                        <Text style={tw`text-gray-700 dark:text-gray-200 font-black text-xs`}>{shiftMeta.total} shift</Text>
                     </View>
                 </View>
             )}
+            ListFooterComponent={<View style={tw`flex-row items-center justify-between py-4`}>
+                <TouchableOpacity disabled={shiftLoading || shiftPage <= 1} onPress={() => setShiftPage(page => page - 1)}><Text style={tw`text-blue-600 p-2`}>Sebelumnya</Text></TouchableOpacity>
+                <Text style={tw`text-gray-600`}>{shiftPage} / {shiftMeta.totalPages}</Text>
+                <TouchableOpacity disabled={shiftLoading || shiftPage >= shiftMeta.totalPages} onPress={() => setShiftPage(page => page + 1)}><Text style={tw`text-blue-600 p-2`}>Berikutnya</Text></TouchableOpacity>
+            </View>}
             data={shiftReports}
             keyExtractor={item => String(item.id)}
             ListEmptyComponent={() => (
@@ -1952,7 +2000,7 @@ tr.ret td{color:#dc2626;background:#fef2f2}
                                         style={tw`flex-1 bg-gray-100 dark:bg-gray-700 py-3 rounded-xl flex-row items-center justify-center`}
                                         onPress={() => {
                                             navigation.navigate('ReceiptPreview', {
-                                                receiptData: { ...selectedTrx, total: selectedTrx.grandTotal, items: trxItems }
+                                                receiptData: receiptForTransaction(selectedTrx, trxItems)
                                             });
                                             setSelectedTrx(null);
                                         }}

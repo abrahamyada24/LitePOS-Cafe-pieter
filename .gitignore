@@ -45,6 +45,7 @@ pos-desktop/release/
 *.key
 *.p12
 *.sql
+!pos-be/prisma/migrations/**/migration.sql
 pos-android/generator.html
 pos-android/.license-generator-private.jwk
 

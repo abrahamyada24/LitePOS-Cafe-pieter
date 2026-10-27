@@ -3,7 +3,7 @@ import { getDBConnection } from '../database/db';
 
 // Keys yang hanya ada di device lokal, tidak boleh ditimpa oleh server
 const LOCAL_ONLY_KEYS = [
-    'printerAddress', 'printerType', 'apiBaseUrl', 'enableKitchenPrint', 'theme', 'settings_sync_pending', 'sync_initialized',
+    'invoice_device_key', 'invoice_terminal_code', 'printerAddress', 'printerType', 'apiBaseUrl', 'enableKitchenPrint', 'theme', 'settings_sync_pending', 'sync_initialized',
     'store_id', 'license_number', 'license_status', 'license_expire_date', 'license_type', 'license_offline',
     'dataResetVersion', 'dataResetAt', 'dataResetType',
 ];
@@ -191,6 +191,8 @@ const uploadCustomerImage = async (serverCustomerId: number, imageUri: string) =
     if (!remoteImageUrl) throw new Error('Backend tidak mengembalikan URL foto pelanggan.');
     return remoteImageUrl as string;
 };
+
+let pendingPush: Promise<any> | null = null;
 
 export const syncService = {
     reconcileResetState: async () => {
@@ -680,7 +682,12 @@ export const syncService = {
     },
 
     // 2. Kirim transaksi offline ke server
-    pushLocalData: async () => {
+    pushLocalData: () => {
+        if (pendingPush) return pendingPush;
+        pendingPush = syncService.performPush().finally(() => { pendingPush = null; });
+        return pendingPush;
+    },
+    performPush: async () => {
         try {
             const db = await getDBConnection();
             const [resetVersionResult] = await db.executeSql(
@@ -888,7 +895,7 @@ export const syncService = {
                 const [settingsRes] = await db.executeSql('SELECT * FROM settings');
                 for (let i = 0; i < settingsRes.rows.length; i++) {
                     const row = settingsRes.rows.item(i);
-                    if (!LOCAL_ONLY_KEYS.includes(row.key)) {
+                    if (!LOCAL_ONLY_KEYS.includes(row.key) && !row.key.startsWith('invoice_counter:')) {
                         settings.push({ key: row.key, value: row.value });
                     }
                 }
@@ -964,7 +971,12 @@ export const syncService = {
                     }
                 }
 
-                await markRowsSynced(db, 'transactions', acknowledgedIds('transactions', transactions, 'transaction'));
+                const acceptedTransactions = acknowledgedIds('transactions', transactions, 'transaction');
+                await markRowsSynced(db, 'transactions', acceptedTransactions);
+                for (const id of acceptedTransactions) await db.executeSql('UPDATE transactions SET syncError = NULL WHERE id = ?', [id]);
+                for (const warning of warnings.filter((item: any) => item.entity === 'transaction')) {
+                    await db.executeSql('UPDATE transactions SET syncError = ? WHERE id = ?', [warning.message || 'Transaksi belum diterima server.', warning.id]);
+                }
                 await markRowsSynced(db, 'expenses', acknowledgedIds('expenses', expenses, 'expense'));
                 await markRowsSynced(db, 'shifts', acknowledgedIds('shifts', shifts, 'shift'));
                 await markRowsSynced(db, 'stock_receipts', acknowledgedIds('stockReceipts', stockReceipts, 'stockReceipt'));
@@ -1072,9 +1084,9 @@ export const syncService = {
 
     // 3. Ambil histori transaksi dari server (30 hari terakhir)
     // Agar laporan dan dashboard di Android menampilkan semua transaksi antar perangkat
-    syncTransactionHistory: async () => {
+    syncTransactionHistory: async (range?: { startDate: string; endDate: string }, page = 1): Promise<any> => {
         try {
-            const res = await api.get('/sync/history');
+            const res = await api.get('/sync/history', { params: range ? { ...range, page, limit: 100 } : undefined });
             const data = res.data.data;
 
             const db = await getDBConnection();
@@ -1102,8 +1114,10 @@ export const syncService = {
                                 }
                             }
 
-                            // Insert transaction
-                            await db.executeSql(
+                            const statements: Array<[string, any[]]> = [];
+                            const enqueue = (sql: string, args: any[]) => { statements.push([sql, args]); };
+                            // Persist header and all items in one native SQLite transaction.
+                            enqueue(
                                 `INSERT INTO transactions (id, invoiceNumber, grandTotal, discountAmount, taxAmount, paymentMethod, cashAmount, changeAmount, customerId, customerName, createdAt, status, preOrderDate, paymentStatus, paidAmount, remainingAmount, paidAt, orderType, tableName, preOrderConfirmed, pointsEarned, pointsRedeemed, pointsBalanceAfter, loyaltyRedemptionMode, shiftId, isSynced)
                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
                                 [
@@ -1150,7 +1164,7 @@ export const syncService = {
                                         }
                                     }
 
-                                    await db.executeSql(
+                                    enqueue(
                                         `INSERT INTO transaction_items (transactionId, productId, quantity, price, originalPrice, discountAmount, notes, loyaltyRewardQty, loyaltyRewardDiscount)
                                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                                         [
@@ -1167,6 +1181,7 @@ export const syncService = {
                                     );
                                 }
                             }
+                            await db.sqlBatch(statements);
                         } else {
                             // Transaksi sudah ada — update status jika berubah (misal RETURNED)
                             const existing = checkRes.rows.item(0);
@@ -1292,6 +1307,7 @@ export const syncService = {
                 }
             }
 
+            if (range && page < Number(res.data.meta?.totalPages || 1)) return syncService.syncTransactionHistory(range, page + 1);
             return { success: true, message: 'Transaction history synced successfully' };
         } catch (error: any) {
             console.error('Sync History Error:', error);

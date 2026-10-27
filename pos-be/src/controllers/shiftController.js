@@ -1,3 +1,4 @@
+const { parseReportQuery, pageMeta } = require('../services/reportPaginationService');
 const { PrismaClient } = require('@prisma/client');
 const { calculateShiftSummary, enrichShiftsWithSummaries } = require('../services/shiftSummaryService');
 const {
@@ -207,27 +208,14 @@ exports.closeShift = async (req, res) => {
 // 3. GET ALL SHIFTS
 exports.getAllShifts = async (req, res) => {
     try {
-        const { startDate, endDate } = req.query;
-        const whereClause = {};
-
-        if (String(req.user?.role || '').toUpperCase() === 'CASHIER') {
-            whereClause.userId = req.user.id;
-        }
-
-        if (startDate && endDate) {
-            whereClause.openedAt = {
-                gte: new Date(startDate),
-                lte: new Date(new Date(endDate).setHours(23, 59, 59, 999))
-            };
-        }
-
-        const shifts = await prisma.shift.findMany({
-            where: whereClause,
-            orderBy: { openedAt: 'desc' }
-        });
+        const { page, limit, skip, where } = parseReportQuery(req.query, req.user);
+        const [shifts, total] = await prisma.$transaction([
+            prisma.shift.findMany({ where, orderBy: [{ openedAt: 'desc' }, { id: 'desc' }], skip, take: limit }),
+            prisma.shift.count({ where })
+        ]);
         const summarizedShifts = await enrichShiftsWithSummaries(prisma, shifts);
 
-        res.json({ success: true, data: summarizedShifts });
+        res.json({ success: true, data: summarizedShifts, meta: pageMeta(page, limit, total) });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }

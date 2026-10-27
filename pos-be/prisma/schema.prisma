@@ -226,7 +226,24 @@ model Customer {
   @@map("customers")
 }
 
+model InvoiceTerminal {
+  id Int @id @default(autoincrement())
+  deviceKey String @unique @map("device_key") @db.VarChar(80)
+  kind String @db.VarChar(10)
+  @@map("invoice_terminals")
+}
+
+model InvoiceCounter {
+  key String @id @db.VarChar(80)
+  lastNumber Int @map("last_number")
+  @@map("invoice_counters")
+}
+
 model Transaction {
+  gatewayToken String? @map("gateway_token") @db.VarChar(255)
+  gatewayUrl String? @map("gateway_url") @db.Text
+  checkoutKey String? @unique @map("checkout_key") @db.VarChar(100)
+  checkoutFingerprint String? @map("checkout_fingerprint") @db.VarChar(64)
   id                Int               @id @default(autoincrement())
   androidId         String?           @unique @map("android_id") @db.VarChar(100)
   shiftId           String?           @map("shift_id")

@@ -1,4 +1,5 @@
 "use client";
+import WhatsAppReceiptDialog from '@/components/WhatsAppReceiptDialog';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { X, Calendar, User, CreditCard, Printer, ShoppingBag, Store, FileText, MapPin, UtensilsCrossed, RotateCcw, Loader2, Share2 } from 'lucide-react';
@@ -17,6 +18,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 export default function TransactionDetailModal({ isOpen, onClose, transaction, canReturn = false, isReturning = false, onReturn }) {
     const receiptRef = useRef(null);
     const imageGenerationRef = useRef(0);
+    const [shareDialog, setShareDialog] = useState(false);
     const [storeSettings, setStoreSettings] = useState(null);
     const [devicePreferences, setDevicePreferences] = useState(DEFAULT_DEVICE_PREFERENCES);
     const [receiptImageBlob, setReceiptImageBlob] = useState(null);
@@ -542,13 +544,13 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
                         Tutup
                     </button>
                     <button
-                        onClick={handleShareImage}
-                        disabled={isPreparingImage || isSharing || isReturning}
+                        onClick={() => setShareDialog(true)}
+                        disabled={isSharing || isReturning}
                         title="Bagikan gambar struk lalu pilih WhatsApp"
                         className="px-5 py-2.5 text-xs font-black text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl flex items-center gap-2 transition-all active:scale-95 shadow-lg shadow-emerald-100 uppercase tracking-widest disabled:cursor-wait disabled:opacity-60"
                     >
                         {isPreparingImage || isSharing ? <Loader2 size={16} className="animate-spin" /> : <Share2 size={16} strokeWidth={3} />}
-                        {isPreparingImage ? 'Menyiapkan' : isSharing ? 'Membuka' : receiptImageBlob ? 'Share WhatsApp' : 'Siapkan Share'}
+                        {isSharing ? 'Membuka' : 'Bagikan WhatsApp'}
                     </button>
                     <button
                         onClick={handlePrint}
@@ -558,6 +560,7 @@ export default function TransactionDetailModal({ isOpen, onClose, transaction, c
                     </button>
                 </div>
             </div>
+            <WhatsAppReceiptDialog open={shareDialog} onClose={() => setShareDialog(false)} transaction={transaction} store={storeSettings} paperWidthMm={getPaperWidthMm(devicePreferences)} showLitePosBranding={showLitePosBranding} onShareImage={handleShareImage} imageDisabled={isSharing || isPreparingImage} />
         </div >
     );
 }

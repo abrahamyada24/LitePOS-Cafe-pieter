@@ -1,3 +1,4 @@
+import { getInvoiceTerminal, newDeviceKey, saveCheckout } from '../services/checkoutStorage';
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Alert, TextInput, Modal, FlatList } from 'react-native';
 import tw, { useAppColorScheme } from 'twrnc';
@@ -22,6 +23,7 @@ export default function CheckoutScreen({ navigation }: any) {
     const [paymentMethod, setPaymentMethod] = useState('CASH');
     const [cashAmount, setCashAmount] = useState('');
     const checkoutLockRef = useRef(false);
+    const checkoutIdRef = useRef<string | null>(null);
     const [isProcessingCheckout, setIsProcessingCheckout] = useState(false);
 
     // Customer selection
@@ -437,8 +439,12 @@ export default function CheckoutScreen({ navigation }: any) {
         // Meja dine-in bersifat opsional — tidak wajib dipilih
         try {
             const db = await getDBConnection();
-            const invoiceNumber = `INV-${Date.now()}`;
-            const trxId = Math.random().toString(36).substring(7) + Date.now().toString(36);
+            const terminal = await getInvoiceTerminal(db);
+            const invoiceNumber = '';
+            const statements: Array<[string, any[]]> = [];
+            const addStatement = (sql: string, args: any[]) => { statements.push([sql, args]); };
+            const trxId = checkoutIdRef.current || newDeviceKey();
+            checkoutIdRef.current = trxId;
             const createdAt = new Date().toISOString();
             const custNameBase = selectedCustomer ? selectedCustomer.name : (guestName.trim() || 'Umum');
             const custNameFinal = orderType === 'TAKE_AWAY' && takeAwayOption ? `${custNameBase} (${takeAwayOption})` : custNameBase;
@@ -446,7 +452,7 @@ export default function CheckoutScreen({ navigation }: any) {
             const redeemedPoints = usePoints ? pointsToRedeem : 0;
             const newPoints = selectedCustomer ? Math.max(0, (Number(selectedCustomer.points) || 0) - redeemedPoints + pointsEarned) : 0;
 
-            await db.executeSql(
+            addStatement(
                 `INSERT INTO transactions (id, invoiceNumber, grandTotal, discountAmount, taxAmount, paymentMethod, cashAmount, changeAmount, customerId, customerName, createdAt, preOrderDate, paymentStatus, paidAmount, remainingAmount, paidAt, orderType, tableName, pointsEarned, pointsRedeemed, pointsBalanceAfter, loyaltyRedemptionMode, shiftId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [trxId, invoiceNumber, total, discountAmount + pointsValue, taxAmount, effectivePaymentMethod,
                     paymentMethod === 'CASH' ? rawCash : amountDueNow,
@@ -465,34 +471,34 @@ export default function CheckoutScreen({ navigation }: any) {
             // Optional: Mark table as OCCUPIED automatically
             if (orderType === 'DINE_IN' && selectedTable) {
                 try {
-                    await db.executeSql(`UPDATE dine_tables SET status = 'OCCUPIED', isSynced = 0 WHERE id = ?`, [selectedTable.id]);
+                    addStatement(`UPDATE dine_tables SET status = 'OCCUPIED', isSynced = 0 WHERE id = ?`, [selectedTable.id]);
                 } catch (e) { console.error("Failed to update table status", e); }
             }
 
             for (const item of cart) {
                 const storedUnitPrice = getCartItemEffectiveUnitPrice(item);
                 const storedOriginalUnitPrice = getCartItemEffectiveOriginalUnitPrice(item);
-                await db.executeSql(
+                addStatement(
                     `INSERT INTO transaction_items (transactionId, productId, quantity, price, originalPrice, discountAmount, costPrice, notes, loyaltyRewardQty, loyaltyRewardDiscount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     [trxId, item.id, item.quantity, storedUnitPrice, storedOriginalUnitPrice, item.discountAmount || 0, item.costPrice || 0, item.notes || null,
                         usePoints && loyaltyRedemptionMode === 'FREE_PRODUCT' ? (rewardQuantities[item.cartItemId] || 0) : 0,
                         usePoints && loyaltyRedemptionMode === 'FREE_PRODUCT' ? (rewardQuantities[item.cartItemId] || 0) * storedUnitPrice : 0]
                 );
                 if (item.isUnlimitedStock !== 1) {
-                    await db.executeSql(`UPDATE products SET stock = stock - ? WHERE id = ?`, [item.quantity, item.id]);
+                    addStatement(`UPDATE products SET stock = stock - ? WHERE id = ?`, [item.quantity, item.id]);
                 }
             }
 
             // Optional update customer points
             if (selectedCustomer) {
-                await db.executeSql(`UPDATE customers SET points = ?, isSynced = 0 WHERE id = ?`, [newPoints, selectedCustomer.id]);
+                addStatement(`UPDATE customers SET points = ?, isSynced = 0 WHERE id = ?`, [newPoints, selectedCustomer.id]);
                 if (pointsEarned > 0 || usePoints) {
                     console.log(`Customer ${selectedCustomer.name} points updated: ${selectedCustomer.points} -> ${newPoints} (Earned: ${pointsEarned}, Redeemed: ${pointsToRedeem})`);
                 }
             }
 
             const receiptData = {
-                invoiceNumber, createdAt,
+                id: trxId, customerId: selectedCustomer?.id || null, invoiceNumber, createdAt,
                 customerName: custNameFinal,
                 customerPhone: selectedCustomer?.phone || null,
                 subtotal, discountAmount: discountAmount + pointsValue, loyaltyDiscountAmount: pointsValue, taxAmount, taxRate: taxRatePercent, total, paymentMethod: effectivePaymentMethod,
@@ -516,8 +522,10 @@ export default function CheckoutScreen({ navigation }: any) {
                 }))
             };
 
+            const savedReceipt = await saveCheckout(db, terminal, statements, receiptData);
             clearCart();
-            navigation.replace('ReceiptPreview', { receiptData });
+            navigation.replace('ReceiptPreview', { receiptData: savedReceipt });
+            void syncService.pushLocalData().catch(error => console.warn('Sinkronisasi nota akan dicoba lagi:', error));
         } catch (e) {
             console.error(e);
             Alert.alert('Error', 'Gagal memproses transaksi. Coba lagi.');

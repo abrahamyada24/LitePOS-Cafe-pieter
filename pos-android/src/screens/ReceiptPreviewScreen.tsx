@@ -1,7 +1,6 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import ViewShot from 'react-native-view-shot';
-import Share, { Social } from 'react-native-share';
-import { View, Text, TouchableOpacity, ScrollView, Alert, Image, PermissionsAndroid, Platform, Modal, TextInput, FlatList, Linking } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Alert, Image, PermissionsAndroid, Platform, NativeModules, Modal, TextInput, Linking } from 'react-native';
 import tw, { useAppColorScheme } from 'twrnc';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useStore } from '../store/useStore';
@@ -25,17 +24,36 @@ import { getDBConnection } from '../database/db';
 
 // Logo LitePOS permanen - tidak perlu setting
 const LITEPOS_LOGO = require('../assets/logo.png');
+const { WhatsAppReceiptShare } = NativeModules;
 
 export default function ReceiptPreviewScreen({ route, navigation }: any) {
     useAppColorScheme(tw);
     const { receiptData } = route.params;
+    const [shareDialog, setShareDialog] = useState(false);
+    const [shareContacts, setShareContacts] = useState<any[]>([]);
+    const [shareSearch, setShareSearch] = useState('');
+    const [sharePhone, setSharePhone] = useState('');
+    const [shareName, setShareName] = useState('');
+    const [sharing, setSharing] = useState(false);
+    const [syncStatus, setSyncStatus] = useState('Tersimpan lokal');
+    useEffect(() => {
+        if (!receiptData.id) return;
+        let active = true;
+        const check = async () => {
+            const db = await getDBConnection();
+            const [rows] = await db.executeSql('SELECT isSynced, syncError FROM transactions WHERE id = ?', [receiptData.id]);
+            if (active && rows.rows.length) {
+                const row = rows.rows.item(0);
+                setSyncStatus(Number(row.isSynced) === 1 ? 'Tersinkron ke server' : row.syncError ? 'Sinkronisasi tertunda: ' + row.syncError : 'Tersimpan lokal · menunggu sinkronisasi');
+            }
+        };
+        void check().catch(console.warn);
+        const timer = setInterval(() => { void check().catch(console.warn); }, 3000);
+        return () => { active = false; clearInterval(timer); };
+    }, [receiptData.id]);
     const [isPrinting, setIsPrinting] = useState(false);
     const [isDownloading, setIsDownloading] = useState(false);
     const [isKitchenPrinting, setIsKitchenPrinting] = useState(false);
-    const [showWhatsAppPhoneModal, setShowWhatsAppPhoneModal] = useState(false);
-    const [whatsAppPhone, setWhatsAppPhone] = useState('');
-    const [pendingShareUri, setPendingShareUri] = useState<string | null>(null);
-    const [whatsAppContacts, setWhatsAppContacts] = useState<any[]>([]);
     const user = useStore(state => state.user);
     const settings = useStore(state => state.settings);
     const viewShotRef = useRef<any>(null);
@@ -271,6 +289,11 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
         return phone;
     };
 
+    const hasValidWhatsAppPhone = (input: string) => {
+        const phone = normalizeWhatsAppPhone(input);
+        return phone.length >= 9 && phone.length <= 15;
+    };
+
     const buildWhatsAppMessage = (overrideCustomerName?: string) => {
         const customerName = String(overrideCustomerName || receiptData.customerName || 'Pelanggan').replace(/\s*\([^)]*\)\s*$/, '');
         const transactionDate = new Date(receiptData.createdAt || Date.now()).toLocaleString('id-ID', {
@@ -279,64 +302,57 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
         const pointsBalance = Math.max(0, Number(receiptData.customerPoints ?? receiptData.pointsBalanceAfter ?? 0));
         return [
             `Struk Transaksi ${settings.storeName || 'Cozi Koffi'}`,
-            '',
             `No: ${receiptData.invoiceNumber}`,
-            '',
             `Status pembayaran: ${String(receiptData.paymentStatus || 'PAID').toUpperCase() === 'PAID' ? 'LUNAS' : paymentStatusLabel}.`,
-            '',
             `Tanggal Transaksi : ${transactionDate}`,
-            '',
             `Jumlah Poin : ${pointsBalance}`,
-            '',
-            `Terima kasih kak, ${customerName}`,
+            `Terima kasih kak , ${customerName}`,
         ].join('\n');
     };
 
-    const sendReceiptToWhatsApp = async (uri: string, rawPhone: string, contactName?: string) => {
-        const phone = normalizeWhatsAppPhone(rawPhone);
-        if (phone.length < 9 || phone.length > 15) {
-            Alert.alert('Nomor Tidak Valid', 'Masukkan nomor WhatsApp, contoh 081234567890.');
-            return;
-        }
+    const sendReceiptToWhatsApp = async (uri: string, rawPhone?: string, contactName?: string) => {
+        const phone = normalizeWhatsAppPhone(rawPhone || '');
+        const hasDirectRecipient = phone.length >= 9 && phone.length <= 15;
+        if (!WhatsAppReceiptShare?.share) throw new Error('WHATSAPP_SHARE_MODULE_UNAVAILABLE');
+
+        await WhatsAppReceiptShare.share(
+            uri,
+            buildWhatsAppMessage(contactName),
+            hasDirectRecipient ? phone : null,
+        );
+    };
+
+    const openShareDialog = async () => {
         try {
-            await Share.shareSingle({
-                title: 'Struk Transaksi',
-                message: buildWhatsAppMessage(contactName),
-                url: uri,
-                social: Social.Whatsapp,
-                whatsAppNumber: phone,
-            } as any);
-        } catch (shareError: any) {
-            if (shareError?.message === 'User did not share') throw shareError;
-            await Linking.openURL(`https://wa.me/${phone}?text=${encodeURIComponent(buildWhatsAppMessage(contactName))}`);
-        }
-        setShowWhatsAppPhoneModal(false);
-        setPendingShareUri(null);
-        setWhatsAppPhone('');
+            const db = await getDBConnection();
+            const [rows] = await db.executeSql("SELECT id, name, phone FROM customers WHERE phone IS NOT NULL AND phone != '' ORDER BY name");
+            const contacts = Array.from({ length: rows.rows.length }, (_, i) => rows.rows.item(i));
+            const linked: any = contacts.find((contact: any) => Number(contact.id) === Number(receiptData.customerId));
+            setShareContacts(contacts);
+            setSharePhone(String(receiptData.customerPhone || linked?.phone || ''));
+            setShareName(String(linked?.name || receiptData.customerName || ''));
+            setShareSearch('');
+            setShareDialog(true);
+        } catch { Alert.alert('Kontak gagal dimuat', 'Coba buka kembali menu Bagikan.'); }
+    };
+
+    const openWhatsAppChat = async () => {
+        if (!hasValidWhatsAppPhone(sharePhone)) { Alert.alert('Nomor belum valid', 'Pilih pelanggan atau isi nomor tujuan.'); return; }
+        try { await Linking.openURL('https://wa.me/' + normalizeWhatsAppPhone(sharePhone) + '?text=' + encodeURIComponent(buildReceiptText())); }
+        catch { Alert.alert('Chat belum terbuka', 'Pastikan WhatsApp terpasang dan nomor tujuan benar.'); }
     };
 
     const shareReceiptWA = async () => {
+        if (sharing) return;
+        if (!hasValidWhatsAppPhone(sharePhone)) { Alert.alert('Nomor belum valid', 'Pilih pelanggan atau isi nomor WhatsApp tujuan.'); return; }
+        setSharing(true);
         try {
             const uri = await viewShotRef.current.capture();
-            if (receiptData.customerPhone) {
-                await sendReceiptToWhatsApp(uri, receiptData.customerPhone);
-                return;
-            }
-            const db = await getDBConnection();
-            const [contactsResult] = await db.executeSql(
-                `SELECT id, name, phone FROM customers WHERE phone IS NOT NULL AND TRIM(phone) <> '' ORDER BY name COLLATE NOCASE`
-            );
-            const contacts: any[] = [];
-            for (let i = 0; i < contactsResult.rows.length; i++) contacts.push(contactsResult.rows.item(i));
-            setWhatsAppContacts(contacts);
-            setPendingShareUri(uri);
-            setShowWhatsAppPhoneModal(true);
+            await sendReceiptToWhatsApp(uri, sharePhone, shareName);
+            setShareDialog(false);
         } catch (error: any) {
-            console.log('Share error:', error);
-            if (error.message !== 'User did not share') {
-                Alert.alert('Gagal', 'Tidak dapat membagikan gambar struk.');
-            }
-        }
+            Alert.alert('Belum dapat membagikan gambar', 'Gambar nota belum terkonfirmasi terkirim. Pastikan WhatsApp terpasang; Anda juga dapat mengunduh nota lalu melampirkannya pada chat tujuan.');
+        } finally { setSharing(false); }
     };
 
     const printReceipt = async () => {
@@ -404,54 +420,6 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
 
     return (
         <View style={tw`flex-1 items-center justify-center bg-black/70 p-4`}>
-            <Modal visible={showWhatsAppPhoneModal} transparent animationType="slide" onRequestClose={() => setShowWhatsAppPhoneModal(false)}>
-                <View style={tw`flex-1 bg-black/60 justify-end`}>
-                    <View style={tw`bg-white dark:bg-gray-800 rounded-t-3xl p-6 max-h-[75%]`}>
-                        <View style={tw`flex-row justify-between items-center mb-2`}>
-                            <Text style={tw`text-xl font-bold text-gray-800 dark:text-gray-100`}>Pilih Kontak WhatsApp</Text>
-                            <TouchableOpacity onPress={() => setShowWhatsAppPhoneModal(false)} style={tw`p-2 bg-gray-100 dark:bg-gray-700 rounded-full`}>
-                                <Icon name="close" size={20} color={tw.color('gray-600')} />
-                            </TouchableOpacity>
-                        </View>
-                        <Text style={tw`text-xs text-gray-500 mb-4`}>Nomor tidak tercatat pada transaksi. Pilih pelanggan atau ketik nomor sekali.</Text>
-                        <View style={tw`flex-row mb-4`}>
-                            <TextInput
-                                style={tw`flex-1 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-l-xl px-4 py-3 text-gray-800 dark:text-gray-100`}
-                                value={whatsAppPhone}
-                                onChangeText={setWhatsAppPhone}
-                                keyboardType="phone-pad"
-                                placeholder="081234567890"
-                            />
-                            <TouchableOpacity
-                                style={tw`bg-green-600 rounded-r-xl px-4 items-center justify-center`}
-                                onPress={() => pendingShareUri && sendReceiptToWhatsApp(pendingShareUri, whatsAppPhone)}
-                            >
-                                <Icon name="whatsapp" size={22} color="white" />
-                            </TouchableOpacity>
-                        </View>
-                        <FlatList
-                            data={whatsAppContacts}
-                            keyExtractor={item => String(item.id)}
-                            ListEmptyComponent={<Text style={tw`text-center text-gray-500 py-6`}>Belum ada pelanggan dengan nomor telepon.</Text>}
-                            renderItem={({ item }) => (
-                                <TouchableOpacity
-                                    style={tw`flex-row items-center py-3 border-b border-gray-100 dark:border-gray-700`}
-                                    onPress={() => pendingShareUri && sendReceiptToWhatsApp(pendingShareUri, item.phone, item.name)}
-                                >
-                                    <View style={tw`w-9 h-9 bg-green-50 rounded-full items-center justify-center mr-3`}>
-                                        <Icon name="whatsapp" size={18} color={tw.color('green-600')} />
-                                    </View>
-                                    <View style={tw`flex-1`}>
-                                        <Text style={tw`font-bold text-gray-800 dark:text-gray-100`}>{item.name}</Text>
-                                        <Text style={tw`text-xs text-gray-500`}>{item.phone}</Text>
-                                    </View>
-                                    <Icon name="chevron-right" size={20} color={tw.color('gray-400')} />
-                                </TouchableOpacity>
-                            )}
-                        />
-                    </View>
-                </View>
-            </Modal>
             {receiptLogoUri && settings.showLogoOnReceipt !== false ? (
                 <View pointerEvents="none" style={{ position: 'absolute', left: -10000, top: -10000, width: RECEIPT_LOGO_CAPTURE_WIDTH, height: RECEIPT_LOGO_CAPTURE_HEIGHT }}>
                     <ViewShot
@@ -669,6 +637,7 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
                 </ScrollView>
 
                 <View style={tw`border-t border-gray-100 bg-white p-4`}>
+                    <Text style={tw`text-center text-xs text-gray-600 mb-2`}>{syncStatus}</Text>
                     {!settings.printerAddress && (
                         <View style={tw`mb-3 flex-row items-center justify-center rounded-lg bg-orange-50 py-2`}>
                             <Icon name="alert-circle-outline" size={14} color={tw.color('orange-600')} style={tw`mr-2`} />
@@ -687,7 +656,7 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
                         </TouchableOpacity>
                         <TouchableOpacity
                             style={tw`flex-1 items-center justify-center rounded-xl border border-gray-200 bg-white px-1 py-3`}
-                            onPress={shareReceiptWA}
+                            onPress={openShareDialog}
                         >
                             <Icon name="share-variant-outline" size={21} color={tw.color('gray-900')} />
                             <Text style={tw`mt-1 text-[9px] font-medium text-gray-800`}>Bagikan</Text>
@@ -717,6 +686,26 @@ export default function ReceiptPreviewScreen({ route, navigation }: any) {
                     </TouchableOpacity>
                 </View>
             </View>
+            <Modal visible={shareDialog} transparent animationType="slide" onRequestClose={() => setShareDialog(false)}>
+                <View style={tw`flex-1 justify-center bg-black/50 p-5`}>
+                    <View style={tw`rounded-2xl bg-white p-5 max-h-[90%]`}>
+                        <Text style={tw`text-lg font-bold text-gray-900 mb-2`}>Bagikan nota ke WhatsApp</Text>
+                        <Text style={tw`text-xs text-gray-600 mb-3`}>Pilih kontak pelanggan aplikasi atau isi nomor. Tidak perlu menyimpan kontak di perangkat.</Text>
+                        <TextInput accessibilityLabel="Cari kontak pelanggan" placeholder="Cari nama atau nomor pelanggan" value={shareSearch} onChangeText={setShareSearch} style={tw`border border-gray-300 rounded-lg p-3 mb-2 text-black`} />
+                        <ScrollView style={{ maxHeight: 180 }} keyboardShouldPersistTaps="handled">
+                            {shareContacts.filter(contact => (contact.name + contact.phone).toLowerCase().includes(shareSearch.toLowerCase())).map(contact => <TouchableOpacity key={contact.id} onPress={() => { setSharePhone(contact.phone); setShareName(contact.name); }} style={tw`border-b border-gray-100 py-3`}>
+                                <Text style={tw`text-gray-900 font-bold`}>{contact.name}</Text><Text style={tw`text-gray-600`}>{contact.phone}</Text>
+                            </TouchableOpacity>)}
+                        </ScrollView>
+                        <Text style={tw`text-sm text-gray-700 mt-3`}>Tujuan: {shareName || 'Nomor manual'}</Text>
+                        <TextInput accessibilityLabel="Nomor WhatsApp tujuan" keyboardType="phone-pad" value={sharePhone} onChangeText={value => { setSharePhone(value); setShareName(''); }} placeholder="08… atau +62…" style={tw`border border-gray-300 rounded-lg p-3 my-2 text-black`} />
+                        <Text style={tw`text-xs text-gray-500 mb-3`}>Periksa tujuan di WhatsApp sebelum menekan Kirim.</Text>
+                        <TouchableOpacity disabled={sharing} onPress={shareReceiptWA} style={tw`bg-green-600 rounded-lg p-3 items-center`}><Text style={tw`text-white font-bold`}>{sharing ? 'Membuka…' : 'Bagikan gambar ke WhatsApp'}</Text></TouchableOpacity>
+                        <TouchableOpacity disabled={sharing} onPress={openWhatsAppChat} style={tw`p-3 items-center`}><Text style={tw`text-green-700`}>Buka chat dengan nota teks</Text></TouchableOpacity>
+                        <TouchableOpacity disabled={sharing} onPress={() => setShareDialog(false)} style={tw`p-3 items-center`}><Text style={tw`text-gray-700`}>Batal</Text></TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
         </View>
     );
 }

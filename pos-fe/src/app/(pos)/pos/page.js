@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 
 // Import Components
+import { prepareCheckoutRequest, finishCheckoutRequest, getPendingCheckout } from '@/utils/checkoutRequest';
 import Header from '@/components/pos/Header';
 import CategoryFilter from '@/components/pos/CategoryFilter';
 import ProductGrid from '@/components/pos/ProductGrid';
@@ -74,6 +75,22 @@ export default function POSPage() {
   const [paymentMethod, setPaymentMethod] = useState(''); 
   const [cashGiven, setCashGiven] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [pendingCheckout, setPendingCheckout] = useState(null);
+  useEffect(() => { setPendingCheckout(getPendingCheckout(currentUser?.id)); }, [currentUser?.id]);
+  const recoverCheckout = async () => {
+    const pending = getPendingCheckout(currentUser?.id);
+    if (!pending?.body || isProcessing) return;
+    setIsProcessing(true);
+    try {
+      const response = await fetch(`${API_URL}/api/transactions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('token'), 'Idempotency-Key': pending.key }, body: JSON.stringify(pending.body) });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.message || 'Checkout belum dapat dikonfirmasi.');
+      finishCheckoutRequest(currentUser?.id); setPendingCheckout(null);
+      await showAlert.success('Transaksi tersimpan', 'Invoice: ' + result.data.invoiceNumber + '. Buka Riwayat Transaksi untuk mencetak ulang.');
+      router.push('/transactions');
+    } catch (error) { showAlert.error('Checkout belum terkonfirmasi', error.message); }
+    finally { setIsProcessing(false); }
+  };
   const [completedTransaction, setCompletedTransaction] = useState(null);
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
   const [isSavedTransactionModalOpen, setIsSavedTransactionModalOpen] = useState(false);
@@ -656,18 +673,22 @@ export default function POSPage() {
               discountType: discountConfig?.type || 'amount',
           };
 
+          const request = prepareCheckoutRequest(payload);
+          setPendingCheckout(getPendingCheckout(currentUser?.id));
           const res = await fetch(`${API_URL}/api/transactions`, {
               method: 'POST',
               headers: { 
                   'Content-Type': 'application/json',
-                  'Authorization': token ? `Bearer ${token}` : ''
+                  'Authorization': token ? `Bearer ${token}` : '',
+                  'Idempotency-Key': request.key,
               },
-              body: JSON.stringify(payload)
+              body: JSON.stringify(request.body)
           });
 
           const data = await res.json();
 
           if (!data.success) {
+              if (res.status < 500 && data.code !== 'P2034') { finishCheckoutRequest(currentUser?.id); setPendingCheckout(null); }
               if (data.code === 'SHIFT_REQUIRED') {
                   setShiftRequiredByServer(true);
                   setActiveShift(null);
@@ -675,6 +696,7 @@ export default function POSPage() {
               }
               throw new Error(data.message);
           }
+          finishCheckoutRequest(currentUser?.id); setPendingCheckout(null);
           const receiptTransaction = buildReceiptTransaction(data.data, type, payload.customerName);
 
           if (activeSavedTransactionId) {
@@ -943,6 +965,7 @@ export default function POSPage() {
       
       {/* KIRI: HEADER + KATEGORI + PRODUK */}
       <div className={`flex-1 flex flex-col min-w-0 relative ${mobileView !== 'menu' ? 'hidden lg:flex' : 'flex'}`}>
+        {pendingCheckout && <div className="bg-amber-50 p-3 text-sm text-amber-900">Ada checkout yang belum terkonfirmasi. <button disabled={isProcessing} onClick={recoverCheckout} className="underline font-bold">Periksa dan lanjutkan checkout sebelumnya</button></div>}
         <Header 
             search={search} 
             setSearch={setSearch} 

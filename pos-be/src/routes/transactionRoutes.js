@@ -48,6 +48,7 @@ const { verifyToken, isOwner } = require('../middlewares/authMiddleware');
  *       400:
  *         description: Stok kurang atau data tidak valid
  */
+router.post('/terminal', verifyToken, transactionController.registerInvoiceTerminal);
 router.post('/', verifyToken, transactionController.createTransaction);
 
 /**
