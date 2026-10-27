@@ -1,3 +1,7 @@
+// Dinonaktifkan atas permintaan operasional. Seluruh logika pengingat tetap
+// dipertahankan agar dapat diaktifkan kembali tanpa membangun ulang fiturnya.
+export const SHIFT_REMINDER_POPUP_ENABLED = false;
+
 export const DEFAULT_SHIFT_REMINDER_SETTINGS = Object.freeze({
   enableShiftReminder: true,
   shiftDurationMinutes: 480,
@@ -68,6 +72,7 @@ export const formatShiftDateTime = (value) => new Intl.DateTimeFormat('id-ID', {
 }).format(new Date(value));
 
 export const getShiftReminder = (shift, rawSettings = {}, now = new Date()) => {
+  if (!SHIFT_REMINDER_POPUP_ENABLED) return null;
   if (!shift?.id || !shift.openedAt) return null;
   const settings = normalizeShiftReminderSettings(rawSettings);
   if (!settings.enableShiftReminder) return null;

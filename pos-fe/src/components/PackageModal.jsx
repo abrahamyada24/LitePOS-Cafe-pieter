@@ -6,7 +6,7 @@ import { useStore } from '@/store/useStore';
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
 export default function PackageModal({ isOpen, onClose, onSave, initialData }) {
-    const { token } = useStore();
+    const getHeaders = useStore(state => state.getHeaders);
     const [formData, setFormData] = useState({
         name: '',
         description: '',
@@ -60,7 +60,8 @@ export default function PackageModal({ isOpen, onClose, onSave, initialData }) {
     const fetchProducts = async () => {
         try {
             const res = await fetch(`${API_URL}/api/products`, {
-                headers: { 'Authorization': `Bearer ${token}` }
+                headers: getHeaders(),
+                credentials: 'include'
             });
             const result = await res.json();
             if (result.success) {

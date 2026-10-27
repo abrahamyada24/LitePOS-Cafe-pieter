@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, Search, Edit2, Trash2, Package as PackageIcon, EyeOff, Eye } from 'lucide-react';
 import { showAlert } from '@/utils/swal';
 import { useStore } from '@/store/useStore';
@@ -10,33 +10,58 @@ import PackageModal from '@/components/PackageModal';
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
 export default function PackagesPage() {
-    const { token } = useStore();
+    const isAuthenticated = useStore(state => state.isAuthenticated);
+    const getHeaders = useStore(state => state.getHeaders);
     const [packages, setPackages] = useState([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [selectedPackage, setSelectedPackage] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [loadError, setLoadError] = useState('');
+    const activeRequest = useRef(null);
 
-    const fetchPackages = async () => {
+    const fetchPackages = useCallback(async () => {
+        activeRequest.current?.abort();
+        const controller = new AbortController();
+        activeRequest.current = controller;
+        const timeout = setTimeout(() => controller.abort(), 15000);
         try {
             setIsLoading(true);
+            setLoadError('');
             const res = await fetch(`${API_URL}/api/packages`, {
-                headers: { 'Authorization': `Bearer ${token}` }
+                headers: getHeaders(),
+                credentials: 'include',
+                signal: controller.signal
             });
             const result = await res.json();
-            if (result.success) {
-                setPackages(result.data);
+            if (!res.ok || !result.success || !Array.isArray(result.data)) {
+                throw new Error(result.message || 'Gagal mengambil data paket. Silakan coba lagi.');
             }
+            if (activeRequest.current === controller) setPackages(result.data);
         } catch (error) {
-            showAlert.error("Error", "Gagal mengambil data paket");
+            if (activeRequest.current === controller) {
+                setLoadError(error.name === 'AbortError'
+                    ? 'Koneksi ke server terlalu lama. Silakan coba lagi.'
+                    : error.message || 'Gagal mengambil data paket. Silakan coba lagi.');
+            }
         } finally {
-            setIsLoading(false);
+            clearTimeout(timeout);
+            if (activeRequest.current === controller) {
+                activeRequest.current = null;
+                setIsLoading(false);
+            }
         }
-    };
+    }, [getHeaders]);
 
     useEffect(() => {
-        if (token) fetchPackages();
-    }, [token]);
+        if (isAuthenticated) fetchPackages();
+        else { setIsLoading(false); setPackages([]); }
+        return () => {
+            const controller = activeRequest.current;
+            activeRequest.current = null;
+            controller?.abort();
+        };
+    }, [isAuthenticated, fetchPackages]);
 
     const handleSave = async (formData) => {
         try {
@@ -59,9 +84,8 @@ export default function PackagesPage() {
 
             const res = await fetch(url, {
                 method,
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                },
+                headers: getHeaders(),
+                credentials: 'include',
                 body: payload
             });
 
@@ -88,7 +112,8 @@ export default function PackagesPage() {
             try {
                 const res = await fetch(`${API_URL}/api/packages/${id}`, {
                     method: 'DELETE',
-                    headers: { 'Authorization': `Bearer ${token}` }
+                    headers: getHeaders(),
+                    credentials: 'include'
                 });
                 const result = await res.json();
                 if (result.success) {
@@ -108,9 +133,10 @@ export default function PackagesPage() {
             const res = await fetch(`${API_URL}/api/packages/${pkg.id}`, {
                 method: 'PUT',
                 headers: {
-                    'Authorization': `Bearer ${token}`,
+                    ...getHeaders(),
                     'Content-Type': 'application/json'
                 },
+                credentials: 'include',
                 body: JSON.stringify({ isActive: !pkg.isActive })
             });
             const result = await res.json();
@@ -184,6 +210,13 @@ export default function PackagesPage() {
                             <div className="h-10 w-full bg-gray-100 rounded-md mb-4"></div>
                         </div>
                     ))}
+                </div>
+            ) : loadError ? (
+                <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 p-6 text-red-800">
+                    <p>{loadError}</p>
+                    <button type="button" onClick={fetchPackages} className="mt-3 rounded-lg bg-white px-4 py-2 font-semibold text-red-800 border border-red-200">
+                        Coba lagi
+                    </button>
                 </div>
             ) : filteredPackages.length === 0 ? (
                 <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-12 text-center">
