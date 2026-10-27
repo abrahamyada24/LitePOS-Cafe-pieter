@@ -187,6 +187,21 @@ cd android
 
 Jalankan Gradle setelah instalasi dependency berhasil. APK berada di `pos-android/android/app/build/outputs/apk/release/app-release.apk`. Pertahankan signing key sesuai aplikasi yang terpasang. Build APK tetap dijalankan pengguna. Folder kerja lokal masih memiliki pengembangan Firebase terpisah; build dari folder itu juga menyertakan perubahan lokal tersebut.
 
+### Error C++ Camera Kit saat build Android
+
+Jika build gagal pada `NativeCameraKitSpecJSI-generated.cpp` dengan `unknown type name 'NativeCameraKitModuleCxxSpecJSI'`, penyebabnya adalah output codegen lama yang ikut terkemas di `react-native-camera-kit@17.0.1`. Header baru dari RN 0.84 memakai nama kelas berbeda. Masalah yang sama dijelaskan upstream: https://github.com/teslamotors/react-native-camera-kit/pull/789.
+
+Postinstall proyek menjalankan `scripts/clean-camera-kit-codegen.cjs` sebelum patch-package. Script hanya membersihkan folder build hasil generate Camera Kit versi 17.0.1 di node_modules, dengan pemeriksaan path; source kamera dan data aplikasi tidak disentuh. Gradle akan membuat ulang output memakai versi React Native proyek. Untuk instalasi yang sudah terlanjur gagal, jalankan dari `pos-android` di Git Bash:
+
+```bash
+node scripts/clean-camera-kit-codegen.cjs
+cd android
+./gradlew.bat generateCodegenArtifactsFromSchema --rerun-tasks
+./gradlew.bat assembleRelease
+```
+
+Tidak perlu downgrade React Native, menonaktifkan New Architecture, atau mengubah VPS untuk masalah ini. Jangan menjalankan Gradle clean sebelum codegen dipulihkan karena referensi CMake dapat menunjuk folder codegen yang baru dibersihkan.
+
 ## Pemeriksaan setelah pemasangan
 
 1. Buka `/stock/`, refresh, pindah Transaksi, lalu back: highlight dan submenu harus mengikuti route.
