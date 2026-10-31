@@ -479,10 +479,10 @@ export default function CheckoutScreen({ navigation }: any) {
                 const storedUnitPrice = getCartItemEffectiveUnitPrice(item);
                 const storedOriginalUnitPrice = getCartItemEffectiveOriginalUnitPrice(item);
                 addStatement(
-                    `INSERT INTO transaction_items (transactionId, productId, quantity, price, originalPrice, discountAmount, costPrice, notes, loyaltyRewardQty, loyaltyRewardDiscount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    `INSERT INTO transaction_items (transactionId, productId, quantity, price, originalPrice, discountAmount, costPrice, notes, loyaltyRewardQty, loyaltyRewardDiscount, productName) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     [trxId, item.id, item.quantity, storedUnitPrice, storedOriginalUnitPrice, item.discountAmount || 0, item.costPrice || 0, item.notes || null,
                         usePoints && loyaltyRedemptionMode === 'FREE_PRODUCT' ? (rewardQuantities[item.cartItemId] || 0) : 0,
-                        usePoints && loyaltyRedemptionMode === 'FREE_PRODUCT' ? (rewardQuantities[item.cartItemId] || 0) * storedUnitPrice : 0]
+                        usePoints && loyaltyRedemptionMode === 'FREE_PRODUCT' ? (rewardQuantities[item.cartItemId] || 0) * storedUnitPrice : 0, item.name]
                 );
                 if (item.isUnlimitedStock !== 1) {
                     addStatement(`UPDATE products SET stock = stock - ? WHERE id = ?`, [item.quantity, item.id]);

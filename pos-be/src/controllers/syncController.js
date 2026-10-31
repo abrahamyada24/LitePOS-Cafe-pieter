@@ -2,6 +2,7 @@ const { parseReportQuery, pageMeta } = require('../services/reportPaginationServ
 const { PrismaClient } = require('@prisma/client');
 const { enterDataSync } = require('../services/dataResetCoordinator');
 const { reserveQueue } = require('../utils/orderQueue');
+const { upsertAndroidPackage } = require('../services/packageSyncService');
 const prisma = new PrismaClient();
 
 const normalizeProductAvailability = (product) => {
@@ -43,7 +44,8 @@ const normalizeAndroidPayment = (transaction) => {
 
   return {
     grandTotal,
-    paymentStatus: paidAmount >= grandTotal && grandTotal > 0 ? 'PAID' : paidAmount > 0 ? 'PARTIAL' : 'UNPAID',
+    // A completed redemption/100% discount has no cash due, but is still paid.
+    paymentStatus: paymentStatus === 'PAID' || (grandTotal > 0 && paidAmount >= grandTotal) ? 'PAID' : paidAmount > 0 ? 'PARTIAL' : 'UNPAID',
     paidAmount,
     remainingAmount: Math.max(0, grandTotal - paidAmount)
   };
@@ -53,10 +55,12 @@ const summarizePayments = (transaction) => {
   const grandTotal = Math.max(0, Number(transaction.grandTotal) || 0);
   let paidAmount = 0;
   let paidAt = null;
+  let hasSuccessfulPayment = false;
 
   for (const payment of transaction.payments || []) {
     const status = String(payment.paymentStatus || '').toUpperCase();
     if (!['FAILED', 'PENDING', 'UNPAID'].includes(status)) {
+      hasSuccessfulPayment = true;
       paidAmount += Math.max(0, Number(payment.amount) || 0);
       if (!paidAt || payment.createdAt > paidAt) paidAt = payment.createdAt;
     }
@@ -64,7 +68,7 @@ const summarizePayments = (transaction) => {
 
   paidAmount = Math.min(grandTotal, paidAmount);
   return {
-    paymentStatus: paidAmount >= grandTotal && grandTotal > 0 ? 'PAID' : paidAmount > 0 ? 'PARTIAL' : 'UNPAID',
+    paymentStatus: (grandTotal === 0 && hasSuccessfulPayment) || (grandTotal > 0 && paidAmount >= grandTotal) ? 'PAID' : paidAmount > 0 ? 'PARTIAL' : 'UNPAID',
     paidAmount,
     remainingAmount: Math.max(0, grandTotal - paidAmount),
     paidAt: paidAt ? paidAt.toISOString() : null
@@ -525,6 +529,20 @@ exports.pushLocalData = async (req, res) => {
     // Mutasi transaksi tetap dicatat, tetapi nilai stok tidak dikurangi lagi.
     const pushedServerProductIds = new Set(productIdMap.map(item => Number(item.serverId)));
 
+    // Packages depend on products; sales depend on complete packages in this batch.
+    const packageIdMap = [];
+    const failedPackageIds = new Set();
+    for (const pkg of Array.isArray(pushPackages) ? pushPackages : []) {
+        try {
+            const saved = await upsertAndroidPackage(prisma, pkg);
+            if (saved.created) savedPackages++;
+            packageIdMap.push({ androidId: pkg.id, serverId: saved.id });
+        } catch (error) {
+            failedPackageIds.add(Number(pkg.id));
+            addSyncWarning('package', pkg.id, error);
+        }
+    }
+
     // A. Proses Transactions
     if (transactions && Array.isArray(transactions)) {
       for (const tx of transactions) {
@@ -744,11 +762,18 @@ exports.pushLocalData = async (req, res) => {
               const packageMatch = String(item.productId || '').match(/^pkg-(\d+)$/i);
               if (packageMatch) {
                   const localPackageId = parseInt(packageMatch[1]);
+                  if (failedPackageIds.has(localPackageId)) {
+                      throw new Error(`Isi paket ${localPackageId} belum berhasil disinkronkan. Ulangi sinkronisasi.`);
+                  }
+                  const explicitServerId = Number(item.serverPackageId);
+                  const mappedPackage = packageIdMap.find(entry => Number(entry.androidId) === localPackageId);
+                  const serverPackageId = Number.isInteger(explicitServerId) && explicitServerId > 0
+                      ? explicitServerId : mappedPackage?.serverId;
                   let pkg = await prisma.package.findUnique({
-                      where: { androidId: localPackageId },
+                      where: serverPackageId ? { id: serverPackageId } : { androidId: localPackageId },
                       include: { items: { include: { product: true } } }
                   });
-                  if (!pkg) {
+                  if (!pkg && !serverPackageId) {
                       pkg = await prisma.package.findUnique({
                           where: { id: localPackageId },
                           include: { items: { include: { product: true } } }
@@ -1177,71 +1202,6 @@ exports.pushLocalData = async (req, res) => {
                 }
                 supplierIdMap.push({ androidId: supp.id, serverId: serverSupp.id });
             } catch(e) { addSyncWarning('supplier', supp.id, e); }
-        }
-    }
-
-    // F. Proses Packages dari Android
-    const packageIdMap = [];
-    if (pushPackages && Array.isArray(pushPackages)) {
-        for (const pkg of pushPackages) {
-            try {
-                let serverPkg = await prisma.package.findUnique({ where: { androidId: pkg.id }});
-                if (!serverPkg && pkg.serverId) {
-                    serverPkg = await prisma.package.findUnique({ where: { id: parseInt(pkg.serverId) } });
-                    if (serverPkg && serverPkg.androidId === null) {
-                        serverPkg = await prisma.package.update({ where: { id: serverPkg.id }, data: { androidId: pkg.id } });
-                    }
-                }
-                if (!serverPkg) {
-                    serverPkg = await prisma.package.create({
-                        data: {
-                            androidId: pkg.id,
-                            name: pkg.name,
-                            description: pkg.description || null,
-                            price: Number(pkg.price),
-                            imageUrl: pkg.imageUrl || null,
-                            isActive: pkg.isActive === true || Number(pkg.isActive) === 1
-                        }
-                    });
-                    savedPackages++;
-                } else {
-                    await prisma.package.update({
-                        where: { id: serverPkg.id },
-                        data: {
-                            name: pkg.name || serverPkg.name,
-                            description: pkg.description || serverPkg.description,
-                            price: Number(pkg.price),
-                            imageUrl: pkg.imageUrl || serverPkg.imageUrl,
-                            isActive: pkg.isActive === true || Number(pkg.isActive) === 1
-                        }
-                    });
-                }
-                // Samakan isi paket agar item yang dihapus di Android ikut hilang di web.
-                if (pkg.items && Array.isArray(pkg.items)) {
-                    const mappedItems = [];
-                    for (const item of pkg.items) {
-                        let serverProductId = item.serverProductId ? parseInt(item.serverProductId) : null;
-                        if (!serverProductId) {
-                            const parsedProdId = parseInt(item.productId);
-                            serverProductId = parsedProdId;
-                            if (!isNaN(parsedProdId)) {
-                                const product = await prisma.product.findUnique({ where: { androidId: parsedProdId }});
-                                serverProductId = product ? product.id : parsedProdId;
-                            }
-                        }
-                        const productExists = serverProductId
-                            ? await prisma.product.findUnique({ where: { id: serverProductId }, select: { id: true } })
-                            : null;
-                        if (!productExists) throw new Error(`Produk paket ${item.productId} tidak ditemukan di server.`);
-                        mappedItems.push({ packageId: serverPkg.id, productId: serverProductId, qty: parseInt(item.quantity) || 1 });
-                    }
-                    await prisma.$transaction([
-                        prisma.packageItem.deleteMany({ where: { packageId: serverPkg.id } }),
-                        ...mappedItems.map(data => prisma.packageItem.create({ data }))
-                    ]);
-                }
-                packageIdMap.push({ androidId: pkg.id, serverId: serverPkg.id });
-            } catch(e) { addSyncWarning('package', pkg.id, e); }
         }
     }
 

@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const ts = require('../pos-android/node_modules/typescript');
 const Module = require('node:module');
+const { DatabaseSync } = require('node:sqlite');
 const rows = items => ({ rows: { length: items.length, item: i => items[i] } });
 const loadSync = (api, db) => {
   const source = ts.transpileModule(fs.readFileSync('pos-android/src/services/syncService.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
@@ -58,4 +59,29 @@ test('partial sync hanya menandai invoice yang diakui server, kegagalan tetap di
   const ack = writes.find(write => write.query.includes('SET isSynced = 1'));
   assert.deepEqual(ack.args, ['accepted']);
   assert(writes.some(write => write.query.includes('SET syncError = ?') && write.args[1] === 'rejected'));
+});
+
+test('push invoice paket membawa ID server dari join paket, bukan ID lokal', async () => {
+  const sql = new DatabaseSync(':memory:');
+  sql.exec(`CREATE TABLE transaction_items(transactionId TEXT, productId TEXT, quantity INTEGER, price REAL);
+    CREATE TABLE products(id INTEGER, serverId INTEGER);
+    CREATE TABLE packages(id INTEGER, serverId INTEGER);
+    INSERT INTO packages VALUES(1,7);
+    INSERT INTO transaction_items VALUES('sale','pkg-1',2,23000);`);
+  let payload;
+  const db = { executeSql: async (query, args = []) => {
+    if (query.includes("key = 'sync_initialized'")) return [rows([{ value: 'true' }])];
+    if (query.includes('SELECT t.*')) return [rows([{ id: 'sale', invoiceNumber: 'INV/20261030/K01/0007' }])];
+    if (query.includes('FROM transaction_items ti')) return [rows(sql.prepare(query).all(...args))];
+    return [rows([])];
+  } };
+  const sync = loadSync({ post: async (_url, body) => {
+    payload = body;
+    return { data: { success: true, syncedIds: { transactions: ['sale'] } } };
+  } }, db);
+  assert.equal((await sync.pushLocalData()).success, true);
+  assert.equal(payload.transactions[0].items[0].serverPackageId, 7);
+  assert.equal(payload.transactions[0].items[0].productId, 'pkg-1');
+  assert.equal(payload.transactions[0].items[0].packageServerId, undefined);
+  sql.close();
 });

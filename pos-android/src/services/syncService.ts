@@ -723,9 +723,10 @@ export const syncService = {
                     delete txToSend.custServerId;
 
                     const [itemsRes] = await db.executeSql(`
-                        SELECT ti.*, p.serverId as prodServerId
+                        SELECT ti.*, p.serverId as prodServerId, pkg.serverId as packageServerId
                         FROM transaction_items ti
                         LEFT JOIN products p ON ti.productId = p.id
+                        LEFT JOIN packages pkg ON ti.productId = ('pkg-' || pkg.id)
                         WHERE ti.transactionId = ?
                     `, [tx.id]);
                     const items: any[] = [];
@@ -735,7 +736,9 @@ export const syncService = {
                         if (item.prodServerId) {
                             itemToSend.serverProductId = item.prodServerId;
                         }
+                        if (item.packageServerId) itemToSend.serverPackageId = item.packageServerId;
                         delete itemToSend.prodServerId;
+                        delete itemToSend.packageServerId;
                         items.push(itemToSend);
                     }
                     transactions.push({ ...txToSend, items });
@@ -1165,8 +1168,8 @@ export const syncService = {
                                     }
 
                                     enqueue(
-                                        `INSERT INTO transaction_items (transactionId, productId, quantity, price, originalPrice, discountAmount, notes, loyaltyRewardQty, loyaltyRewardDiscount)
-                                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                                        `INSERT INTO transaction_items (transactionId, productId, quantity, price, originalPrice, discountAmount, notes, loyaltyRewardQty, loyaltyRewardDiscount, productName)
+                                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                                         [
                                             tx.id,
                                             localProductId,
@@ -1177,6 +1180,7 @@ export const syncService = {
                                             item.notes || null,
                                             item.loyaltyRewardQty || 0,
                                             item.loyaltyRewardDiscount || 0,
+                                            item.productName || null,
                                         ]
                                     );
                                 }
